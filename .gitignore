@@ -1,0 +1,15 @@
+# Operating System Files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Build & CAD exports
+*.stl
+*.obj
+*.gcode
+*.3mf
+
+# Docker Volumes & Local Data
+deploy/volumes/
+deploy/data/
+*.log
