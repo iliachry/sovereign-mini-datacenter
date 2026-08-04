@@ -1,5 +1,7 @@
 # Sovereign Mini Datacenter
 
+![Sovereign Mini Datacenter 3D Render](cad/render.jpg)
+
 **Sovereign Mini Datacenter** is a self-powered, liquid-cooled micro-datacenter stack designed for complete data autonomy.
 
 Developed by **[Metatopia Studio](https://metatopia.gr)**.
