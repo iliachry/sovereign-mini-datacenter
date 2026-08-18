@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sovereign Mini Datacenter — 3D CAD & Specs Viewer</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;700&family=Space+Grotesk:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0b0f19;
+      --panel-bg: rgba(15, 23, 42, 0.85);
+      --border: #1e293b;
+      --accent: #10b981;
+      --accent-glow: rgba(16, 185, 129, 0.25);
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      font-family: 'Space Grotesk', sans-serif;
+      overflow: hidden;
+      width: 100vw;
+      height: 100vh;
+    }
+    #canvas-container {
+      width: 100%;
+      height: 100%;
+      position: absolute;
+      top: 0;
+      left: 0;
+      z-index: 1;
+    }
+    /* UI Overlay */
+    .overlay {
+      position: absolute;
+      z-index: 10;
+      pointer-events: none;
+    }
+    .header {
+      top: 24px;
+      left: 28px;
+    }
+    .header h1 {
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .badge {
+      background: var(--accent-glow);
+      color: var(--accent);
+      border: 1px solid var(--accent);
+      font-size: 11px;
+      font-family: 'JetBrains Mono', monospace;
+      padding: 2px 8px;
+      border-radius: 4px;
+      text-transform: uppercase;
+      font-weight: 600;
+    }
+    .subtitle {
+      color: var(--text-muted);
+      font-size: 13px;
+      margin-top: 4px;
+    }
+    /* Control Panel */
+    .controls {
+      top: 24px;
+      right: 28px;
+      background: var(--panel-bg);
+      backdrop-filter: blur(12px);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 18px;
+      width: 320px;
+      pointer-events: auto;
+      box-shadow: 0 20px 40px rgba(0,0,0,0.5);
+    }
+    .controls h3 {
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 12px;
+      color: var(--text);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .btn-group {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    button {
+      background: #1e293b;
+      color: var(--text);
+      border: 1px solid #334155;
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    button:hover {
+      background: #334155;
+      border-color: var(--accent);
+    }
+    button.active {
+      background: var(--accent);
+      color: #000;
+      border-color: var(--accent);
+      font-weight: 700;
+    }
+    .spec-item {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      font-family: 'JetBrains Mono', monospace;
+      padding: 6px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+    }
+    .spec-label { color: var(--text-muted); }
+    .spec-val { color: var(--accent); font-weight: 600; }
+    
+    /* Footer details */
+    .footer {
+      bottom: 24px;
+      left: 28px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      color: var(--text-muted);
+      pointer-events: auto;
+    }
+    .footer a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+    .instructions {
+      position: absolute;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(15,23,42,0.7);
+      backdrop-filter: blur(8px);
+      border: 1px solid var(--border);
+      padding: 6px 16px;
+      border-radius: 20px;
+      font-size: 12px;
+      color: var(--text-muted);
+      font-family: 'JetBrains Mono', monospace;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="canvas-container"></div>
+
+  <div class="overlay header">
+    <h1>Sovereign Mini Datacenter <span class="badge">9U 19" EIA-310-D</span></h1>
+    <p class="subtitle">Interactive 3D Enclosure & Thermal Loop Viewer</p>
+  </div>
+
+  <div class="overlay controls">
+    <h3>Enclosure Controls <span style="font-size: 10px; color: var(--text-muted);">v2026.1</span></h3>
+    <div class="btn-group">
+      <button id="btn-wireframe" onclick="toggleWireframe()">Wireframe</button>
+      <button id="btn-explode" onclick="toggleExplode()">Exploded View</button>
+      <button id="btn-rotate" class="active" onclick="toggleAutoRotate()">Auto Rotate</button>
+      <button id="btn-reset" onclick="resetView()">Reset Camera</button>
+    </div>
+
+    <h3 style="margin-top: 14px;">Physical Specifications</h3>
+    <div class="spec-item"><span class="spec-label">Rack Standard</span><span class="spec-val">19" EIA-310-D</span></div>
+    <div class="spec-item"><span class="spec-label">Form Factor</span><span class="spec-val">9U Rackmount</span></div>
+    <div class="spec-item"><span class="spec-label">Dimensions (W×D×H)</span><span class="spec-val">540×550×400 mm</span></div>
+    <div class="spec-item"><span class="spec-label">Chassis Material</span><span class="spec-val">6061-T6 Aluminum</span></div>
+    <div class="spec-item"><span class="spec-label">Cooling</span><span class="spec-val">Dual 360mm Radiator</span></div>
+    <div class="spec-item"><span class="spec-label">Battery Capacity</span><span class="spec-val">10.24 kWh LiFePO4</span></div>
+    <div class="spec-item"><span class="spec-label">Compute</span><span class="spec-val">2× DGX Spark (550 TOPS)</span></div>
+  </div>
+
+  <div class="instructions">
+    Left Click: Orbit · Right Click: Pan · Scroll: Zoom
+  </div>
+
+  <div class="overlay footer">
+    Developed by <a href="https://metatopia.gr" target="_blank">Metatopia Studio</a> · Open Source under MIT License · <a href="https://github.com/iliachry/sovereign-mini-datacenter" target="_blank">GitHub Repo</a>
+  </div>
+
+  <!-- Three.js + OrbitControls from CDN -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
+  <script>
+    let scene, camera, renderer, controls;
+    let rackGroup, exploded = false, isWireframe = false;
+    let panels = [], rails = [], fans = [];
+
+    function init() {
+      const container = document.getElementById('canvas-container');
+
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x0b0f19);
+      scene.fog = new THREE.FogExp2(0x0b0f19, 0.0008);
+
+      camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 1, 5000);
+      camera.position.set(700, 500, 900);
+
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setPixelRatio(window.devicePixelRatio);
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.shadowMap.enabled = true;
+      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      container.appendChild(renderer.domElement);
+
+      controls = new THREE.OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+      controls.dampingFactor = 0.05;
+      controls.autoRotate = true;
+      controls.autoRotateSpeed = 1.2;
+      controls.maxPolarAngle = Math.PI / 2 + 0.1;
+
+      // Lights
+      const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+      scene.add(ambientLight);
+
+      const dirLight1 = new THREE.DirectionalLight(0x10b981, 0.8);
+      dirLight1.position.set(400, 600, 500);
+      dirLight1.castShadow = true;
+      scene.add(dirLight1);
+
+      const dirLight2 = new THREE.DirectionalLight(0x38bdf8, 0.6);
+      dirLight2.position.set(-400, 300, -500);
+      scene.add(dirLight2);
+
+      // Grid Floor
+      const grid = new THREE.GridHelper(2000, 40, 0x1e293b, 0x0f172a);
+      grid.position.y = -220;
+      scene.add(grid);
+
+      buildRackModel();
+
+      window.addEventListener('resize', onWindowResize, false);
+      animate();
+    }
+
+    function buildRackModel() {
+      rackGroup = new THREE.Group();
+      scene.add(rackGroup);
+
+      const W = 540, D = 550, H = 400.05;
+      const t = 2.0;
+
+      // Materials
+      const aluminumMat = new THREE.MeshStandardMaterial({
+        color: 0x94a3b8,
+        metalness: 0.85,
+        roughness: 0.25
+      });
+      const blackSteelMat = new THREE.MeshStandardMaterial({
+        color: 0x18181b,
+        metalness: 0.9,
+        roughness: 0.4
+      });
+      const glassMat = new THREE.MeshPhysicalMaterial({
+        color: 0x38bdf8,
+        metalness: 0.1,
+        roughness: 0.1,
+        transparent: true,
+        opacity: 0.35,
+        transmission: 0.7
+      });
+      const fanMat = new THREE.MeshStandardMaterial({
+        color: 0x10b981,
+        metalness: 0.5,
+        roughness: 0.5
+      });
+
+      // Outer Frame
+      const frameGeom = new THREE.BoxGeometry(W, H, D);
+      const frameEdges = new THREE.EdgesGeometry(frameGeom);
+      const frameLine = new THREE.LineSegments(frameEdges, new THREE.LineBasicMaterial({ color: 0x10b981, linewidth: 2 }));
+      rackGroup.add(frameLine);
+
+      // 4x EIA-310-D Rails
+      const railGeom = new THREE.BoxGeometry(15, H, 15);
+      const railPositions = [
+        [-W/2 + 28, 0, -D/2 + 25],
+        [ W/2 - 28, 0, -D/2 + 25],
+        [-W/2 + 28, 0,  D/2 - 25],
+        [ W/2 - 28, 0,  D/2 - 25]
+      ];
+      railPositions.forEach(pos => {
+        const rail = new THREE.Mesh(railGeom, blackSteelMat);
+        rail.position.set(...pos);
+        rail.castShadow = true;
+        rails.push(rail);
+        rackGroup.add(rail);
+      });
+
+      // Side & Top Panels
+      const sideGeom = new THREE.BoxGeometry(t, H - 10, D - 10);
+      const leftPanel = new THREE.Mesh(sideGeom, aluminumMat);
+      leftPanel.position.set(-W/2, 0, 0);
+      panels.push({ mesh: leftPanel, dir: new THREE.Vector3(-1, 0, 0) });
+      rackGroup.add(leftPanel);
+
+      const rightPanel = new THREE.Mesh(sideGeom, aluminumMat);
+      rightPanel.position.set(W/2, 0, 0);
+      panels.push({ mesh: rightPanel, dir: new THREE.Vector3(1, 0, 0) });
+      rackGroup.add(rightPanel);
+
+      const topGeom = new THREE.BoxGeometry(W - 10, t, D - 10);
+      const topPanel = new THREE.Mesh(topGeom, aluminumMat);
+      topPanel.position.set(0, H/2, 0);
+      panels.push({ mesh: topPanel, dir: new THREE.Vector3(0, 1, 0) });
+      rackGroup.add(topPanel);
+
+      // Front Acrylic Door
+      const doorGeom = new THREE.BoxGeometry(W - 16, H - 16, t);
+      const frontDoor = new THREE.Mesh(doorGeom, glassMat);
+      frontDoor.position.set(0, 0, D/2);
+      panels.push({ mesh: frontDoor, dir: new THREE.Vector3(0, 0, 1) });
+      rackGroup.add(frontDoor);
+
+      // Dual 360mm Rear Radiators
+      for (let i = 0; i < 2; i++) {
+        const radGeom = new THREE.BoxGeometry(120, 120, 25);
+        const rad = new THREE.Mesh(radGeom, fanMat);
+        rad.position.set(0, -80 + i * 160, -D/2);
+        fans.push(rad);
+        rackGroup.add(rad);
+      }
+    }
+
+    function toggleWireframe() {
+      isWireframe = !isWireframe;
+      rackGroup.traverse(child => {
+        if (child.isMesh && child.material) {
+          child.material.wireframe = isWireframe;
+        }
+      });
+      document.getElementById('btn-wireframe').classList.toggle('active', isWireframe);
+    }
+
+    function toggleExplode() {
+      exploded = !exploded;
+      const dist = exploded ? 120 : 0;
+      panels.forEach(p => {
+        p.mesh.position.set(
+          p.dir.x * (p.dir.x !== 0 ? (270 + dist) : 0),
+          p.dir.y * (p.dir.y !== 0 ? (200 + dist) : 0),
+          p.dir.z * (p.dir.z !== 0 ? (275 + dist) : 0)
+        );
+      });
+      document.getElementById('btn-explode').classList.toggle('active', exploded);
+    }
+
+    function toggleAutoRotate() {
+      controls.autoRotate = !controls.autoRotate;
+      document.getElementById('btn-rotate').classList.toggle('active', controls.autoRotate);
+    }
+
+    function resetView() {
+      camera.position.set(700, 500, 900);
+      controls.target.set(0, 0, 0);
+    }
+
+    function onWindowResize() {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    function animate() {
+      requestAnimationFrame(animate);
+      controls.update();
+      renderer.render(scene, camera);
+    }
+
+    window.onload = init;
+  </script>
+</body>
+</html>

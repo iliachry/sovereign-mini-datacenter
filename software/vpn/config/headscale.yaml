@@ -1,0 +1,38 @@
+---
+# Sovereign Mini Datacenter — Headscale Configuration
+server_url: https://${DOMAIN_VPN:-vpn.sovereign.local}
+listen_addr: 0.0.0.0:8080
+metrics_listen_addr: 0.0.0.0:9090
+grpc_listen_addr: 0.0.0.0:50443
+grpc_allow_insecure: false
+
+ip_prefixes:
+  - 100.64.0.0/10
+  - fd7a:115c:a1e0::/48
+
+derp:
+  server:
+    enabled: true
+    region_id: 999
+    region_code: "sov"
+    region_name: "Sovereign DERP"
+    stun_listen_addr: "0.0.0.0:3478"
+  urls:
+    - https://controlplane.tailscale.com/derpmap/default
+  auto_update_enabled: true
+  update_frequency: 24h
+
+disable_check_updates: true
+ephemeral_node_inactivity_timeout: 30m
+
+database:
+  type: sqlite3
+  sqlite:
+    path: /var/lib/headscale/db.sqlite
+
+dns_config:
+  nameservers:
+    - 1.1.1.1
+    - 9.9.9.9
+  magic_dns: true
+  base_domain: sovereign.mesh

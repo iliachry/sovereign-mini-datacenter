@@ -76,12 +76,16 @@ services:
     environment:
       - OLLAMA_BASE_URL=http://ollama:11434
       - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY}
+      - VECTOR_DB=qdrant
+      - QDRANT_URI=http://qdrant:6333
     volumes:
       - webui_data:/app/backend/data
     networks:
       - sovereign_net
     depends_on:
       ollama:
+        condition: service_healthy
+      qdrant:
         condition: service_healthy
     labels:
       - "traefik.enable=true"
@@ -91,6 +95,21 @@ services:
       - "traefik.http.services.webui.loadbalancer.server.port=8080"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ─── 2b. QDRANT (Vector Database for Local RAG & Semantic Search) ───
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: sovereign_qdrant
+    restart: unless-stopped
+    volumes:
+      - qdrant_data:/qdrant/storage
+    networks:
+      - sovereign_net
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/6333' || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -341,3 +360,4 @@ volumes:
   vaultwarden_data:
   prometheus_data:
   grafana_data:
+  qdrant_data:

@@ -1,27 +1,109 @@
 #!/usr/bin/env bash
 # ====================================================================
-# Sovereign Mini Datacenter — Node Initialization & Setup Script
+# Sovereign Mini Datacenter � Node Initialization & Setup CLI
 # Target OS: Ubuntu Server 24.04 LTS (x86_64 / arm64)
 # Idempotent: safe to run multiple times.
 # ====================================================================
 
 set -euo pipefail
 
-ARCH=$(dpkg --print-architecture)
+ARCH=$(dpkg --print-architecture 2>/dev/null || echo "amd64")
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 log()  { echo -e "\n\033[1;32m>>> $*\033[0m"; }
-warn() { echo -e "\033[1;33m⚠  $*\033[0m"; }
-err()  { echo -e "\033[1;31m✗  $*\033[0m" >&2; exit 1; }
+warn() { echo -e "\033[1;33m?  $*\033[0m"; }
+err()  { echo -e "\033[1;31m?  $*\033[0m" >&2; exit 1; }
 
-# ── Require root ──────────────────────────────────────────────────
+# Module toggles
+WITH_MAILCOW=false
+WITH_VPN=false
+WITH_BACKUP=false
+WITH_TELEMETRY=false
+DRY_RUN=false
+
+show_help() {
+    cat <<EOF
+Sovereign Mini Datacenter � Deployment CLI
+
+Usage:
+  sudo ./setup.sh [OPTIONS]
+
+Options:
+  --all               Deploy core stack + Mailcow + VPN + Backup + Telemetry
+  --with-mailcow      Deploy Mailcow email stack alongside core
+  --with-vpn          Deploy Headscale Zero-Trust Mesh VPN
+  --with-backup       Deploy automated Restic snapshot backup daemon
+  --with-telemetry    Deploy Solar/BMS Telemetry & Load-Shedder Sentinel
+  --dry-run           Validate configurations and syntax without starting services
+  -h, --help          Show this help message
+
+Default (no flags): Deploys the Sovereign Core Stack (Traefik, Ollama, Open-WebUI,
+                    Qdrant, GitLab, OpenProject, Nextcloud, Vaultwarden,
+                    Prometheus, Grafana, cAdvisor, Node Exporter).
+EOF
+    exit 0
+}
+
+# Parse flags
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --all)
+            WITH_MAILCOW=true
+            WITH_VPN=true
+            WITH_BACKUP=true
+            WITH_TELEMETRY=true
+            shift
+            ;;
+        --with-mailcow)
+            WITH_MAILCOW=true
+            shift
+            ;;
+        --with-vpn)
+            WITH_VPN=true
+            shift
+            ;;
+        --with-backup)
+            WITH_BACKUP=true
+            shift
+            ;;
+        --with-telemetry)
+            WITH_TELEMETRY=true
+            shift
+            ;;
+        --dry-run)
+            DRY_RUN=true
+            shift
+            ;;
+        -h|--help)
+            show_help
+            ;;
+        *)
+            err "Unknown option: $1 (run with --help for usage)"
+            ;;
+    esac
+done
+
+# Dry-run check or require root
+if [[ "$DRY_RUN" == "true" ]]; then
+    log "DRY RUN MODE: Validating compose stacks and environment files..."
+    cd "$SCRIPT_DIR"
+    [[ -f .env ]] || cp env.example .env
+    docker compose -f docker-compose.yml config --quiet
+    docker compose -f vpn/docker-compose.vpn.yml config --quiet
+    docker compose -f backup/docker-compose.backup.yml config --quiet
+    docker compose -f telemetry/docker-compose.telemetry.yml config --quiet
+    echo "? All configurations valid."
+    exit 0
+fi
+
+# Require root
 [[ $EUID -eq 0 ]] || err "Please run as root or with sudo."
 
 log "[1/6] Updating system packages..."
 apt-get update -qq && apt-get upgrade -y -qq
-apt-get install -y -qq curl wget git build-essential ca-certificates gnupg lsb-release apache2-utils
+apt-get install -y -qq curl wget git build-essential ca-certificates gnupg lsb-release apache2-utils restic
 
-# ── Docker ────────────────────────────────────────────────────────
+# -- Docker --------------------------------------------------------
 log "[2/6] Installing Docker Engine & Docker Compose..."
 if ! command -v docker &>/dev/null; then
     install -m 0755 -d /etc/apt/keyrings
@@ -33,24 +115,23 @@ if ! command -v docker &>/dev/null; then
       | tee /etc/apt/sources.list.d/docker.list >/dev/null
     apt-get update -qq
     apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-compose-plugin
-    # Add invoking user to docker group
     REAL_USER="${SUDO_USER:-}"
     if [[ -z "$REAL_USER" ]]; then
         REAL_USER=$(logname 2>/dev/null || true)
     fi
     if [[ -n "$REAL_USER" ]]; then
         usermod -aG docker "$REAL_USER"
-        warn "Added $REAL_USER to docker group. Log out/in for this to take effect."
+        warn "Added $REAL_USER to docker group."
     fi
 else
-    log "Docker already installed — skipping."
+    log "Docker already installed � skipping."
 fi
 
-# ── NVIDIA Drivers + CUDA Toolkit ────────────────────────────────
+# -- NVIDIA Drivers + CUDA Toolkit --------------------------------
 log "[3/6] Detecting GPU and installing NVIDIA stack..."
 if lspci 2>/dev/null | grep -qi nvidia; then
     if ! command -v nvidia-smi &>/dev/null; then
-        log "  Installing NVIDIA drivers (ubuntu-drivers autoinstall)..."
+        log "  Installing NVIDIA drivers..."
         apt-get install -y -qq ubuntu-drivers-common
         ubuntu-drivers autoinstall
     else
@@ -65,9 +146,7 @@ if lspci 2>/dev/null | grep -qi nvidia; then
         dpkg -i /tmp/cuda-keyring.deb
         apt-get update -qq
         apt-get install -y -qq cuda-toolkit-12-6
-        rm /tmp/cuda-keyring.deb
-    else
-        log "  CUDA Toolkit already installed — skipping."
+        rm -f /tmp/cuda-keyring.deb
     fi
 
     if ! dpkg -l 2>/dev/null | grep -q nvidia-container-toolkit; then
@@ -81,60 +160,73 @@ if lspci 2>/dev/null | grep -qi nvidia; then
         apt-get install -y -qq nvidia-container-toolkit
         nvidia-ctk runtime configure --runtime=docker
         systemctl restart docker
-    else
-        log "  NVIDIA Container Toolkit already installed — skipping."
     fi
 else
-    warn "No NVIDIA GPU detected. Skipping GPU driver/CUDA installation."
-    warn "Ollama will run in CPU-only mode."
+    warn "No NVIDIA GPU detected. Skipping GPU driver installation (CPU mode)."
 fi
 
-# ── Environment file ──────────────────────────────────────────────
+# -- Environment file ----------------------------------------------
 log "[4/6] Preparing environment configuration..."
 if [[ ! -f "${SCRIPT_DIR}/.env" ]]; then
     cp "${SCRIPT_DIR}/env.example" "${SCRIPT_DIR}/.env"
-    warn ".env created from template. Edit ${SCRIPT_DIR}/.env before continuing!"
-    warn "At minimum set: ACME_EMAIL, DOMAIN_* vars, all *_PASSWORD/*_SECRET vars."
-    read -rp "Press Enter after editing .env, or Ctrl+C to abort..."
-else
-    log "  .env already exists — skipping copy."
+    warn ".env created from template. Edit ${SCRIPT_DIR}/.env before production use!"
 fi
 
-# ── Pre-pull LLM model info ───────────────────────────────────────
+# -- Model pre-pull info -------------------------------------------
 log "[5/6] Checking default Ollama model..."
 OLLAMA_MODEL=""
 if [[ -f "${SCRIPT_DIR}/.env" ]]; then
     OLLAMA_MODEL=$(grep -E '^OLLAMA_DEFAULT_MODEL=' "${SCRIPT_DIR}/.env" | cut -d= -f2 || true)
 fi
-if [[ -n "$OLLAMA_MODEL" ]]; then
-    log "  Will pull: ${OLLAMA_MODEL} after stack starts."
-fi
 
-# ── Start the stack ───────────────────────────────────────────────
-log "[6/6] Starting Sovereign Stack..."
+# -- Start the stack -----------------------------------------------
+log "[6/6] Launching Selected Sovereign Stacks..."
 cd "$SCRIPT_DIR"
-docker compose up -d --remove-orphans
 
-# Pull Ollama model after containers are up
-if [[ -n "$OLLAMA_MODEL" ]]; then
-    log "  Pulling Ollama model: ${OLLAMA_MODEL} (this may take a while)..."
-    sleep 10
-    docker exec sovereign_ollama ollama pull "${OLLAMA_MODEL}" \
-        || warn "Model pull failed. Run manually: docker exec sovereign_ollama ollama pull ${OLLAMA_MODEL}"
+# Launch Core Stack
+docker compose -f docker-compose.yml up -d --remove-orphans
+
+# Launch Optional Modules
+if [[ "$WITH_VPN" == "true" ]]; then
+    log "  Starting Headscale Mesh VPN..."
+    docker compose -f vpn/docker-compose.vpn.yml up -d
 fi
 
-# ── Print service URLs from .env ──────────────────────────────────
+if [[ "$WITH_BACKUP" == "true" ]]; then
+    log "  Starting Restic Backup Daemon..."
+    docker compose -f backup/docker-compose.backup.yml up -d
+fi
+
+if [[ "$WITH_TELEMETRY" == "true" ]]; then
+    log "  Starting Solar/BMS Telemetry & Exporter..."
+    docker compose -f telemetry/docker-compose.telemetry.yml up -d
+fi
+
+if [[ "$WITH_MAILCOW" == "true" ]]; then
+    log "  Mailcow integration enabled. See software/mailcow/README.md for initial mailbox setup."
+fi
+
+# Pull Ollama model
+if [[ -n "$OLLAMA_MODEL" ]]; then
+    log "  Pulling Ollama model: ${OLLAMA_MODEL}..."
+    sleep 10
+    docker exec sovereign_ollama ollama pull "${OLLAMA_MODEL}" || true
+fi
+
 get_env() { grep -E "^${1}=" .env 2>/dev/null | cut -d= -f2 || echo "${2}"; }
 
 echo ""
 echo "====================================================================="
-echo "  ✅ Sovereign Mini Datacenter Stack Deployed!"
+echo "  ? Sovereign Mini Datacenter Deployed Successfully!"
 echo "---------------------------------------------------------------------"
-echo "  • Open-WebUI (AI):    https://$(get_env DOMAIN_WEBUI ai.sovereign.local)"
-echo "  • GitLab CE:          https://$(get_env DOMAIN_GITLAB gitlab.sovereign.local)"
-echo "  • OpenProject:        https://$(get_env DOMAIN_PROJECTS projects.sovereign.local)"
-echo "  • Nextcloud:          https://$(get_env DOMAIN_NEXTCLOUD cloud.sovereign.local)"
-echo "  • Vaultwarden:        https://$(get_env DOMAIN_VAULT vault.sovereign.local)"
-echo "  • Grafana:            https://$(get_env DOMAIN_GRAFANA grafana.sovereign.local)"
-echo "  • Traefik Dashboard:  https://$(get_env DOMAIN_TRAEFIK traefik.sovereign.local)"
+echo "  � Open-WebUI (AI + RAG):  https://$(get_env DOMAIN_WEBUI ai.sovereign.local)"
+echo "  � GitLab CE:              https://$(get_env DOMAIN_GITLAB gitlab.sovereign.local)"
+echo "  � OpenProject:            https://$(get_env DOMAIN_PROJECTS projects.sovereign.local)"
+echo "  � Nextcloud:              https://$(get_env DOMAIN_NEXTCLOUD cloud.sovereign.local)"
+echo "  � Vaultwarden:            https://$(get_env DOMAIN_VAULT vault.sovereign.local)"
+echo "  � Grafana Dashboards:     https://$(get_env DOMAIN_GRAFANA grafana.sovereign.local)"
+echo "  � Traefik Proxy:          https://$(get_env DOMAIN_TRAEFIK traefik.sovereign.local)"
+if [[ "$WITH_VPN" == "true" ]]; then
+echo "  � Headscale Mesh VPN:     https://$(get_env DOMAIN_VPN vpn.sovereign.local)"
+fi
 echo "====================================================================="

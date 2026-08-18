@@ -1,0 +1,50 @@
+networks:
+  sovereign_net:
+    name: software_sovereign_net
+
+services:
+  backup-cron:
+    image: restic/restic:latest
+    container_name: sovereign_backup
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "Starting Sovereign Restic Backup Daemon..."
+        while true; do
+          sleep 86400 &
+          wait $$!
+        done
+    environment:
+      - RESTIC_REPOSITORY=${RESTIC_REPOSITORY:-/backups}
+      - RESTIC_PASSWORD=${RESTIC_PASSWORD:-changeme_sovereign_backup_key}
+      - AWS_ACCESS_KEY_ID=${RESTIC_S3_KEY:-}
+      - AWS_SECRET_ACCESS_KEY=${RESTIC_S3_SECRET:-}
+      - RESTIC_COMPRESSION=auto
+    volumes:
+      - backup_storage:/backups
+      - software_traefik_certs:/data/traefik_certs:ro
+      - software_webui_data:/data/webui_data:ro
+      - software_gitlab_data:/data/gitlab_data:ro
+      - software_gitlab_config:/data/gitlab_config:ro
+      - software_openproject_data:/data/openproject_data:ro
+      - software_nextcloud_data:/data/nextcloud_data:ro
+      - software_vaultwarden_data:/data/vaultwarden_data:ro
+      - software_grafana_data:/data/grafana_data:ro
+      - software_prometheus_data:/data/prometheus_data:ro
+      - software_qdrant_data:/data/qdrant_data:ro
+    networks:
+      - sovereign_net
+
+volumes:
+  backup_storage:
+  software_traefik_certs:
+  software_webui_data:
+  software_gitlab_data:
+  software_gitlab_config:
+  software_openproject_data:
+  software_nextcloud_data:
+  software_vaultwarden_data:
+  software_grafana_data:
+  software_prometheus_data:
+  software_qdrant_data:

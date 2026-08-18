@@ -1,0 +1,31 @@
+networks:
+  sovereign_net:
+    name: software_sovereign_net
+
+services:
+  headscale:
+    image: headscale/headscale:latest
+    container_name: sovereign_headscale
+    restart: unless-stopped
+    command: headscale serve
+    volumes:
+      - ./config:/etc/headscale
+      - headscale_data:/var/lib/headscale
+    networks:
+      - sovereign_net
+    ports:
+      - "3478:3478/udp"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.headscale.rule=Host(`${DOMAIN_VPN:-vpn.sovereign.local}`)"
+      - "traefik.http.routers.headscale.entrypoints=websecure"
+      - "traefik.http.routers.headscale.tls.certresolver=le"
+      - "traefik.http.services.headscale.loadbalancer.server.port=8080"
+    healthcheck:
+      test: ["CMD", "headscale", "version"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  headscale_data:
