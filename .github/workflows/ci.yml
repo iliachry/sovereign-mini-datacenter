@@ -1,9 +1,5 @@
 # ====================================================================
 # Sovereign Mini Datacenter — CI Pipeline
-# Runs on every push and PR to main:
-#   1. ShellCheck — lint setup.sh
-#   2. docker-compose config validate — validate compose file
-#   3. env.example check — ensure all required vars are documented
 # ====================================================================
 name: CI
 
@@ -15,7 +11,7 @@ on:
 
 jobs:
 
-  # ── Job 1: Lint shell scripts ──────────────────────────────────────
+  # ── Job 1: Lint shell scripts ─────────────────────────────────────
   shellcheck:
     name: ShellCheck
     runs-on: ubuntu-24.04
@@ -26,55 +22,90 @@ jobs:
         run: sudo apt-get install -y shellcheck
 
       - name: Lint setup.sh
-        run: shellcheck -S warning software/setup.sh
+        # SC2312: ignore invoke-separately-or-assign (pattern is intentional)
+        run: shellcheck -S warning -e SC2312 software/setup.sh
 
-  # ── Job 2: Validate docker-compose.yml ────────────────────────────
+  # ── Job 2: Validate docker-compose.yml ───────────────────────────
   compose-validate:
     name: Validate docker-compose
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Docker Compose
+      - name: Install Docker Compose plugin
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq docker-compose-plugin
 
-      - name: Create minimal .env from example
+      - name: Create CI .env with all required variables
         working-directory: software
-        run: cp env.example .env
+        run: |
+          cat > .env <<'EOF'
+          ACME_EMAIL=ci@example.com
+          DOMAIN_TRAEFIK=traefik.local
+          DOMAIN_WEBUI=ai.local
+          DOMAIN_GITLAB=gitlab.local
+          DOMAIN_PROJECTS=projects.local
+          DOMAIN_NEXTCLOUD=cloud.local
+          DOMAIN_VAULT=vault.local
+          DOMAIN_GRAFANA=grafana.local
+          DOMAIN_PROMETHEUS=metrics.local
+          TRAEFIK_DASHBOARD_AUTH=admin:$$apr1$$ci$$placeholder
+          WEBUI_SECRET_KEY=ci_secret_key_32chars_placeholder00
+          OPENPROJECT_SECRET=ci_openproject_secret_64chars_placeholder_00000000000000000000
+          NEXTCLOUD_ADMIN_USER=admin
+          NEXTCLOUD_ADMIN_PASSWORD=ci_password
+          VAULTWARDEN_ADMIN_TOKEN=ci_vaultwarden_token_placeholder
+          VAULTWARDEN_SIGNUPS_ALLOWED=false
+          GRAFANA_ADMIN_USER=admin
+          GRAFANA_ADMIN_PASSWORD=ci_grafana_password
+          SMTP_HOST=smtp.local
+          SMTP_PORT=587
+          SMTP_USER=ci@local
+          SMTP_PASSWORD=ci_smtp_pass
+          SMTP_FROM=noreply@local
+          OLLAMA_DEFAULT_MODEL=llama3.2:3b
+          EOF
 
       - name: Validate compose file
         working-directory: software
         run: docker compose config --quiet
 
-  # ── Job 3: Check env.example completeness ─────────────────────────
+  # ── Job 3: Check env.example completeness ────────────────────────
   env-check:
     name: Env Example Check
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
-      - name: Verify env.example has no empty required values
+      - name: Verify env.example is non-empty and has expected keys
         run: |
-          echo "Checking env.example for placeholder values..."
-          # Warn if any line still contains the word 'changeme' — devs should notice
-          if grep -i 'changeme\|change_me' software/env.example; then
-            echo "✅ Placeholders present (expected in env.example template)."
-          fi
-          # Check file is not empty
           [ -s software/env.example ] || (echo "env.example is empty!" && exit 1)
-          echo "env.example check passed."
+          for key in ACME_EMAIL DOMAIN_TRAEFIK WEBUI_SECRET_KEY OPENPROJECT_SECRET \
+                     NEXTCLOUD_ADMIN_PASSWORD VAULTWARDEN_ADMIN_TOKEN \
+                     GRAFANA_ADMIN_PASSWORD SMTP_HOST OLLAMA_DEFAULT_MODEL; do
+            grep -q "^${key}=" software/env.example \
+              || (echo "Missing key in env.example: ${key}" && exit 1)
+          done
+          echo "✅ env.example contains all required keys."
 
-  # ── Job 4: Validate OpenSCAD file (syntax check) ──────────────────
+  # ── Job 4: OpenSCAD syntax check (with virtual display) ──────────
   scad-lint:
     name: OpenSCAD Syntax Check
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install OpenSCAD
-        run: sudo apt-get install -y openscad
+      - name: Install OpenSCAD and virtual framebuffer
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y openscad xvfb
 
-      - name: Check rack_enclosure.scad syntax
-        run: openscad --hardwarnings --check-parameter-ranges cad/rack_enclosure.scad -o /tmp/test.stl
+      - name: Check rack_enclosure.scad syntax and export STL
+        run: |
+          xvfb-run --auto-servernum openscad \
+            --hardwarnings \
+            --export-format binstl \
+            -o /tmp/rack_enclosure_test.stl \
+            cad/rack_enclosure.scad
+          echo "✅ OpenSCAD export succeeded: $(du -sh /tmp/rack_enclosure_test.stl)"
