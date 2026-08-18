@@ -1,0 +1,22 @@
+# ====================================================================
+# Mailcow Docker Compose Override
+# Place this file at: software/mailcow/core/docker-compose.override.yml
+#
+# Purpose:
+#   1. Attach nginx-mailcow to the sovereign_net network so Traefik
+#      can route to it.
+#   2. Ensure mailcow containers can reach the main stack services
+#      (for SMTP relay integration).
+# ====================================================================
+version: '2.1'
+
+networks:
+  sovereign_net:
+    external: true
+    name: software_sovereign_net
+
+services:
+  nginx-mailcow:
+    networks:
+      - mailcow-network
+      - sovereign_net

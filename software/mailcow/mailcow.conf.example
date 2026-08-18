@@ -1,0 +1,63 @@
+# ====================================================================
+# mailcow.conf — Mailcow Configuration Template
+# Copy to software/mailcow/core/mailcow.conf after cloning mailcow-dockerized
+# Full reference: https://docs.mailcow.email/getstarted/install/
+# ====================================================================
+
+# ── Primary hostname (FQDN) — must match your MX / PTR record ───────
+MAILCOW_HOSTNAME=mail.yourdomain.com
+
+# ── Timezone ─────────────────────────────────────────────────────────
+TZ=Europe/Athens
+
+# ── HTTP/HTTPS binding — disable direct 80/443 binding so Traefik handles it
+HTTP_BIND=127.0.0.1
+HTTP_PORT=8025
+HTTPS_BIND=127.0.0.1
+HTTPS_PORT=8443
+
+# ── SMTP ports (bind directly to host) ───────────────────────────────
+SMTP_PORT=25
+SMTPS_PORT=465
+SUBMISSION_PORT=587
+
+# ── IMAP / POP3 ports ────────────────────────────────────────────────
+IMAP_PORT=143
+IMAPS_PORT=993
+POP_PORT=110
+POPS_PORT=995
+
+# ── Sieve (server-side mail filtering) ───────────────────────────────
+SIEVE_PORT=4190
+
+# ── Database (auto-generated on first run, do not share) ─────────────
+DBNAME=mailcow
+DBUSER=mailcow
+# DBPASS and DBROOT are auto-generated — leave blank here
+DBPASS=
+DBROOT=
+
+# ── Docker Compose project name ───────────────────────────────────────
+COMPOSE_PROJECT_NAME=mailcow
+
+# ── Skip ClamAV (saves ~1 GB RAM) — set to y to disable antivirus ────
+SKIP_CLAMD=n
+
+# ── Skip Let's Encrypt inside mailcow (Traefik handles TLS) ──────────
+SKIP_LETS_ENCRYPT=y
+
+# ── Additional SAN domains for the certificate ───────────────────────
+ADDITIONAL_SAN=
+
+# ── Enable SOGo webmail ───────────────────────────────────────────────
+SKIP_SOGO=n
+
+# ── IPv6 — disable if your server has no IPv6 ────────────────────────
+SYSCTL_IPV6_DISABLED=1
+
+# ── Watchdog health notifications ────────────────────────────────────
+WATCHDOG_NOTIFY_EMAIL=admin@yourdomain.com
+WATCHDOG_NOTIFY_SUBJECT=Mailcow Alert
+
+# ── ACL — restrict admin panel to LAN ────────────────────────────────
+# MAILCOW_PASS_FILTER=

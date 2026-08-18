@@ -1,0 +1,41 @@
+# ====================================================================
+# Mailcow — Traefik Integration
+# Run alongside the main sovereign stack:
+#
+#   docker compose \
+#     -f software/docker-compose.yml \
+#     -f software/mailcow/docker-compose.mailcow-traefik.yml \
+#     up -d
+#
+# This file adds Traefik labels to nginx-mailcow so that
+# https://mail.yourdomain.com routes through the main Traefik.
+# mailcow's built-in nginx must be bound to 127.0.0.1 (see mailcow.conf.example)
+# ====================================================================
+version: '2.1'
+
+networks:
+  sovereign_net:
+    external: true
+    name: software_sovereign_net
+
+services:
+  nginx-mailcow:
+    networks:
+      - mailcow-network
+      - sovereign_net
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=software_sovereign_net"
+
+      # ── SOGo Webmail + Admin UI ──────────────────────────────────────
+      - "traefik.http.routers.mailcow.rule=Host(`${DOMAIN_MAILCOW:-mail.sovereign.local}`)"
+      - "traefik.http.routers.mailcow.entrypoints=websecure"
+      - "traefik.http.routers.mailcow.tls.certresolver=le"
+      - "traefik.http.services.mailcow.loadbalancer.server.port=8025"
+
+      # ── Security headers middleware ───────────────────────────────────
+      - "traefik.http.middlewares.mailcow-headers.headers.stsSeconds=31536000"
+      - "traefik.http.middlewares.mailcow-headers.headers.forceSTSHeader=true"
+      - "traefik.http.middlewares.mailcow-headers.headers.contentTypeNosniff=true"
+      - "traefik.http.middlewares.mailcow-headers.headers.browserXssFilter=true"
+      - "traefik.http.routers.mailcow.middlewares=mailcow-headers"
