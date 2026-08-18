@@ -32,44 +32,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Docker Compose plugin
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq docker-compose-plugin
-
-      - name: Create CI .env with all required variables
-        working-directory: software
-        run: |
-          cat > .env <<'EOF'
-          ACME_EMAIL=ci@example.com
-          DOMAIN_TRAEFIK=traefik.local
-          DOMAIN_WEBUI=ai.local
-          DOMAIN_GITLAB=gitlab.local
-          DOMAIN_PROJECTS=projects.local
-          DOMAIN_NEXTCLOUD=cloud.local
-          DOMAIN_VAULT=vault.local
-          DOMAIN_GRAFANA=grafana.local
-          DOMAIN_PROMETHEUS=metrics.local
-          TRAEFIK_DASHBOARD_AUTH=admin:$$apr1$$ci$$placeholder
-          WEBUI_SECRET_KEY=ci_secret_key_32chars_placeholder00
-          OPENPROJECT_SECRET=ci_openproject_secret_64chars_placeholder_00000000000000000000
-          NEXTCLOUD_ADMIN_USER=admin
-          NEXTCLOUD_ADMIN_PASSWORD=ci_password
-          VAULTWARDEN_ADMIN_TOKEN=ci_vaultwarden_token_placeholder
-          VAULTWARDEN_SIGNUPS_ALLOWED=false
-          GRAFANA_ADMIN_USER=admin
-          GRAFANA_ADMIN_PASSWORD=ci_grafana_password
-          SMTP_HOST=smtp.local
-          SMTP_PORT=587
-          SMTP_USER=ci@local
-          SMTP_PASSWORD=ci_smtp_pass
-          SMTP_FROM=noreply@local
-          OLLAMA_DEFAULT_MODEL=llama3.2:3b
-          EOF
-
       - name: Validate compose file
         working-directory: software
-        run: docker compose config --quiet
+        run: |
+          cp env.example .env
+          docker compose config --quiet
+
 
   # ── Job 3: Check env.example completeness ────────────────────────
   env-check:
