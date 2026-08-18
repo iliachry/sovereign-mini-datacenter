@@ -1,0 +1,47 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "sovereign-dc"
+version = "1.0.0"
+description = "Sovereign Mini Datacenter CLI & Infrastructure Management Engine"
+readme = "README.md"
+license = "MIT"
+authors = [
+    { name = "Ilias Chrysovergis", email = "iliachry@gmail.com" }
+]
+keywords = [
+    "datacenter",
+    "homelab",
+    "sovereign",
+    "self-hosted",
+    "ai",
+    "solar",
+    "victron",
+    "telemetry",
+    "wireguard",
+    "vpn",
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: System Administrators",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: System :: Systems Administration",
+]
+requires-python = ">=3.9"
+dependencies = []
+
+[project.scripts]
+smdc = "sovereign_dc.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/iliachry/sovereign-mini-datacenter"
+Documentation = "https://iliachry.gr/sovereign-mini-datacenter/"
+Repository = "https://github.com/iliachry/sovereign-mini-datacenter"

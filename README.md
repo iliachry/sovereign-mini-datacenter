@@ -109,6 +109,29 @@ sovereign-mini-datacenter/
 
 ---
 
+## 🐍 Python CLI Package (`smdc`)
+
+Manage the datacenter and view live telemetry from your terminal:
+
+```bash
+pip install sovereign-dc
+# or with uv:
+uv tool install sovereign-dc
+```
+
+```bash
+# Check container health and live telemetry dashboard
+smdc status
+
+# Deploy container stacks
+smdc deploy --all
+
+# Run standalone solar/BMS telemetry exporter
+smdc telemetry --port 9101
+```
+
+---
+
 ## 🚀 Quick Start
 
 ### 1. Clone & Configure
