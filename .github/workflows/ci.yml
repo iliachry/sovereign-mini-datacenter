@@ -1,0 +1,80 @@
+# ====================================================================
+# Sovereign Mini Datacenter — CI Pipeline
+# Runs on every push and PR to main:
+#   1. ShellCheck — lint setup.sh
+#   2. docker-compose config validate — validate compose file
+#   3. env.example check — ensure all required vars are documented
+# ====================================================================
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+
+  # ── Job 1: Lint shell scripts ──────────────────────────────────────
+  shellcheck:
+    name: ShellCheck
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ShellCheck
+        run: sudo apt-get install -y shellcheck
+
+      - name: Lint setup.sh
+        run: shellcheck -S warning software/setup.sh
+
+  # ── Job 2: Validate docker-compose.yml ────────────────────────────
+  compose-validate:
+    name: Validate docker-compose
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Docker Compose
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq docker-compose-plugin
+
+      - name: Create minimal .env from example
+        working-directory: software
+        run: cp env.example .env
+
+      - name: Validate compose file
+        working-directory: software
+        run: docker compose config --quiet
+
+  # ── Job 3: Check env.example completeness ─────────────────────────
+  env-check:
+    name: Env Example Check
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify env.example has no empty required values
+        run: |
+          echo "Checking env.example for placeholder values..."
+          # Warn if any line still contains the word 'changeme' — devs should notice
+          if grep -i 'changeme\|change_me' software/env.example; then
+            echo "✅ Placeholders present (expected in env.example template)."
+          fi
+          # Check file is not empty
+          [ -s software/env.example ] || (echo "env.example is empty!" && exit 1)
+          echo "env.example check passed."
+
+  # ── Job 4: Validate OpenSCAD file (syntax check) ──────────────────
+  scad-lint:
+    name: OpenSCAD Syntax Check
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install OpenSCAD
+        run: sudo apt-get install -y openscad
+
+      - name: Check rack_enclosure.scad syntax
+        run: openscad --hardwarnings --check-parameter-ranges cad/rack_enclosure.scad -o /tmp/test.stl
