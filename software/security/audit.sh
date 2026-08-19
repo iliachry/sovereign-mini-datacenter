@@ -37,27 +37,46 @@ check_item() {
 echo -e "${BOLD}[1] Linux Kernel & Network Hardening:${RESET}"
 # ASLR
 if [[ -f /proc/sys/kernel/randomize_va_space ]]; then
-    val=$(cat /proc/sys/kernel/randomize_va_space)
-    [[ "$val" -eq 2 ]] && check_item "Address Space Layout Randomization (ASLR)" "PASS" "(Level 2)" || check_item "ASLR" "WARN" "(Level $val)"
+    read -r val < /proc/sys/kernel/randomize_va_space || val="0"
+    if [[ "$val" -eq 2 ]]; then
+        check_item "Address Space Layout Randomization (ASLR)" "PASS" "(Level 2)"
+    else
+        check_item "ASLR" "WARN" "(Level $val)"
+    fi
 fi
 
 # TCP SYN Cookies
 if [[ -f /proc/sys/net/ipv4/tcp_syncookies ]]; then
-    val=$(cat /proc/sys/net/ipv4/tcp_syncookies)
-    [[ "$val" -eq 1 ]] && check_item "TCP SYN Flood Protection (tcp_syncookies)" "PASS" || check_item "TCP SYN Protection" "WARN"
+    read -r val < /proc/sys/net/ipv4/tcp_syncookies || val="0"
+    if [[ "$val" -eq 1 ]]; then
+        check_item "TCP SYN Flood Protection (tcp_syncookies)" "PASS"
+    else
+        check_item "TCP SYN Protection" "WARN"
+    fi
 fi
 
 # Reverse Path Filtering
 if [[ -f /proc/sys/net/ipv4/conf/all/rp_filter ]]; then
-    val=$(cat /proc/sys/net/ipv4/conf/all/rp_filter)
-    [[ "$val" -ge 1 ]] && check_item "IP Spoofing Protection (rp_filter)" "PASS" || check_item "IP Spoofing Protection" "WARN"
+    read -r val < /proc/sys/net/ipv4/conf/all/rp_filter || val="0"
+    if [[ "$val" -ge 1 ]]; then
+        check_item "IP Spoofing Protection (rp_filter)" "PASS"
+    else
+        check_item "IP Spoofing Protection" "WARN"
+    fi
 fi
 
 echo -e "\n${BOLD}[2] Docker & Container Security:${RESET}"
 # Docker daemon socket permissions
 if [[ -S /var/run/docker.sock ]]; then
-    sock_perm=$(stat -c "%a" /var/run/docker.sock 2>/dev/null || echo "660")
-    [[ "$sock_perm" == "660" ]] && check_item "Docker Socket Permissions" "PASS" "($sock_perm)" || check_item "Docker Socket Permissions" "WARN" "($sock_perm)"
+    sock_perm="660"
+    if command -v stat &>/dev/null; then
+        sock_perm=$(stat -c "%a" /var/run/docker.sock 2>/dev/null || echo "660")
+    fi
+    if [[ "$sock_perm" == "660" ]]; then
+        check_item "Docker Socket Permissions" "PASS" "($sock_perm)"
+    else
+        check_item "Docker Socket Permissions" "WARN" "($sock_perm)"
+    fi
 else
     check_item "Docker Socket Present" "PASS" "(Containerized or Rootless mode)"
 fi
@@ -76,15 +95,23 @@ fi
 
 echo -e "\n${BOLD}[3] Firewall & Zero-Trust Mesh Exposure:${RESET}"
 if command -v ufw &>/dev/null; then
-    ufw_status=$(ufw status 2>/dev/null | grep -i "Status: active" || true)
-    [[ -n "$ufw_status" ]] && check_item "UFW Host Firewall" "PASS" "(Active)" || check_item "UFW Host Firewall" "WARN" "(Inactive)"
+    ufw_status=$(ufw status 2>/dev/null || true)
+    if echo "$ufw_status" | grep -iq "Status: active"; then
+        check_item "UFW Host Firewall" "PASS" "(Active)"
+    else
+        check_item "UFW Host Firewall" "WARN" "(Inactive)"
+    fi
 else
     check_item "Host Firewall Detection" "PASS" "(iptables / nftables standard)"
 fi
 
 # Check .env secret permissions
-if [[ -f "${BASH_SOURCE[0]%/*}/../.env" ]]; then
-    env_perm=$(stat -c "%a" "${BASH_SOURCE[0]%/*}/../.env" 2>/dev/null || echo "600")
+env_file="${BASH_SOURCE[0]%/*}/../.env"
+if [[ -f "$env_file" ]]; then
+    env_perm="600"
+    if command -v stat &>/dev/null; then
+        env_perm=$(stat -c "%a" "$env_file" 2>/dev/null || echo "600")
+    fi
     if [[ "$env_perm" == "600" || "$env_perm" == "400" ]]; then
         check_item "Environment Secrets File (.env) Permissions" "PASS" "($env_perm)"
     else
