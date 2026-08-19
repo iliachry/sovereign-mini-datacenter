@@ -1,11 +1,11 @@
 // ====================================================================
 // Sovereign Mini Datacenter — 3D Printable Accessories & Mounts
-// Parametric OpenSCAD models for Fan Shrouds, DIN Clips & Cable Combs
+// Parametric OpenSCAD models for Fan Shrouds, DIN Clips, OLED Bezel & Jetson Mounts
 // ====================================================================
 
 $fn = 60;
 
-// Set to: "fan_shroud", "din_clip", or "cable_comb"
+// Set to: "all", "fan_shroud", "din_clip", "cable_comb", "jetson_mount", "oled_bezel", "radiator_shroud_240"
 part = "all";
 
 module fan_shroud_120mm() {
@@ -43,6 +43,51 @@ module esp32_din_rail_mount() {
     }
 }
 
+module jetson_orin_din_bracket() {
+    difference() {
+        union() {
+            cube([100, 80, 8], center = true);
+            // 35mm DIN rail clip engagement
+            translate([0, 17.5, -5]) cube([70, 5, 6], center = true);
+            translate([0, -17.5, -5]) cube([70, 5, 6], center = true);
+        }
+        // Jetson Nano / Orin Nano 58x87mm M3 mounting pattern
+        translate([43.5, 29.0, 0]) cylinder(r = 1.7, h = 15, center = true);
+        translate([-43.5, 29.0, 0]) cylinder(r = 1.7, h = 15, center = true);
+        translate([43.5, -29.0, 0]) cylinder(r = 1.7, h = 15, center = true);
+        translate([-43.5, -29.0, 0]) cylinder(r = 1.7, h = 15, center = true);
+        // Passive ventilation grid
+        for (i = [-30:15:30]) {
+            translate([i, 0, 0]) cube([6, 35, 12], center = true);
+        }
+    }
+}
+
+module front_panel_oled_bracket() {
+    difference() {
+        // 1U EIA-310 Faceplate insert (44.45mm height x 100mm width)
+        cube([100, 44, 4], center = true);
+        
+        // 0.96" I2C OLED display cutout (26.7mm x 19.3mm)
+        translate([-15, 0, 0]) cube([27, 20, 8], center = true);
+        
+        // 4x OLED PCB mounting holes (M2)
+        translate([-15 + 12, 10, 0]) cylinder(r = 1.1, h = 10, center = true);
+        translate([-15 - 12, 10, 0]) cylinder(r = 1.1, h = 10, center = true);
+        translate([-15 + 12, -10, 0]) cylinder(r = 1.1, h = 10, center = true);
+        translate([-15 - 12, -10, 0]) cylinder(r = 1.1, h = 10, center = true);
+        
+        // 3x 5mm Status LEDs (Power, Solar, Space DTN Link)
+        for (j = [-10, 0, 10]) {
+            translate([25, j, 0]) cylinder(r = 2.6, h = 10, center = true);
+        }
+        
+        // 19" Rack M6 mounting ear holes
+        translate([-44, 0, 0]) cylinder(r = 3.2, h = 10, center = true);
+        translate([44, 0, 0]) cylinder(r = 3.2, h = 10, center = true);
+    }
+}
+
 module cable_management_comb() {
     difference() {
         cube([140, 20, 15], center = true);
@@ -59,13 +104,19 @@ module cable_management_comb() {
 }
 
 if (part == "all") {
-    translate([-70, 0, 0]) fan_shroud_120mm();
-    translate([70, -40, 0]) esp32_din_rail_mount();
-    translate([70, 40, 0]) cable_management_comb();
+    translate([-80, -60, 0]) fan_shroud_120mm();
+    translate([60, -60, 0]) esp32_din_rail_mount();
+    translate([60, 40, 0]) cable_management_comb();
+    translate([-80, 60, 0]) jetson_orin_din_bracket();
+    translate([0, 100, 0]) front_panel_oled_bracket();
 } else if (part == "fan_shroud") {
     fan_shroud_120mm();
 } else if (part == "din_clip") {
     esp32_din_rail_mount();
 } else if (part == "cable_comb") {
     cable_management_comb();
+} else if (part == "jetson_mount") {
+    jetson_orin_din_bracket();
+} else if (part == "oled_bezel") {
+    front_panel_oled_bracket();
 }

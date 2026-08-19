@@ -1,0 +1,98 @@
+# Default values for sovereign-stack.
+# This is a YAML-formatted file.
+
+global:
+  domain: sovereign.local
+  storageClass: local-path
+
+# Local AI Cluster (Ollama + Qdrant)
+ai:
+  enabled: true
+  ollama:
+    image:
+      repository: ollama/ollama
+      tag: latest
+      pullPolicy: IfNotPresent
+    resources:
+      limits:
+        nvidia.com/gpu: "1"
+        memory: 16Gi
+        cpu: "8"
+      requests:
+        memory: 8Gi
+        cpu: "4"
+    persistence:
+      enabled: true
+      size: 100Gi
+    defaultModel: "qwen2.5-coder:7b"
+  
+  qdrant:
+    image:
+      repository: qdrant/qdrant
+      tag: v1.11.0
+      pullPolicy: IfNotPresent
+    persistence:
+      enabled: true
+      size: 20Gi
+
+# Core Sovereign Services
+core:
+  openWebUI:
+    enabled: true
+    image:
+      repository: ghcr.io/open-webui/open-webui
+      tag: main
+    service:
+      port: 8080
+
+  vaultwarden:
+    enabled: true
+    image:
+      repository: vaultwarden/server
+      tag: latest
+    persistence:
+      enabled: true
+      size: 5Gi
+
+  nextcloud:
+    enabled: true
+    image:
+      repository: nextcloud
+      tag: 29-apache
+    persistence:
+      enabled: true
+      size: 200Gi
+
+# Micro-Grid & Telemetry
+telemetry:
+  enabled: true
+  powerExporter:
+    image:
+      repository: ghcr.io/iliachry/sovereign-power-exporter
+      tag: latest
+    port: 9101
+    simulate: true
+
+# Space Communications & LoRa
+space:
+  enabled: true
+  dtnNode:
+    port: 9102
+    localEid: "dtn://smdc-node-01.space"
+    persistence:
+      enabled: true
+      size: 10Gi
+  loraGateway:
+    enabled: true
+    serialPort: "/dev/ttyUSB0"
+
+# Ingress Configuration (Traefik)
+ingress:
+  enabled: true
+  className: traefik
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+  tls:
+    enabled: true
+    secretName: sovereign-tls-cert

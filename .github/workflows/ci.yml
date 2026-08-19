@@ -78,31 +78,16 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+      - name: Install dependencies & test runner
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pyyaml pytest-cov build
+
       - name: Compile and run test suite
         run: |
-          python -m py_compile software/telemetry/power_exporter.py
-          python -m py_compile software/space/*.py software/space/dtn/*.py software/space/orbital/*.py software/space/transceiver/*.py
-          python -m py_compile src/sovereign_dc/*.py
-          
-          # Test Space DTN Bundle Serialization and Look Angle calculations
-          python -c "
-          from software.space.dtn.bundle import Bundle, BundlePriority
-          from software.space.orbital.propagator import GroundStation, SatelliteOrbit
-          
-          # Test DTN Bundle
-          b = Bundle('dtn://node-1/test', 'dtn://ground/rx', b'HELLO SPACE', priority=BundlePriority.CRITICAL)
-          serialized = b.serialize()
-          b2 = Bundle.deserialize(serialized)
-          assert b2.payload == b'HELLO SPACE', 'Payload mismatch'
-          assert b2.priority == BundlePriority.CRITICAL, 'Priority mismatch'
-          
-          # Test Orbital Look Angles
-          gs = GroundStation('Test-GS', 37.98, 23.72)
-          sat = SatelliteOrbit('Test-Sat', 99999, 53.0, 550.0, 95.0)
-          passes = gs.predict_passes(sat, duration_hours=6.0)
-          print(f'Calculated {len(passes)} passes successfully')
-          "
-          echo "✅ Python telemetry & space DTN test suite passed."
+          python -m compileall software/ src/
+          pytest tests/ --cov=src/sovereign_dc
+          echo "✅ Python test suite & coverage passed."
 
   # ── Job 5: OpenSCAD syntax check (with virtual display) ──────────
   scad-lint:

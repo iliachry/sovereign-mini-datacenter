@@ -317,6 +317,102 @@ def cmd_telemetry(args):
     print(f"{BOLD}{CYAN}Starting Sovereign Power & Thermal Exporter on port {args.port}...{RESET}")
     telemetry.run(port=args.port, simulation=not args.hardware)
 
+def cmd_agent_status(args):
+    """Checks local Ollama LLM and Qdrant vector database."""
+    print(f"\n{BOLD}{CYAN}=== Sovereign Autonomous AI Subsystems ==={RESET}\n")
+    ollama_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+    try:
+        req = urllib.request.Request(f"{ollama_url}/api/tags", headers={"User-Agent": "smdc-cli"})
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            models = [m.get("name") for m in data.get("models", [])]
+            print(f"  {GREEN}●{RESET} {BOLD}Ollama LLM Engine:{RESET} ONLINE at {ollama_url}")
+            print(f"    Available Models ({len(models)}): {', '.join(models) if models else 'None loaded'}")
+    except Exception as e:
+        print(f"  {YELLOW}○{RESET} {BOLD}Ollama LLM Engine:{RESET} OFFLINE ({e})")
+
+    qdrant_url = os.getenv("QDRANT_BASE_URL", "http://localhost:6333")
+    try:
+        req = urllib.request.Request(f"{qdrant_url}/collections", headers={"User-Agent": "smdc-cli"})
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            collections = [c.get("name") for c in data.get("result", {}).get("collections", [])]
+            print(f"  {GREEN}●{RESET} {BOLD}Qdrant Vector DB:{RESET}  ONLINE at {qdrant_url}")
+            print(f"    Collections ({len(collections)}): {', '.join(collections) if collections else 'sovereign_knowledge (pending)'}")
+    except Exception as e:
+        print(f"  {YELLOW}○{RESET} {BOLD}Qdrant Vector DB:{RESET}  OFFLINE ({e})")
+    print("")
+
+def cmd_agent_ask(args):
+    """Runs a direct query against the sovereign local LLM."""
+    query = args.query
+    model = args.model or os.getenv("OLLAMA_DEFAULT_MODEL", "qwen2.5-coder:7b")
+    ollama_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+    print(f"{BOLD}{CYAN}Querying Sovereign AI ({model})...{RESET}\n")
+    try:
+        req_data = json.dumps({
+            "model": model,
+            "prompt": query,
+            "stream": False
+        }).encode("utf-8")
+        req = urllib.request.Request(f"{ollama_url}/api/generate", data=req_data, headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=45) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            answer = data.get("response", "No output.")
+            print(answer)
+    except Exception as e:
+        print(f"{RED}Error communicating with Ollama: {e}{RESET}")
+        print(f"{YELLOW}Ensure Ollama container is running (run 'smdc deploy' or 'docker compose up -d ollama').{RESET}")
+
+def cmd_agent_review(args):
+    """Reviews code diff or file using local AI reviewer agent."""
+    path = args.target
+    if not os.path.exists(path):
+        print(f"{RED}Error: Target file or diff '{path}' not found.{RESET}")
+        return
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        content = f.read()
+
+    try:
+        from sovereign_dc.agents.gitlab_reviewer import query_ollama
+    except ImportError:
+        from software.agents.gitlab_reviewer import query_ollama
+
+    prompt = f"""
+You are an expert security auditor and software architect running on the Sovereign Mini Datacenter.
+Review the following code/diff and provide actionable feedback, security findings, and optimization suggestions:
+
+```
+{content[:4000]}
+```
+"""
+    print(f"{BOLD}{CYAN}Running AI Code Review on {path}...{RESET}\n")
+    review = query_ollama(prompt)
+    print(review)
+
+def cmd_agent_index(args):
+    """Indexes documents from a target directory into Qdrant for semantic RAG."""
+    path = args.directory
+    if not os.path.exists(path):
+        print(f"{RED}Error: Target directory '{path}' does not exist.{RESET}")
+        return
+    
+    try:
+        from sovereign_dc.agents.knowledge_indexer import process_file, ensure_qdrant_collection
+    except ImportError:
+        from software.agents.knowledge_indexer import process_file, ensure_qdrant_collection
+
+    print(f"{BOLD}{CYAN}Indexing documents from {path} into Qdrant vector database...{RESET}")
+    ensure_qdrant_collection()
+    indexed_count = 0
+    for root, _, files in os.walk(path):
+        for f in files:
+            if f.endswith((".md", ".txt", ".yaml", ".json", ".py", ".sh")):
+                full_path = os.path.join(root, f)
+                process_file(full_path)
+                indexed_count += 1
+    print(f"{GREEN}✅ Successfully indexed {indexed_count} documents into Sovereign RAG collection.{RESET}\n")
+
 def cmd_docs(args):
     """Prints documentation and 3D digital twin URL."""
     print(f"\n{BOLD}Sovereign Mini Datacenter v{__version__}{RESET}")
@@ -361,6 +457,26 @@ def main():
     p_telem.add_argument("--port", type=int, default=9101, help="Port to listen on (default: 9101)")
     p_telem.add_argument("--hardware", action="store_true", help="Read physical serial/RS485 data instead of simulation")
     p_telem.set_defaults(func=cmd_telemetry)
+
+    # Agent Subcommand Suite
+    p_agent = subparsers.add_parser("agent", help="Autonomous AI Agents (Code Review, Semantic RAG & Status)")
+    agent_subs = p_agent.add_subparsers(dest="agent_command", help="Agent actions")
+
+    p_ag_status = agent_subs.add_parser("status", help="Check status of Ollama LLM and Qdrant Vector DB")
+    p_ag_status.set_defaults(func=cmd_agent_status)
+
+    p_ag_ask = agent_subs.add_parser("ask", help="Query the local Ollama LLM engine")
+    p_ag_ask.add_argument("query", help="Question or prompt to send to the local LLM")
+    p_ag_ask.add_argument("--model", help="Specific model name (default: qwen2.5-coder:7b)")
+    p_ag_ask.set_defaults(func=cmd_agent_ask)
+
+    p_ag_review = agent_subs.add_parser("review", help="Perform automated AI code review on a file or diff")
+    p_ag_review.add_argument("target", help="Path to code file or diff patch")
+    p_ag_review.set_defaults(func=cmd_agent_review)
+
+    p_ag_index = agent_subs.add_parser("index", help="Index document directory into Qdrant vector database")
+    p_ag_index.add_argument("directory", help="Path to document directory to chunk and vectorize")
+    p_ag_index.set_defaults(func=cmd_agent_index)
 
     # Space Subcommand Suite
     p_space = subparsers.add_parser("space", help="Space & Satellite Communications (DTN / BPv7 / Orbit Tracking)")

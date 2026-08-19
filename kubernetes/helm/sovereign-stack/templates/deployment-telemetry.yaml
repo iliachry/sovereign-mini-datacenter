@@ -1,0 +1,34 @@
+{{- if .Values.telemetry.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "sovereign-stack.fullname" . }}-telemetry
+  labels:
+    {{- include "sovereign-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: telemetry
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "sovereign-stack.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: telemetry
+  template:
+    metadata:
+      labels:
+        {{- include "sovereign-stack.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: telemetry
+    spec:
+      containers:
+        - name: power-exporter
+          image: "{{ .Values.telemetry.powerExporter.image.repository }}:{{ .Values.telemetry.powerExporter.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.telemetry.powerExporter.port }}
+              protocol: TCP
+          env:
+            - name: EXPORTER_PORT
+              value: "{{ .Values.telemetry.powerExporter.port }}"
+            - name: SIMULATE_POWER_DATA
+              value: "{{ .Values.telemetry.powerExporter.simulate }}"
+{{- end }}

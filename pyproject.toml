@@ -44,6 +44,12 @@ classifiers = [
 ]
 dependencies = []
 
+[project.optional-dependencies]
+test = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+]
+
 [project.scripts]
 smdc = "sovereign_dc.cli:main"
 
@@ -51,3 +57,8 @@ smdc = "sovereign_dc.cli:main"
 Homepage = "https://github.com/iliachry/sovereign-mini-datacenter"
 Documentation = "https://iliachry.gr/sovereign-mini-datacenter/"
 Repository = "https://github.com/iliachry/sovereign-mini-datacenter"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-v"

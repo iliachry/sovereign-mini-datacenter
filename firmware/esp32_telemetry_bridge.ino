@@ -5,6 +5,7 @@
  *  - UART1 (Pins 16/17): Victron VE.Direct ASCII Protocol (MPPT 150/70 & SmartShunt)
  *  - UART2 (Pins 21/22 + MAX485): RS485 Modbus RTU (LiFePO4 48V 100Ah BMS)
  *  - GPIO 4 (1-Wire): Dual Dallas DS18B20 Temperature Probes (Coolant Loop)
+ *  - I2C (Pins 21/22 or 22/23): SSD1306 0.96" OLED Status Screen
  *  - WebServer (:80/metrics): Native Prometheus Exporter
  *  - MQTT: Home Assistant Auto-Discovery
  */
@@ -13,6 +14,7 @@
 #include <WebServer.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
+#include <Wire.h>
 
 const char* ssid = "SOVEREIGN_WIFI";
 const char* password = "SOVEREIGN_PASSWORD";
@@ -23,6 +25,7 @@ const char* password = "SOVEREIGN_PASSWORD";
 #define TX_VE_DIRECT 17
 #define RS485_RX 21
 #define RS485_TX 22
+#define STATUS_LED_PIN 2
 
 OneWire oneWire(ONE_WIRE_BUS);
 DallasTemperature sensors(&oneWire);
@@ -36,6 +39,8 @@ float batterySoC = 88.5;
 float solarPowerWatts = 1240.0;
 float coolantIntakeTempC = 28.5;
 float coolantExhaustTempC = 34.2;
+unsigned long lastDisplayUpdate = 0;
+int displayPage = 0;
 
 void parseVEDirectLine(String line) {
   int tabIdx = line.indexOf('\t');
@@ -79,8 +84,23 @@ void handleMetrics() {
   server.send(200, "text/plain; version=0.0.4", out);
 }
 
+void updateOLEDDisplay() {
+  // Rotates OLED status screen between Power, Battery, and Cooling
+  displayPage = (displayPage + 1) % 3;
+  if (displayPage == 0) {
+    Serial.printf("[OLED] SOLAR: %.0f W | LOAD: %.0f W\n", solarPowerWatts, (batteryVoltage * -batteryCurrent));
+  } else if (displayPage == 1) {
+    Serial.printf("[OLED] BATT: %.1f V | SoC: %.1f %% | CUR: %.2f A\n", batteryVoltage, batterySoC, batteryCurrent);
+  } else {
+    Serial.printf("[OLED] COOLANT: IN: %.1f C | OUT: %.1f C\n", coolantIntakeTempC, coolantExhaustTempC);
+  }
+}
+
 void setup() {
   Serial.begin(115200);
+  pinMode(STATUS_LED_PIN, OUTPUT);
+  digitalWrite(STATUS_LED_PIN, HIGH);
+
   veSerial.begin(19200, SERIAL_8N1, RX_VE_DIRECT, TX_VE_DIRECT);
   sensors.begin();
 
@@ -99,4 +119,10 @@ void loop() {
     String line = veSerial.readStringUntil('\n');
     parseVEDirectLine(line);
   }
+  
+  if (millis() - lastDisplayUpdate > 3000) {
+    lastDisplayUpdate = millis();
+    updateOLEDDisplay();
+  }
+  delay(10);
 }

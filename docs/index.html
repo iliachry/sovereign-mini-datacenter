@@ -450,6 +450,7 @@
         <button class="tab-btn" id="btn-thermal" onclick="toggleThermalMode()">🌡️ Thermal Heatmap</button>
         <button class="tab-btn" id="btn-calc" onclick="toggleCalculator()" style="color:var(--accent-blue); border-color:rgba(56,189,248,0.4);">🧮 Sizing Calc</button>
         <button class="tab-btn" id="btn-terminal" onclick="toggleTerminal()" style="color:var(--accent); border-color:rgba(16,185,129,0.4);">💻 Terminal</button>
+        <button class="tab-btn" id="btn-tx-space" onclick="triggerSpaceTransmission()" style="color:#d8b4fe; border-color:rgba(168,85,247,0.5);">🚀 TX Space Bundle</button>
         <button class="tab-btn" id="btn-door" onclick="toggleDoor()">🚪 Open Door</button>
       </div>
     </div>
@@ -1375,6 +1376,12 @@ Type 'help', 'smdc status', 'smdc space passes', 'smdc space send', 'smdc audit'
       }
     }
 
+    function triggerSpaceTransmission() {
+      const term = document.getElementById('terminal-modal');
+      if (term.style.display !== 'flex') toggleTerminal();
+      executeSimulatedCommand('smdc space send');
+    }
+
     function handleTerminalInput(e) {
       if (e.key === 'Enter') {
         const input = document.getElementById('term-cmd-input');
@@ -1390,7 +1397,7 @@ Type 'help', 'smdc status', 'smdc space passes', 'smdc space send', 'smdc audit'
       const out = document.getElementById('term-output');
       out.textContent += `\nsmdc$ ${cmd}\n`;
 
-      const parts = cmd.toLowerCase().split(' ');
+      const parts = cmd.toLowerCase().trim().split(' ');
       const mainCmd = parts[0] === 'smdc' ? parts[1] : parts[0];
       const subCmd = parts[0] === 'smdc' ? parts[2] : parts[1];
 
@@ -1399,32 +1406,55 @@ Type 'help', 'smdc status', 'smdc space passes', 'smdc space send', 'smdc audit'
 ● All 11 Services Healthy (Traefik, Ollama, Qdrant, GitLab, Nextcloud)
 • Battery: 88.4% (52.8V) | Solar: 1,240W | Temp: 31.2°C
 • Space Link: ONLINE (IN CONTACT, 48.5° Elevation)
-• DTN Spool: 3 bundles waiting\n`;
+• DTN Spool: 3 bundles waiting | LoRa Mesh: 4 field radios\n`;
+      } else if (mainCmd === 'agent' && (subCmd === 'status' || !subCmd)) {
+        out.textContent += `=== Sovereign Autonomous AI Subsystems ===
+● Ollama LLM Engine: ONLINE (qwen2.5-coder:7b, nomic-embed-text)
+● Qdrant Vector DB:  ONLINE (sovereign_knowledge - 1,482 vectors)
+● GitLab Reviewer:   ARMED (Listening on MR webhooks)
+● Sentinel Copilot:  ACTIVE (Solar Yield: 1,240W -> Full GPU unlocked)\n`;
+      } else if (mainCmd === 'agent' && subCmd === 'ask') {
+        const query = cmd.substring(cmd.indexOf('ask') + 3).trim();
+        out.textContent += `🤖 Sovereign AI (qwen2.5-coder:7b):
+Evaluating prompt '${query || "system architecture"}' locally on Jetson/DGX GPU...
+• Response: Sovereign Mini Datacenter operates 100% off-grid with 10.24 kWh LiFePO4 batteries, local semantic RAG, and automated DTN space packet routing.\n`;
+      } else if (mainCmd === 'lora' || (mainCmd === 'mesh' && subCmd === 'lora')) {
+        out.textContent += `📻 LoRa Meshtastic Field Telemetry Log (868/915 MHz):
+[RX 10:24:12] Node 'alpine-field-01' -> RSSI: -92dBm | Battery: 94% | Temp: 14.2°C
+[RX 10:24:35] Node 'island-sensor-03' -> RSSI: -88dBm | Solar: 380W | BMS: OK
+[TX 10:25:01] Gateway smdc-gw-01 -> Mesh broadcast ACK (Hop limit: 3)\n`;
       } else if (mainCmd === 'space' && subCmd === 'passes') {
         out.textContent += `🛰️ Next Satellite Passes (Athens Ground Station):
 Starlink-LEO-Alpha : AOS 14m 22s | Max El: 72.4° | Duration: 8m 10s
-Iridium-NEXT-42    : AOS 48m 10s | Max El: 41.2° | Duration: 6m 30s\n`;
+Iridium-NEXT-42    : AOS 48m 10s | Max El: 41.2° | Duration: 6m 30s
+Swarm-LoRa-Relay-1 : AOS 1h 12m  | Max El: 63.4° | Duration: 7m 30s\n`;
       } else if (mainCmd === 'space' && subCmd === 'send') {
         pulseSpeed = 0.025; // Accelerate space beam pulse animation!
-        setTimeout(() => { pulseSpeed = 0.006; }, 4000);
-        out.textContent += `✅ Bundle dtn://smdc-node-01.space/7f9a2e enqueued!
-• Transmitting over active RF beam to LEO Relay Alpha (550km)...
-• Priority: CRITICAL (Tier 3) | Checksum: SHA-256 Validated\n`;
+        setTimeout(() => { pulseSpeed = 0.006; }, 4500);
+        out.textContent += `🚀 [BPv7] Bundle dtn://smdc-node-01.space/7f9a2e enqueued!
+• Target: Starlink-LEO-Alpha (Az: 210.4°, El: 48.5°, Dist: 582km)
+• Mod: QPSK Carrier @ 2.4 GHz | Data Rate: 2.0 Mbps
+• Transmitting active orbital laser/RF tracking pulse...
+✅ Transmission confirmed! Next satellite hop acknowledged.\n`;
       } else if (mainCmd === 'audit') {
         out.textContent += `=== Security Compliance Audit ===
-[ PASS ] ASLR Level 2 Active
-[ PASS ] TCP SYN Flood Protection
+[ PASS ] ASLR Level 2 Active & Kernel Hardening
+[ PASS ] TCP SYN Flood Protection & Fail2ban
 [ PASS ] AES-256 Encrypted Volumes (Restic/Vaultwarden)
-[ PASS ] WireGuard Mesh Zero-Trust Network
-✅ All security benchmarks satisfied.\n`;
+[ PASS ] WireGuard Mesh Zero-Trust Network Overlay
+[ PASS ] CrowdSec Intrusion Prevention Engine
+✅ All 14 security benchmarks satisfied.\n`;
       } else if (mainCmd === 'mesh') {
         out.textContent += `🌐 Sovereign Global Mesh Topology:
-• smdc-node-01 (Athens Core)    : 100.64.0.1 [ONLINE]
-• smdc-node-02 (Alpine Off-Grid): 100.64.0.2 [ONLINE]
-• smdc-node-03 (Aegean Island)  : 100.64.0.3 [STANDBY/DTN]\n`;
+• smdc-node-01 (Athens Core)    : 100.64.0.1 [ONLINE - 550 TOPS]
+• smdc-node-02 (Alpine Off-Grid): 100.64.0.2 [ONLINE - 275 TOPS]
+• smdc-node-03 (Aegean Island)  : 100.64.0.3 [STANDBY / DTN ARMED]\n`;
       } else if (mainCmd === 'help') {
         out.textContent += `Available commands:
   smdc status        - Show system, power, and space telemetry
+  smdc agent status  - Check Ollama LLM and Qdrant RAG state
+  smdc agent ask     - Query local AI copilot
+  smdc lora log      - Show 868MHz LoRa mesh packet log
   smdc space passes  - Predict upcoming satellite contact passes
   smdc space send    - Enqueue encrypted DTN bundle to space relay
   smdc audit         - Run security compliance audit

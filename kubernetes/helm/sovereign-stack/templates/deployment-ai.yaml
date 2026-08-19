@@ -1,0 +1,78 @@
+{{- if .Values.ai.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "sovereign-stack.fullname" . }}-ai-cluster
+  labels:
+    {{- include "sovereign-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ai-cluster
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "sovereign-stack.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: ai-cluster
+  template:
+    metadata:
+      labels:
+        {{- include "sovereign-stack.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: ai-cluster
+    spec:
+      containers:
+        - name: ollama
+          image: "{{ .Values.ai.ollama.image.repository }}:{{ .Values.ai.ollama.image.tag }}"
+          imagePullPolicy: {{ .Values.ai.ollama.image.pullPolicy }}
+          ports:
+            - name: http-ollama
+              containerPort: 11434
+              protocol: TCP
+          env:
+            - name: OLLAMA_KEEP_ALIVE
+              value: "24h"
+          resources:
+            {{- toYaml .Values.ai.ollama.resources | nindent 12 }}
+          volumeMounts:
+            - name: ollama-data
+              mountPath: /root/.ollama
+        - name: qdrant
+          image: "{{ .Values.ai.qdrant.image.repository }}:{{ .Values.ai.qdrant.image.tag }}"
+          imagePullPolicy: {{ .Values.ai.qdrant.image.pullPolicy }}
+          ports:
+            - name: http-qdrant
+              containerPort: 6333
+              protocol: TCP
+          volumeMounts:
+            - name: qdrant-data
+              mountPath: /qdrant/storage
+      volumes:
+        - name: ollama-data
+          persistentVolumeClaim:
+            claimName: {{ include "sovereign-stack.fullname" . }}-ollama-pvc
+        - name: qdrant-data
+          persistentVolumeClaim:
+            claimName: {{ include "sovereign-stack.fullname" . }}-qdrant-pvc
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "sovereign-stack.fullname" . }}-ollama-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: {{ .Values.global.storageClass }}
+  resources:
+    requests:
+      storage: {{ .Values.ai.ollama.persistence.size }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "sovereign-stack.fullname" . }}-qdrant-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: {{ .Values.global.storageClass }}
+  resources:
+    requests:
+      storage: {{ .Values.ai.qdrant.persistence.size }}
+{{- end }}

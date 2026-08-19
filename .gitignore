@@ -11,6 +11,9 @@ __pycache__/
 dist/
 build/
 *.egg-info/
+.pytest_cache/
+.coverage
+uv.lock
 
 # Environment & Secrets
 .env
