@@ -28,7 +28,7 @@ jobs:
 
       - name: Lint all shell scripts
         run: |
-          find software/ -name "*.sh" -type f -exec shellcheck -S warning -e SC2312 -e SC2155 -e SC2086 -e SC1091 {} +
+          find software/ -name "*.sh" -type f -exec shellcheck -S error {} +
 
   # ── Job 2: Validate docker-compose stacks ────────────────────────
   compose-validate:
