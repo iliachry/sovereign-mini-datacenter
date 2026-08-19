@@ -78,16 +78,19 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Install dependencies & test runner
+      - name: Install dependencies & package
         run: |
           python -m pip install --upgrade pip
-          pip install pytest pyyaml pytest-cov build
+          pip install -e ".[test]" build
 
       - name: Compile and run test suite
+        env:
+          PYTHONPATH: src
         run: |
           python -m compileall software/ src/
-          pytest tests/ --cov=src/sovereign_dc
+          pytest tests/ --cov=sovereign_dc
           echo "✅ Python test suite & coverage passed."
+
 
   # ── Job 5: OpenSCAD syntax check (with virtual display) ──────────
   scad-lint:
