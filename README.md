@@ -87,6 +87,12 @@ sovereign-mini-datacenter/
 │   │   ├── docker-compose.telemetry.yml
 │   │   ├── power_exporter.py    # Victron VE.Direct & LiFePO4 BMS Prometheus exporter
 │   │   └── load_shedder.sh      # Autonomous power & thermal load-shedder
+│   ├── space/                   # Space & Satellite Communications (DTN / BPv7)
+│   │   ├── dtn/                 # RFC 9171 Bundle Protocol v7 Store-and-Forward Router
+│   │   ├── orbital/             # SGP4 Orbit Mechanics & Pass Prediction
+│   │   ├── transceiver/         # Satellite RF Transceiver & Channel Simulator
+│   │   ├── space_exporter.py    # Prometheus Space Telemetry Exporter (Port 9102)
+│   │   └── docker-compose.space.yml
 │   ├── mailcow/                 # Sovereign Email Stack
 │   │   ├── docker-compose.mailcow-traefik.yml
 │   │   ├── docker-compose.override.yml
@@ -100,18 +106,19 @@ sovereign-mini-datacenter/
 │   ├── rack_enclosure.scad      # Parametric OpenSCAD 9U 19" chassis model
 │   ├── MANUFACTURING_GUIDE.md   # Laser cut, CNC bend, and assembly instructions
 │   └── render.jpg               # Photorealistic 3D product render
-├── docs/                        # Interactive Three.js WebGL CAD Viewer for GitHub Pages
+├── docs/                        # Interactive Three.js WebGL CAD & Space Viewer for GitHub Pages
 │   └── index.html
 └── .github/
     └── workflows/
-        └── ci.yml               # Complete CI pipeline + GitHub Pages automated deploy
+        ├── ci.yml               # Complete CI pipeline + GitHub Pages automated deploy
+        └── publish.yml          # Automated PyPI package & GHCR multi-arch release pipeline
 ```
 
 ---
 
 ## 🐍 Python CLI Package (`smdc`)
 
-Manage the datacenter and view live telemetry from your terminal:
+Manage the datacenter, live telemetry, and space communications directly from your terminal:
 
 ```bash
 pip install sovereign-dc
@@ -120,14 +127,23 @@ uv tool install sovereign-dc
 ```
 
 ```bash
-# Check container health and live telemetry dashboard
+# Check container health, solar power, and space link telemetry
 smdc status
+
+# Predict upcoming satellite contact passes (AOS / TCA / LOS)
+smdc space passes --hours 12
+
+# Inspect real-time space link budget, SNR, and Doppler shift
+smdc space status
+
+# Queue an encrypted bundle for space transmission on next orbital pass
+smdc space send dtn://ground-station-alpha.earth/telemetry "STATUS_OK" --priority 2
+
+# Inspect DTN store-and-forward spool queue
+smdc space queue
 
 # Deploy container stacks
 smdc deploy --all
-
-# Run standalone solar/BMS telemetry exporter
-smdc telemetry --port 9101
 ```
 
 ---

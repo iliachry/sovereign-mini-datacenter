@@ -16,6 +16,7 @@
       --accent-rgb: 16, 185, 129;
       --accent-blue: #38bdf8;
       --accent-orange: #f59e0b;
+      --accent-purple: #a855f7;
       --text: #f8fafc;
       --text-muted: #94a3b8;
     }
@@ -76,6 +77,17 @@
       text-transform: uppercase;
       font-weight: 600;
     }
+    .badge-space {
+      background: rgba(168, 85, 247, 0.15);
+      color: var(--accent-purple);
+      border: 1px solid var(--accent-purple);
+      font-size: 11px;
+      font-family: 'JetBrains Mono', monospace;
+      padding: 2px 8px;
+      border-radius: 4px;
+      text-transform: uppercase;
+      font-weight: 600;
+    }
     .subtitle {
       color: var(--text-muted);
       font-size: 12px;
@@ -93,7 +105,7 @@
       border-radius: 30px;
       padding: 6px 20px;
       display: flex;
-      gap: 20px;
+      gap: 18px;
       align-items: center;
       font-family: 'JetBrains Mono', monospace;
       font-size: 11px;
@@ -112,17 +124,26 @@
       box-shadow: 0 0 8px var(--accent);
       animation: pulse 2s infinite;
     }
+    .hud-dot-purple {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--accent-purple);
+      box-shadow: 0 0 8px var(--accent-purple);
+      animation: pulse 1.5s infinite;
+    }
     @keyframes pulse {
       0%, 100% { opacity: 1; transform: scale(1); }
       50% { opacity: 0.5; transform: scale(0.85); }
     }
     .hud-val { color: var(--accent); font-weight: 700; }
+    .hud-val-purple { color: var(--accent-purple); font-weight: 700; }
 
     /* Controls Panel (Right) */
     .panel-right {
       top: 20px;
       right: 24px;
-      width: 330px;
+      width: 340px;
       display: flex;
       flex-direction: column;
       gap: 12px;
@@ -175,6 +196,12 @@
       background: rgba(16, 185, 129, 0.15);
       color: var(--accent);
       border-color: var(--accent);
+      font-weight: 700;
+    }
+    .tab-btn.active-purple {
+      background: rgba(168, 85, 247, 0.15);
+      color: var(--accent-purple);
+      border-color: var(--accent-purple);
       font-weight: 700;
     }
 
@@ -270,8 +297,9 @@
     <div class="header-title-row">
       <h1>Sovereign Mini Datacenter</h1>
       <span class="badge">9U EIA-310-D Full Infrastructure</span>
+      <span class="badge-space">🛰️ Space & Orbital DTN</span>
     </div>
-    <p class="subtitle">Complete Off-Grid Compute, Power, Solar & Thermal Digital Twin</p>
+    <p class="subtitle">Self-Powered Compute, Delay-Tolerant Space Comms & Orbital Relay Twin</p>
   </div>
 
   <!-- Live Telemetry HUD -->
@@ -286,8 +314,13 @@
       <span class="hud-val" id="hud-soc">88.4% (52.8V)</span>
     </div>
     <div class="hud-stat">
-      <span>LOAD:</span>
-      <span class="hud-val" id="hud-load">340 W</span>
+      <div class="hud-dot-purple"></div>
+      <span>SPACE LINK:</span>
+      <span class="hud-val-purple" id="hud-space">IN CONTACT (44.2° El)</span>
+    </div>
+    <div class="hud-stat">
+      <span>NEXT PASS:</span>
+      <span class="hud-val-purple" id="hud-pass">7m 42s</span>
     </div>
     <div class="hud-stat">
       <span>COOLANT:</span>
@@ -306,7 +339,7 @@
       </div>
       <div class="tab-group">
         <button class="tab-btn active" onclick="setSubsystem('all', event)">🌐 Full Infra</button>
-        <button class="tab-btn" onclick="setSubsystem('rack', event)">🔲 9U Rack Chassis</button>
+        <button class="tab-btn" onclick="setSubsystem('space', event)">🛰️ Space & Satellite</button>
         <button class="tab-btn" onclick="setSubsystem('compute', event)">🤖 AI & Compute</button>
         <button class="tab-btn" onclick="setSubsystem('power', event)">⚡ Power & Battery</button>
         <button class="tab-btn" onclick="setSubsystem('cooling', event)">💧 Liquid Cooling</button>
@@ -333,8 +366,8 @@
     <!-- Active Component Inspector Card -->
     <div class="card" id="component-details">
       <div class="card-title">
-        <span id="comp-name">NVIDIA DGX Spark Node 1</span>
-        <span class="badge" id="comp-badge">COMPUTE</span>
+        <span id="comp-name">Motorized Phased Array Space Antenna</span>
+        <span class="badge" id="comp-badge">SPACE COMM</span>
       </div>
       <p id="comp-desc" style="font-size: 11px; color: var(--text-muted); line-height: 1.4;"></p>
       
@@ -351,7 +384,7 @@
       </div>
       <div style="font-family: 'JetBrains Mono', monospace; font-size: 11px; display: flex; flex-direction: column; gap: 5px;">
         <div style="display:flex; justify-content:space-between;"><span style="color:var(--text-muted);">AI Compute</span><span style="color:var(--accent);">2x DGX Spark (550 TOPS)</span></div>
-        <div style="display:flex; justify-content:space-between;"><span style="color:var(--text-muted);">Unified RAM</span><span>128 GB LPDDR5X</span></div>
+        <div style="display:flex; justify-content:space-between;"><span style="color:var(--text-muted);">Space Link</span><span style="color:var(--accent-purple);">BPv7 DTN Phased Array</span></div>
         <div style="display:flex; justify-content:space-between;"><span style="color:var(--text-muted);">Storage</span><span>8 TB NVMe RAID-1</span></div>
         <div style="display:flex; justify-content:space-between;"><span style="color:var(--text-muted);">Network</span><span>MikroTik 10GbE SFP+</span></div>
         <div style="display:flex; justify-content:space-between;"><span style="color:var(--text-muted);">Battery Bank</span><span style="color:var(--accent-orange);">10.24 kWh LiFePO4 (48V)</span></div>
@@ -366,7 +399,7 @@
   <div class="overlay cam-presets interactive">
     <button class="cam-btn active" onclick="setCamera('iso', event)">Isometric</button>
     <button class="cam-btn" onclick="setCamera('front', event)">Front Rack</button>
-    <button class="cam-btn" onclick="setCamera('rear', event)">Rear Cooling</button>
+    <button class="cam-btn" onclick="setCamera('space', event)">Space Antenna</button>
     <button class="cam-btn" onclick="setCamera('power', event)">Power Wall</button>
     <button class="cam-btn" onclick="setCamera('solar', event)">Solar Array</button>
     <button class="cam-btn" onclick="setCamera('top', event)">Top Down</button>
@@ -384,7 +417,8 @@
 
   <script>
     let scene, camera, renderer, controls;
-    let mainGroup, rackGroup, computeGroup, powerGroup, coolingGroup, solarGroup;
+    let mainGroup, rackGroup, computeGroup, powerGroup, coolingGroup, solarGroup, spaceGroup;
+    let phasedArrayGroup, satelliteMesh, spaceBeamMesh;
     let doorMesh, doorOpen = false;
     let isThermal = false, isWireframe = false;
     let activeSubsystem = 'all';
@@ -393,8 +427,21 @@
     let raycaster, mouse;
     let fanBlades = [];
     let materialsMap = new Map();
+    let satAngle = 0;
 
     const COMPONENT_DATA = {
+      'space_antenna': {
+        name: 'Motorized Phased Array Space Antenna',
+        badge: 'SPACE / DTN',
+        desc: 'Electronically steerable beamforming flat-panel antenna with dual-axis motorized tilt gimbal tracking LEO/MEO satellite constellations and executing Delay-Tolerant Networking (BPv7) bundle sync.',
+        specs: { 'Protocol': 'RFC 9171 BPv7', 'Frequency': 'S-Band / Ku-Band', 'Throughput': '25 Mbps Down / 5 Mbps Up', 'EIRP': '42.5 dBW', 'Tracking': 'SGP4 Auto-Track' }
+      },
+      'satellite_relay': {
+        name: 'LEO Sovereign Satellite Relay',
+        badge: 'ORBITAL RELAY',
+        desc: 'Low Earth Orbit (LEO) data relay at 550km altitude routing store-and-forward bundles between sovereign ground nodes.',
+        specs: { 'Altitude': '550 km', 'Inclination': '53.2°', 'Period': '95.6 min', 'Max Contact': '8 min 45s', 'Doppler Offset': '±45 kHz' }
+      },
       'dgx1': {
         name: 'NVIDIA DGX Spark Node 1',
         badge: 'COMPUTE / AI',
@@ -468,9 +515,9 @@
 
       scene = new THREE.Scene();
       scene.background = new THREE.Color(0x060911);
-      scene.fog = new THREE.FogExp2(0x060911, 0.0004);
+      scene.fog = new THREE.FogExp2(0x060911, 0.00035);
 
-      camera = new THREE.PerspectiveCamera(40, window.innerWidth / window.innerHeight, 1, 8000);
+      camera = new THREE.PerspectiveCamera(40, window.innerWidth / window.innerHeight, 1, 10000);
       camera.position.set(1100, 650, 1300);
 
       renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
@@ -489,7 +536,7 @@
       controls.autoRotateSpeed = 0.8;
       controls.maxPolarAngle = Math.PI / 2 - 0.02;
       controls.minDistance = 300;
-      controls.maxDistance = 3500;
+      controls.maxDistance = 4500;
       controls.target.set(0, 50, 0);
 
       raycaster = new THREE.Raycaster();
@@ -516,8 +563,8 @@
       sunLight.shadow.mapSize.width = 2048;
       sunLight.shadow.mapSize.height = 2048;
       sunLight.shadow.camera.near = 100;
-      sunLight.shadow.camera.far = 3500;
-      const d = 1000;
+      sunLight.shadow.camera.far = 4000;
+      const d = 1200;
       sunLight.shadow.camera.left = -d;
       sunLight.shadow.camera.right = d;
       sunLight.shadow.camera.top = d;
@@ -529,13 +576,13 @@
       cyanFill.position.set(-600, 400, -500);
       scene.add(cyanFill);
 
-      const emeraldFill = new THREE.PointLight(0x10b981, 0.9, 1500);
-      emeraldFill.position.set(500, 200, 600);
-      scene.add(emeraldFill);
+      const purpleFill = new THREE.PointLight(0xa855f7, 0.9, 1500);
+      purpleFill.position.set(200, 700, 400);
+      scene.add(purpleFill);
     }
 
     function buildFloorAndEnvironment() {
-      const grid = new THREE.GridHelper(3000, 60, 0x1e293b, 0x0a101f);
+      const grid = new THREE.GridHelper(3500, 70, 0x1e293b, 0x0a101f);
       grid.position.y = -220;
       scene.add(grid);
 
@@ -561,18 +608,21 @@
       powerGroup = new THREE.Group();
       coolingGroup = new THREE.Group();
       solarGroup = new THREE.Group();
+      spaceGroup = new THREE.Group();
 
       mainGroup.add(rackGroup);
       mainGroup.add(computeGroup);
       mainGroup.add(powerGroup);
       mainGroup.add(coolingGroup);
       mainGroup.add(solarGroup);
+      mainGroup.add(spaceGroup);
 
       buildRackEnclosure();
       buildRackMountComponents();
       buildCoolingLoop();
       buildPowerWall();
       buildSolarArray();
+      buildSpaceCommunicationsSubsystem();
     }
 
     function buildRackEnclosure() {
@@ -947,6 +997,99 @@
       solarGroup.add(arrayGroup);
     }
 
+    // ──────────────────────────────────────────────────────────────────────────
+    // 6. SPACE & SATELLITE COMMUNICATIONS SUBSYSTEM
+    // ──────────────────────────────────────────────────────────────────────────
+    function buildSpaceCommunicationsSubsystem() {
+      phasedArrayGroup = new THREE.Group();
+      phasedArrayGroup.position.set(0, 200, 0); // Mount atop 9U enclosure
+
+      // Mast / Gimbal Mount
+      const mastMat = new THREE.MeshStandardMaterial({ color: 0x334155, metalness: 0.8, roughness: 0.3 });
+      const mast = new THREE.Mesh(new THREE.CylinderGeometry(14, 18, 70, 16), mastMat);
+      mast.position.y = 35;
+      mast.castShadow = true;
+      phasedArrayGroup.add(mast);
+
+      // Motorized Dual-Axis Tilt Gimbal
+      const gimbal = new THREE.Mesh(new THREE.SphereGeometry(20, 16, 16), mastMat);
+      gimbal.position.y = 70;
+      phasedArrayGroup.add(gimbal);
+
+      // Phased Array Flat Panel Aperture
+      const panelMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, metalness: 0.9, roughness: 0.2 });
+      const faceMat = new THREE.MeshStandardMaterial({ color: 0xa855f7, metalness: 0.6, roughness: 0.2 });
+
+      const dishFrame = new THREE.Mesh(new THREE.BoxGeometry(220, 14, 160), panelMat);
+      dishFrame.position.set(0, 85, 0);
+      dishFrame.rotation.x = -0.45; // 25° Tilt toward sky
+      dishFrame.castShadow = true;
+
+      const antennaAperture = new THREE.Mesh(new THREE.BoxGeometry(208, 4, 148), faceMat);
+      antennaAperture.position.y = 6;
+      dishFrame.add(antennaAperture);
+
+      phasedArrayGroup.add(dishFrame);
+      registerInteractive(antennaAperture, 'space_antenna');
+      spaceGroup.add(phasedArrayGroup);
+
+      // Orbiting Satellite Relay in Sky
+      const satGroup = new THREE.Group();
+      const satBody = new THREE.Mesh(
+        new THREE.BoxGeometry(40, 25, 25),
+        new THREE.MeshStandardMaterial({ color: 0xe2e8f0, metalness: 0.95, roughness: 0.1 })
+      );
+      satGroup.add(satBody);
+
+      // Satellite Solar Wings
+      const wingMat = new THREE.MeshStandardMaterial({ color: 0x1e3a8a, metalness: 0.8, roughness: 0.2 });
+      const leftWing = new THREE.Mesh(new THREE.BoxGeometry(90, 2, 30), wingMat);
+      leftWing.position.x = -65;
+      satGroup.add(leftWing);
+
+      const rightWing = new THREE.Mesh(new THREE.BoxGeometry(90, 2, 30), wingMat);
+      rightWing.position.x = 65;
+      satGroup.add(rightWing);
+
+      satelliteMesh = satGroup;
+      satelliteMesh.position.set(600, 1100, 500);
+      registerInteractive(satBody, 'satellite_relay');
+      spaceGroup.add(satelliteMesh);
+
+      // Animated Cyber Space Beam connecting Phased Array to Satellite
+      const beamGeom = new THREE.CylinderGeometry(8, 2, 1, 16, 1, true);
+      const beamMat = new THREE.MeshBasicMaterial({
+        color: 0xa855f7,
+        transparent: true,
+        opacity: 0.35,
+        side: THREE.DoubleSide
+      });
+      spaceBeamMesh = new THREE.Mesh(beamGeom, beamMat);
+      spaceGroup.add(spaceBeamMesh);
+    }
+
+    function updateSpaceBeam() {
+      if (!spaceBeamMesh || !phasedArrayGroup || !satelliteMesh) return;
+
+      const startPos = new THREE.Vector3();
+      phasedArrayGroup.getWorldPosition(startPos);
+      startPos.y += 85;
+
+      const endPos = new THREE.Vector3();
+      satelliteMesh.getWorldPosition(endPos);
+
+      const distance = startPos.distanceTo(endPos);
+      const midPoint = new THREE.Vector3().addVectors(startPos, endPos).multiplyScalar(0.5);
+
+      spaceBeamMesh.position.copy(midPoint);
+      spaceBeamMesh.scale.set(1, distance, 1);
+
+      const orientation = new THREE.Matrix4();
+      orientation.lookAt(startPos, endPos, new THREE.Vector3(0, 1, 0));
+      orientation.multiply(new THREE.Matrix4().makeRotationX(Math.PI / 2));
+      spaceBeamMesh.quaternion.setFromRotationMatrix(orientation);
+    }
+
     function onPointerDown(event) {
       mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
       mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
@@ -979,6 +1122,9 @@
       for (const [k, v] of Object.entries(data.specs)) {
         const box = document.createElement('div');
         box.className = 'spec-box';
+        if (key === 'space_antenna' || key === 'satellite_relay') {
+          box.style.borderLeftColor = 'var(--accent-purple)';
+        }
         box.innerHTML = `<div class="label">${k}</div><div class="val">${v}</div>`;
         specsContainer.appendChild(box);
       }
@@ -986,8 +1132,17 @@
 
     function setSubsystem(sub, evt) {
       activeSubsystem = sub;
-      document.querySelectorAll('.tab-group button').forEach(b => b.classList.remove('active'));
-      if (evt && evt.target) evt.target.classList.add('active');
+      document.querySelectorAll('.tab-group button').forEach(b => {
+        b.classList.remove('active');
+        b.classList.remove('active-purple');
+      });
+      if (evt && evt.target) {
+        if (sub === 'space') {
+          evt.target.classList.add('active-purple');
+        } else {
+          evt.target.classList.add('active');
+        }
+      }
 
       const setVisible = (grp, vis) => {
         grp.traverse(child => {
@@ -1003,36 +1158,42 @@
         setVisible(powerGroup, true);
         setVisible(coolingGroup, true);
         setVisible(solarGroup, true);
-      } else if (sub === 'rack') {
+        setVisible(spaceGroup, true);
+      } else if (sub === 'space') {
         setVisible(rackGroup, true);
         setVisible(computeGroup, false);
         setVisible(powerGroup, false);
         setVisible(coolingGroup, false);
         setVisible(solarGroup, false);
+        setVisible(spaceGroup, true);
       } else if (sub === 'compute') {
         setVisible(rackGroup, true);
         setVisible(computeGroup, true);
         setVisible(powerGroup, false);
         setVisible(coolingGroup, false);
         setVisible(solarGroup, false);
+        setVisible(spaceGroup, false);
       } else if (sub === 'power') {
         setVisible(rackGroup, false);
         setVisible(computeGroup, false);
         setVisible(powerGroup, true);
         setVisible(coolingGroup, false);
         setVisible(solarGroup, true);
+        setVisible(spaceGroup, false);
       } else if (sub === 'cooling') {
         setVisible(rackGroup, true);
         setVisible(computeGroup, true);
         setVisible(powerGroup, false);
         setVisible(coolingGroup, true);
         setVisible(solarGroup, false);
+        setVisible(spaceGroup, false);
       } else if (sub === 'solar') {
         setVisible(rackGroup, false);
         setVisible(computeGroup, false);
         setVisible(powerGroup, false);
         setVisible(coolingGroup, false);
         setVisible(solarGroup, true);
+        setVisible(spaceGroup, false);
       }
     }
 
@@ -1047,6 +1208,7 @@
         c.position.z = explodeVal * (50 + i * 30);
       });
       coolingGroup.position.z = -explodeVal * 120;
+      phasedArrayGroup.position.y = 200 + explodeVal * 90;
     }
 
     function toggleDoor() {
@@ -1086,6 +1248,7 @@
             if (c.userData.componentKey === 'dgx1' || c.userData.componentKey === 'dgx2') color = 0xef4444;
             if (c.userData.componentKey === 'cooling') color = 0xf59e0b;
             if (c.userData.componentKey === 'inverter') color = 0xf97316;
+            if (c.userData.componentKey === 'space_antenna') color = 0xa855f7;
             c.material = new THREE.MeshBasicMaterial({ color: color });
           } else {
             if (materialsMap.has(c)) {
@@ -1106,8 +1269,9 @@
         case 'front':
           targetPos = new THREE.Vector3(0, 20, 1100);
           break;
-        case 'rear':
-          targetPos = new THREE.Vector3(0, 50, -1100);
+        case 'space':
+          targetPos = new THREE.Vector3(250, 450, 450);
+          targetLookAt = new THREE.Vector3(0, 250, 0);
           break;
         case 'power':
           targetPos = new THREE.Vector3(850, 100, 200);
@@ -1140,12 +1304,12 @@
     function updateTelemetryHUD() {
       const solar = Math.round(1150 + Math.random() * 180);
       const soc = (88.0 + Math.random() * 0.8).toFixed(1);
-      const load = Math.round(320 + Math.random() * 45);
       const temp = (30.8 + Math.random() * 0.9).toFixed(1);
+      const el = (42.0 + Math.random() * 4.0).toFixed(1);
 
       document.getElementById('hud-solar').textContent = `${solar.toLocaleString()} W`;
       document.getElementById('hud-soc').textContent = `${soc}% (52.8V)`;
-      document.getElementById('hud-load').textContent = `${load} W`;
+      document.getElementById('hud-space').textContent = `IN CONTACT (${el}° El)`;
       document.getElementById('hud-coolant').textContent = `${temp}°C`;
     }
 
@@ -1163,6 +1327,18 @@
       fanBlades.forEach(f => {
         f.rotation.z += 0.12;
       });
+
+      // Orbit the satellite in the sky
+      satAngle += 0.004;
+      if (satelliteMesh) {
+        const orbitR = 1200;
+        satelliteMesh.position.x = Math.cos(satAngle) * orbitR;
+        satelliteMesh.position.z = Math.sin(satAngle) * orbitR;
+        satelliteMesh.position.y = 800 + Math.sin(satAngle * 2) * 200;
+        satelliteMesh.lookAt(0, 200, 0);
+
+        updateSpaceBeam();
+      }
 
       renderer.render(scene, camera);
     }

@@ -46,6 +46,7 @@ jobs:
           docker compose -f vpn/docker-compose.vpn.yml config --quiet
           docker compose -f backup/docker-compose.backup.yml config --quiet
           docker compose -f telemetry/docker-compose.telemetry.yml config --quiet
+          docker compose -f space/docker-compose.space.yml config --quiet
           echo "✅ All Docker Compose stacks validated successfully."
 
   # ── Job 3: Check env.example completeness ────────────────────────
@@ -60,25 +61,46 @@ jobs:
           [ -s software/env.example ] || (echo "env.example is empty!" && exit 1)
           for key in ACME_EMAIL DOMAIN_TRAEFIK DOMAIN_VPN WEBUI_SECRET_KEY OPENPROJECT_SECRET \
                      NEXTCLOUD_ADMIN_PASSWORD VAULTWARDEN_ADMIN_TOKEN \
-                     GRAFANA_ADMIN_PASSWORD SMTP_HOST OLLAMA_DEFAULT_MODEL RESTIC_REPOSITORY; do
+                     GRAFANA_ADMIN_PASSWORD SMTP_HOST OLLAMA_DEFAULT_MODEL RESTIC_REPOSITORY SPACE_EXPORTER_PORT; do
             grep -q "^${key}=" software/env.example \
               || (echo "Missing key in env.example: ${key}" && exit 1)
           done
           echo "✅ env.example contains all required keys."
 
-  # ── Job 4: Python Telemetry Exporter Syntax Check ────────────────
+  # ── Job 4: Python Telemetry & Space DTN Unit Tests ───────────────
   python-lint:
-    name: Python Telemetry Lint
+    name: Python Telemetry & Space Unit Tests
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Compile and check python syntax
+      - name: Compile and run test suite
         run: |
           python -m py_compile software/telemetry/power_exporter.py
-          echo "✅ Python power exporter syntax verified."
+          python -m py_compile software/space/*.py software/space/dtn/*.py software/space/orbital/*.py software/space/transceiver/*.py
+          python -m py_compile src/sovereign_dc/*.py
+          
+          # Test Space DTN Bundle Serialization and Look Angle calculations
+          python -c "
+          from software.space.dtn.bundle import Bundle, BundlePriority
+          from software.space.orbital.propagator import GroundStation, SatelliteOrbit
+          
+          # Test DTN Bundle
+          b = Bundle('dtn://node-1/test', 'dtn://ground/rx', b'HELLO SPACE', priority=BundlePriority.CRITICAL)
+          serialized = b.serialize()
+          b2 = Bundle.deserialize(serialized)
+          assert b2.payload == b'HELLO SPACE', 'Payload mismatch'
+          assert b2.priority == BundlePriority.CRITICAL, 'Priority mismatch'
+          
+          # Test Orbital Look Angles
+          gs = GroundStation('Test-GS', 37.98, 23.72)
+          sat = SatelliteOrbit('Test-Sat', 99999, 53.0, 550.0, 95.0)
+          passes = gs.predict_passes(sat, duration_hours=6.0)
+          print(f'Calculated {len(passes)} passes successfully')
+          "
+          echo "✅ Python telemetry & space DTN test suite passed."
 
   # ── Job 5: OpenSCAD syntax check (with virtual display) ──────────
   scad-lint:

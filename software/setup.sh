@@ -1,39 +1,40 @@
 #!/usr/bin/env bash
 # ====================================================================
-# Sovereign Mini Datacenter � Node Initialization & Setup CLI
-# Target OS: Ubuntu Server 24.04 LTS (x86_64 / arm64)
-# Idempotent: safe to run multiple times.
+# Sovereign Mini Datacenter — Unified Modular Setup & Deploy Engine
+# Tested on Ubuntu 24.04 LTS (Noble Numbat) x86_64 / arm64
 # ====================================================================
-
 set -euo pipefail
 
-ARCH=$(dpkg --print-architecture 2>/dev/null || echo "amd64")
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ARCH="$(uname -m)"
+case "$ARCH" in
+    x86_64)  ARCH="amd64" ;;
+    aarch64) ARCH="arm64" ;;
+    *) echo "Unsupported architecture: $ARCH"; exit 1 ;;
+esac
 
-log()  { echo -e "\n\033[1;32m>>> $*\033[0m"; }
-warn() { echo -e "\033[1;33m?  $*\033[0m"; }
-err()  { echo -e "\033[1;31m?  $*\033[0m" >&2; exit 1; }
+log()  { echo -e "\033[1;32m[+] $*\033[0m"; }
+warn() { echo -e "\033[1;33m[!] $*\033[0m"; }
+err()  { echo -e "\033[1;31m[x] $*\033[0m" >&2; exit 1; }
 
-# Module toggles
 WITH_MAILCOW=false
 WITH_VPN=false
 WITH_BACKUP=false
 WITH_TELEMETRY=false
+WITH_SPACE=false
 DRY_RUN=false
 
 show_help() {
     cat <<EOF
-Sovereign Mini Datacenter � Deployment CLI
-
-Usage:
-  sudo ./setup.sh [OPTIONS]
+Usage: sudo bash setup.sh [OPTIONS]
 
 Options:
-  --all               Deploy core stack + Mailcow + VPN + Backup + Telemetry
+  --all               Deploy core stack + Mailcow + VPN + Backup + Telemetry + Space Node
   --with-mailcow      Deploy Mailcow email stack alongside core
   --with-vpn          Deploy Headscale Zero-Trust Mesh VPN
   --with-backup       Deploy automated Restic snapshot backup daemon
   --with-telemetry    Deploy Solar/BMS Telemetry & Load-Shedder Sentinel
+  --with-space        Deploy Space Communications (DTN / Satellite) Node
   --dry-run           Validate configurations and syntax without starting services
   -h, --help          Show this help message
 
@@ -52,6 +53,7 @@ while [[ $# -gt 0 ]]; do
             WITH_VPN=true
             WITH_BACKUP=true
             WITH_TELEMETRY=true
+            WITH_SPACE=true
             shift
             ;;
         --with-mailcow)
@@ -68,6 +70,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --with-telemetry)
             WITH_TELEMETRY=true
+            shift
+            ;;
+        --with-space)
+            WITH_SPACE=true
             shift
             ;;
         --dry-run)
@@ -92,7 +98,8 @@ if [[ "$DRY_RUN" == "true" ]]; then
     docker compose -f vpn/docker-compose.vpn.yml config --quiet
     docker compose -f backup/docker-compose.backup.yml config --quiet
     docker compose -f telemetry/docker-compose.telemetry.yml config --quiet
-    echo "? All configurations valid."
+    docker compose -f space/docker-compose.space.yml config --quiet
+    echo "✅ All configurations valid."
     exit 0
 fi
 
@@ -124,7 +131,7 @@ if ! command -v docker &>/dev/null; then
         warn "Added $REAL_USER to docker group."
     fi
 else
-    log "Docker already installed � skipping."
+    log "Docker already installed — skipping."
 fi
 
 # -- NVIDIA Drivers + CUDA Toolkit --------------------------------
@@ -202,6 +209,11 @@ if [[ "$WITH_TELEMETRY" == "true" ]]; then
     docker compose -f telemetry/docker-compose.telemetry.yml up -d
 fi
 
+if [[ "$WITH_SPACE" == "true" ]]; then
+    log "  Starting Space Communications Node (DTN & Orbital Exporter)..."
+    docker compose -f space/docker-compose.space.yml up -d
+fi
+
 if [[ "$WITH_MAILCOW" == "true" ]]; then
     log "  Mailcow integration enabled. See software/mailcow/README.md for initial mailbox setup."
 fi
@@ -217,16 +229,19 @@ get_env() { grep -E "^${1}=" .env 2>/dev/null | cut -d= -f2 || echo "${2}"; }
 
 echo ""
 echo "====================================================================="
-echo "  ? Sovereign Mini Datacenter Deployed Successfully!"
+echo "  ✅ Sovereign Mini Datacenter Deployed Successfully!"
 echo "---------------------------------------------------------------------"
-echo "  � Open-WebUI (AI + RAG):  https://$(get_env DOMAIN_WEBUI ai.sovereign.local)"
-echo "  � GitLab CE:              https://$(get_env DOMAIN_GITLAB gitlab.sovereign.local)"
-echo "  � OpenProject:            https://$(get_env DOMAIN_PROJECTS projects.sovereign.local)"
-echo "  � Nextcloud:              https://$(get_env DOMAIN_NEXTCLOUD cloud.sovereign.local)"
-echo "  � Vaultwarden:            https://$(get_env DOMAIN_VAULT vault.sovereign.local)"
-echo "  � Grafana Dashboards:     https://$(get_env DOMAIN_GRAFANA grafana.sovereign.local)"
-echo "  � Traefik Proxy:          https://$(get_env DOMAIN_TRAEFIK traefik.sovereign.local)"
+echo "  • Open-WebUI (AI + RAG):  https://$(get_env DOMAIN_WEBUI ai.sovereign.local)"
+echo "  • GitLab CE:              https://$(get_env DOMAIN_GITLAB gitlab.sovereign.local)"
+echo "  • OpenProject:            https://$(get_env DOMAIN_PROJECTS projects.sovereign.local)"
+echo "  • Nextcloud:              https://$(get_env DOMAIN_NEXTCLOUD cloud.sovereign.local)"
+echo "  • Vaultwarden:            https://$(get_env DOMAIN_VAULT vault.sovereign.local)"
+echo "  • Grafana Dashboards:     https://$(get_env DOMAIN_GRAFANA grafana.sovereign.local)"
+echo "  • Traefik Proxy:          https://$(get_env DOMAIN_TRAEFIK traefik.sovereign.local)"
 if [[ "$WITH_VPN" == "true" ]]; then
-echo "  � Headscale Mesh VPN:     https://$(get_env DOMAIN_VPN vpn.sovereign.local)"
+echo "  • Headscale Mesh VPN:     https://$(get_env DOMAIN_VPN vpn.sovereign.local)"
+fi
+if [[ "$WITH_SPACE" == "true" ]]; then
+echo "  • Space Comm Telemetry:   http://localhost:$(get_env SPACE_EXPORTER_PORT 9102)/metrics"
 fi
 echo "====================================================================="

@@ -1,0 +1,32 @@
+services:
+  space-node:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sovereign_space_node
+    restart: unless-stopped
+    ports:
+      - "${SPACE_EXPORTER_PORT:-9102}:9102"
+    environment:
+      - SPACE_EXPORTER_PORT=${SPACE_EXPORTER_PORT:-9102}
+      - GROUND_STATION_LAT=${GROUND_STATION_LAT:-37.9838}
+      - GROUND_STATION_LON=${GROUND_STATION_LON:-23.7275}
+      - GROUND_STATION_NAME=${GROUND_STATION_NAME:-Sovereign-Ground-01}
+      - DTN_DB_PATH=/var/spool/dtn/bundles.db
+    volumes:
+      - space_spool_data:/var/spool/dtn
+    networks:
+      - sovereign_net
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9102/health')"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  space_spool_data:
+    name: sovereign_space_spool
+
+networks:
+  sovereign_net:
+    external: true

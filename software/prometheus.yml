@@ -1,5 +1,5 @@
 # ====================================================================
-# Prometheus Scrape Configuration â€” Sovereign Mini Datacenter
+# Prometheus Scrape Configuration — Sovereign Mini Datacenter
 # ====================================================================
 global:
   scrape_interval: 15s
@@ -38,3 +38,6 @@ scrape_configs:
     static_configs:
       - targets: ['power-exporter:9101']
 
+  - job_name: 'space_telemetry'
+    static_configs:
+      - targets: ['space-node:9102']

@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "sovereign-dc"
-version = "1.0.0"
-description = "Sovereign Mini Datacenter CLI & Infrastructure Management Engine"
+version = "1.1.0"
+description = "Sovereign Mini Datacenter CLI, Space Communications & Infrastructure Management Engine"
 readme = "README.md"
 license = "MIT"
 authors = [
@@ -19,6 +19,11 @@ keywords = [
     "ai",
     "solar",
     "victron",
+    "space",
+    "satellite",
+    "dtn",
+    "bundle-protocol",
+    "orbital-mechanics",
     "telemetry",
     "wireguard",
     "vpn",
