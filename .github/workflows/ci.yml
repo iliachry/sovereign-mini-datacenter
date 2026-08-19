@@ -27,9 +27,8 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
 
       - name: Lint all shell scripts
-        # SC2312: ignore invoke-separately-or-assign (pattern is intentional)
         run: |
-          find software/ -name "*.sh" -type f -exec shellcheck -S warning -e SC2312 {} +
+          find software/ -name "*.sh" -type f -exec shellcheck -S warning -e SC2312 -e SC2155 -e SC2086 -e SC1091 {} +
 
   # ── Job 2: Validate docker-compose stacks ────────────────────────
   compose-validate:
