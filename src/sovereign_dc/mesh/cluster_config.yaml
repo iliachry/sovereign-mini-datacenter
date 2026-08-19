@@ -1,0 +1,39 @@
+# Sovereign Mini Datacenter — Multi-Node Mesh Cluster Topology
+
+cluster_name: sovereign-global-mesh
+
+nodes:
+  - id: smdc-node-01
+    name: "Ground Station Alpha (Athens Core)"
+    location: "37.9838, 23.7275"
+    wireguard_ip: "100.64.0.1"
+    dtn_eid: "dtn://smdc-node-01.sovereign.space"
+    role: primary_gateway
+    compute_tops: 550
+    battery_kwh: 10.24
+
+  - id: smdc-node-02
+    name: "Alpine Off-Grid Node (Switzerland)"
+    location: "46.8182, 8.2275"
+    wireguard_ip: "100.64.0.2"
+    dtn_eid: "dtn://smdc-node-02.sovereign.space"
+    role: edge_compute
+    compute_tops: 275
+    battery_kwh: 15.36
+
+  - id: smdc-node-03
+    name: "Aegean Island Autonomous Node"
+    location: "36.3932, 25.4615"
+    wireguard_ip: "100.64.0.3"
+    dtn_eid: "dtn://smdc-node-03.sovereign.space"
+    role: edge_compute
+    compute_tops: 275
+    battery_kwh: 20.48
+
+sync_policies:
+  vaultwarden_backups:
+    interval_seconds: 3600
+    transport_priority: [wireguard, dtn_space]
+  git_repositories:
+    interval_seconds: 900
+    transport_priority: [wireguard, dtn_space]

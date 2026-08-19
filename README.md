@@ -118,7 +118,7 @@ sovereign-mini-datacenter/
 
 ## 🐍 Python CLI Package (`smdc`)
 
-Manage the datacenter, live telemetry, and space communications directly from your terminal:
+Manage the datacenter, live telemetry, space communications, and security audits directly from your terminal:
 
 ```bash
 pip install sovereign-dc
@@ -129,6 +129,12 @@ uv tool install sovereign-dc
 ```bash
 # Check container health, solar power, and space link telemetry
 smdc status
+
+# Run automated security compliance & CIS benchmark audit
+smdc audit
+
+# Inspect multi-node global mesh cluster topology
+smdc mesh
 
 # Predict upcoming satellite contact passes (AOS / TCA / LOS)
 smdc space passes --hours 12
@@ -142,9 +148,31 @@ smdc space send dtn://ground-station-alpha.earth/telemetry "STATUS_OK" --priorit
 # Inspect DTN store-and-forward spool queue
 smdc space queue
 
-# Deploy container stacks
+# Deploy all container stacks (Core, VPN, Backup, Telemetry, Space, Agents, Security)
 smdc deploy --all
 ```
+
+---
+
+## 🏛️ Advanced Capabilities & Pillars
+
+### 1. 🤖 Autonomous Local AI Agents (`software/agents/`)
+* **Nextcloud Knowledge Indexer:** Daemon that monitors folders, extracts text from documents, embeds them via Ollama (`nomic-embed-text`), and stores vectors in Qdrant for semantic RAG in Open-WebUI.
+* **GitLab Automated Code Reviewer:** Webhook worker that analyzes Merge Request diffs with local LLMs (`qwen2.5-coder`) and posts inline security and quality reviews.
+* **Datacenter Sentinel Copilot:** AI assistant that schedules heavy GPU training workloads during peak solar hours and throttles jobs during battery preservation mode.
+
+### 2. 🔌 ESP32 Microcontroller Hardware Bridge (`firmware/`)
+* C++ Arduino and ESPHome firmware reading physical **Victron VE.Direct** serial streams, **LiFePO4 RS485 Modbus** BMS registers, and **DS18B20 1-Wire** coolant temperature probes, broadcasting via HTTP `/metrics` and MQTT.
+
+### 3. 🛡️ Security Hardening & Zero-Trust Sentinel (`software/security/`)
+* **CrowdSec Intrusion Prevention:** Automated threat bouncer integration with Traefik to block brute-force scanners and malicious IP ranges.
+* **`smdc audit` Scanner:** Evaluates host kernel sysctl parameters, Docker socket isolation, TLS configurations, and firewall rules.
+
+### 4. 🧮 Interactive 3D Sizing & Cost Configurator
+* Live WebGL sizing calculator on **[https://iliachry.gr/sovereign-mini-datacenter/](https://iliachry.gr/sovereign-mini-datacenter/)** simulating daily kWh draw, solar harvest, zero-sun battery autonomy, and dynamic BOM cost with one-click CSV export.
+
+### 5. 🌐 Multi-Node Sovereign Mesh (`software/mesh/`)
+* Inter-datacenter cluster synchronization over WireGuard mesh and BPv7 space bundle relays.
 
 ---
 

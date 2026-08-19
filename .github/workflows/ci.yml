@@ -47,6 +47,8 @@ jobs:
           docker compose -f backup/docker-compose.backup.yml config --quiet
           docker compose -f telemetry/docker-compose.telemetry.yml config --quiet
           docker compose -f space/docker-compose.space.yml config --quiet
+          docker compose -f agents/docker-compose.agents.yml config --quiet
+          docker compose -f security/docker-compose.crowdsec.yml config --quiet
           echo "✅ All Docker Compose stacks validated successfully."
 
   # ── Job 3: Check env.example completeness ────────────────────────

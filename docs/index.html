@@ -6,7 +6,7 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <title>Sovereign Mini Datacenter — 3D Infrastructure Digital Twin (v1.1.0 Space Edition)</title>
+  <title>Sovereign Mini Datacenter — 3D Infrastructure Digital Twin (v1.2.0 Complete Edition)</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,300;0,400;0,600;0,700;1,400&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -154,7 +154,7 @@
     .panel-right {
       top: 20px;
       right: 24px;
-      width: 340px;
+      width: 350px;
       display: flex;
       flex-direction: column;
       gap: 12px;
@@ -237,6 +237,26 @@
       cursor: pointer;
     }
 
+    /* Sizing Calculator Modal */
+    #calculator-modal {
+      display: none;
+      border-color: var(--accent-blue);
+    }
+    .calc-stat-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin: 10px 0;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+    }
+    .calc-stat-box {
+      background: rgba(0,0,0,0.4);
+      padding: 6px 8px;
+      border-radius: 6px;
+      border-left: 2px solid var(--accent-blue);
+    }
+
     /* Component Details Modal */
     #component-details {
       display: none;
@@ -316,7 +336,7 @@
       <span class="badge">9U 19" EIA-310-D</span>
       <span class="badge-space">🛰️ Space & Satellite DTN</span>
     </div>
-    <p class="subtitle">Self-Powered AI Compute, Orbital Satcom & Delay-Tolerant Network Digital Twin</p>
+    <p class="subtitle">Autonomous AI Compute, Orbital Satcom & Solar Micro-Grid Digital Twin</p>
   </div>
 
   <!-- Live Telemetry HUD -->
@@ -366,7 +386,7 @@
       <!-- Explode & Thermal Sliders -->
       <div class="slider-row">
         <div class="slider-row-header">
-          <span>Exploded View</span>
+          <span>Exploded Assembly</span>
           <span id="val-explode">0%</span>
         </div>
         <input type="range" id="slider-explode" min="0" max="100" value="0" oninput="onExplodeChange(this.value)">
@@ -374,10 +394,47 @@
 
       <div class="tab-group" style="margin-top: 8px;">
         <button class="tab-btn" id="btn-thermal" onclick="toggleThermalMode()">🌡️ Thermal Heatmap</button>
-        <button class="tab-btn" id="btn-wireframe" onclick="toggleWireframe()">🕸️ Wireframe</button>
+        <button class="tab-btn" id="btn-calc" onclick="toggleCalculator()" style="color:var(--accent-blue); border-color:rgba(56,189,248,0.4);">🧮 Sizing Calc</button>
         <button class="tab-btn active" id="btn-autorotate" onclick="toggleAutoRotate()">🔄 Auto-Rotate</button>
         <button class="tab-btn" id="btn-door" onclick="toggleDoor()">🚪 Open Door</button>
       </div>
+    </div>
+
+    <!-- Sizing & Energy Calculator Card -->
+    <div class="card" id="calculator-modal">
+      <div class="card-title">
+        <span>🧮 Off-Grid Sizing & Cost Configurator</span>
+        <span class="badge" style="color:var(--accent-blue); border-color:var(--accent-blue); background:rgba(56,189,248,0.15);">SIMULATOR</span>
+      </div>
+      
+      <div class="slider-row">
+        <div class="slider-row-header"><span>Compute Nodes (DGX):</span><span id="calc-val-nodes" style="color:#fff; font-weight:bold;">2 Nodes (550 TOPS)</span></div>
+        <input type="range" id="calc-nodes" min="1" max="4" value="2" oninput="updateCalculator()">
+      </div>
+
+      <div class="slider-row">
+        <div class="slider-row-header"><span>Daily GPU Load:</span><span id="calc-val-hours" style="color:#fff; font-weight:bold;">12 hrs/day</span></div>
+        <input type="range" id="calc-hours" min="2" max="24" step="2" value="12" oninput="updateCalculator()">
+      </div>
+
+      <div class="slider-row">
+        <div class="slider-row-header"><span>LiFePO4 Battery Bank:</span><span id="calc-val-battery" style="color:var(--accent-orange); font-weight:bold;">10.24 kWh (2x 48V)</span></div>
+        <input type="range" id="calc-battery" min="1" max="4" value="2" oninput="updateCalculator()">
+      </div>
+
+      <div class="slider-row">
+        <div class="slider-row-header"><span>Solar PV Array:</span><span id="calc-val-solar" style="color:var(--accent); font-weight:bold;">1,640W (4x 410W)</span></div>
+        <input type="range" id="calc-solar" min="2" max="8" step="2" value="4" oninput="updateCalculator()">
+      </div>
+
+      <div class="calc-stat-grid">
+        <div class="calc-stat-box"><div style="color:var(--text-muted); font-size:9px;">DAILY DRAW</div><div id="calc-res-draw" style="color:#fff; font-weight:bold; font-size:12px;">7.2 kWh</div></div>
+        <div class="calc-stat-box"><div style="color:var(--text-muted); font-size:9px;">DAILY SOLAR YIELD</div><div id="calc-res-yield" style="color:var(--accent); font-weight:bold; font-size:12px;">8.5 kWh</div></div>
+        <div class="calc-stat-box"><div style="color:var(--text-muted); font-size:9px;">ZERO-SUN AUTONOMY</div><div id="calc-res-autonomy" style="color:var(--accent-orange); font-weight:bold; font-size:12px;">28.8 hrs</div></div>
+        <div class="calc-stat-box"><div style="color:var(--text-muted); font-size:9px;">ESTIMATED BOM</div><div id="calc-res-cost" style="color:var(--accent-blue); font-weight:bold; font-size:12px;">$10,600</div></div>
+      </div>
+
+      <button class="tab-btn" onclick="exportBOMCSV()" style="width:100%; padding:8px; background:rgba(56,189,248,0.2); color:#fff; border-color:var(--accent-blue); font-weight:bold;">📥 Export BOM to CSV</button>
     </div>
 
     <!-- Active Component Inspector Card -->
@@ -536,7 +593,6 @@
       scene.fog = new THREE.FogExp2(0x040711, 0.00025);
 
       camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 1, 12000);
-      // Hero Camera framing both the ground datacenter and the orbiting satellite in the sky
       camera.position.set(1350, 750, 1600);
 
       renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
@@ -601,12 +657,10 @@
     }
 
     function buildFloorAndEnvironment() {
-      // Tech Grid Floor
       const grid = new THREE.GridHelper(4000, 80, 0x1e293b, 0x090f1f);
       grid.position.y = -220;
       scene.add(grid);
 
-      // Datacenter concrete foundation pad
       const padGeom = new THREE.BoxGeometry(1600, 8, 1200);
       const padMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.8, metalness: 0.2 });
       const pad = new THREE.Mesh(padGeom, padMat);
@@ -646,9 +700,6 @@
       buildSpaceCommunicationsSubsystem();
     }
 
-    // ──────────────────────────────────────────────────────────────────────────
-    // 1. 9U 19" RACK ENCLOSURE
-    // ──────────────────────────────────────────────────────────────────────────
     function buildRackEnclosure() {
       const W = 540, D = 550, H = 400.05, t = 2.5;
       const alumMat = new THREE.MeshStandardMaterial({ color: 0x64748b, metalness: 0.85, roughness: 0.3 });
@@ -720,9 +771,6 @@
       rackGroup.add(doorMesh);
     }
 
-    // ──────────────────────────────────────────────────────────────────────────
-    // 2. RACK MOUNT COMPONENTS (U1 to U9)
-    // ──────────────────────────────────────────────────────────────────────────
     function buildRackMountComponents() {
       const U = 44.45;
       const startY = -400.05 / 2 + U / 2;
@@ -895,9 +943,6 @@
       return group;
     }
 
-    // ──────────────────────────────────────────────────────────────────────────
-    // 3. COOLING LOOP
-    // ──────────────────────────────────────────────────────────────────────────
     function buildCoolingLoop() {
       const radMat = new THREE.MeshStandardMaterial({ color: 0x18181b, metalness: 0.9, roughness: 0.4 });
       const fanBladeMat = new THREE.MeshStandardMaterial({ color: 0x475569, roughness: 0.6 });
@@ -948,9 +993,6 @@
       coolingGroup.add(tube1);
     }
 
-    // ──────────────────────────────────────────────────────────────────────────
-    // 4. POWER WALL
-    // ──────────────────────────────────────────────────────────────────────────
     function buildPowerWall() {
       const wallGroup = new THREE.Group();
       wallGroup.position.set(450, 0, 0);
@@ -993,9 +1035,6 @@
       powerGroup.add(wallGroup);
     }
 
-    // ──────────────────────────────────────────────────────────────────────────
-    // 5. SOLAR PV ARRAY
-    // ──────────────────────────────────────────────────────────────────────────
     function buildSolarArray() {
       const arrayGroup = new THREE.Group();
       arrayGroup.position.set(-650, -50, 0);
@@ -1037,14 +1076,11 @@
     // 6. PROMINENT SPACE & SATELLITE COMMUNICATIONS SUBSYSTEM
     // ──────────────────────────────────────────────────────────────────────────
     function buildSpaceCommunicationsSubsystem() {
-      // 1. Phased Array Space Terminal mounted on top of the 9U Chassis
       phasedArrayMount = new THREE.Group();
-      phasedArrayMount.position.set(0, 200.05, 0); // Directly above 9U top cover
+      phasedArrayMount.position.set(0, 200.05, 0);
 
       const mastMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, metalness: 0.85, roughness: 0.3 });
-      const goldFoilMat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, metalness: 0.9, roughness: 0.2 });
 
-      // Robust Elevated Articulating Pedestal
       const mastBase = new THREE.Mesh(new THREE.CylinderGeometry(40, 50, 16, 24), mastMat);
       mastBase.position.y = 8;
       phasedArrayMount.add(mastBase);
@@ -1054,12 +1090,10 @@
       mastColumn.castShadow = true;
       phasedArrayMount.add(mastColumn);
 
-      // Motorized Dual-Axis Gimbal Head
       const gimbal = new THREE.Mesh(new THREE.SphereGeometry(26, 24, 24), new THREE.MeshStandardMaterial({ color: 0x334155, metalness: 0.9 }));
       gimbal.position.y = 105;
       phasedArrayMount.add(gimbal);
 
-      // Phased Array Flat Panel Assembly (Rotates & tracks satellite)
       phasedArrayAperture = new THREE.Group();
       phasedArrayAperture.position.set(0, 115, 0);
 
@@ -1070,7 +1104,6 @@
       panelFrame.castShadow = true;
       phasedArrayAperture.add(panelFrame);
 
-      // Glowing Purple Beamforming Aperture Array
       const arrayFace = new THREE.Mesh(
         new THREE.BoxGeometry(244, 4, 174),
         new THREE.MeshStandardMaterial({ color: 0xa855f7, metalness: 0.5, roughness: 0.2, emissive: 0x581c87, emissiveIntensity: 0.4 })
@@ -1078,7 +1111,6 @@
       arrayFace.position.y = 8;
       panelFrame.add(arrayFace);
 
-      // Status Screen on side of Phased Array
       const screen = new THREE.Mesh(
         new THREE.BoxGeometry(40, 8, 2),
         new THREE.MeshBasicMaterial({ color: 0x38bdf8 })
@@ -1090,7 +1122,7 @@
       registerInteractive(arrayFace, 'space_antenna');
       spaceGroup.add(phasedArrayMount);
 
-      // 2. Glowing Orbital Trajectory Ring in the Sky
+      // Glowing Orbital Trajectory Ring in the Sky
       const orbitRadiusX = 1400;
       const orbitRadiusZ = 1200;
       const orbitY = 950;
@@ -1110,17 +1142,15 @@
       orbitRingMesh.computeLineDistances();
       spaceGroup.add(orbitRingMesh);
 
-      // 3. High-Fidelity Orbiting Satellite Relay in the Sky
+      // High-Fidelity Orbiting Satellite Relay
       const satGroup = new THREE.Group();
 
-      // Main Satellite Bus Chassis (Gold MLI Thermal Blanket)
       const satBody = new THREE.Mesh(
         new THREE.BoxGeometry(70, 45, 45),
         new THREE.MeshStandardMaterial({ color: 0xd97706, metalness: 0.95, roughness: 0.15 })
       );
       satGroup.add(satBody);
 
-      // Space Crosslink Parabolic Dish on Satellite
       const satDish = new THREE.Mesh(
         new THREE.ConeGeometry(24, 12, 24, 1, true),
         new THREE.MeshStandardMaterial({ color: 0xe2e8f0, metalness: 0.9, side: THREE.DoubleSide })
@@ -1129,7 +1159,6 @@
       satDish.rotation.x = Math.PI;
       satGroup.add(satDish);
 
-      // High-Efficiency Solar PV Wings (Dual Array with Blue Silicon Texture)
       const wingMat = new THREE.MeshStandardMaterial({ color: 0x1d4ed8, metalness: 0.85, roughness: 0.15 });
       const leftWing = new THREE.Mesh(new THREE.BoxGeometry(160, 3, 55), wingMat);
       leftWing.position.set(-125, 0, 0);
@@ -1139,7 +1168,6 @@
       rightWing.position.set(125, 0, 0);
       satGroup.add(rightWing);
 
-      // Flashing Navigation Beacons
       const beaconLeft = new THREE.Mesh(new THREE.SphereGeometry(3, 8, 8), new THREE.MeshBasicMaterial({ color: 0xef4444 }));
       beaconLeft.position.set(-205, 0, 0);
       satGroup.add(beaconLeft);
@@ -1153,7 +1181,7 @@
       registerInteractive(satBody, 'satellite_relay');
       spaceGroup.add(satelliteMesh);
 
-      // 4. Volumetric Glowing RF Space Beam
+      // Volumetric Glowing RF Space Beam
       const beamGeom = new THREE.CylinderGeometry(16, 4, 1, 16, 1, true);
       const beamMat = new THREE.MeshBasicMaterial({
         color: 0xc084fc,
@@ -1164,7 +1192,6 @@
       spaceBeamMesh = new THREE.Mesh(beamGeom, beamMat);
       spaceGroup.add(spaceBeamMesh);
 
-      // 5. Data Packet Pulses along the Space Beam
       for (let i = 0; i < 4; i++) {
         const pulse = new THREE.Mesh(
           new THREE.RingGeometry(8, 14, 16),
@@ -1185,7 +1212,6 @@
       const satPos = new THREE.Vector3();
       satelliteMesh.getWorldPosition(satPos);
 
-      // Actively steer the phased array antenna to point directly at the orbiting satellite!
       phasedArrayAperture.lookAt(satPos.x, satPos.y, satPos.z);
       phasedArrayAperture.rotateX(Math.PI / 2);
 
@@ -1200,7 +1226,6 @@
       orientation.multiply(new THREE.Matrix4().makeRotationX(Math.PI / 2));
       spaceBeamMesh.quaternion.setFromRotationMatrix(orientation);
 
-      // Animate flowing data packets from ground to space
       dataPulses.forEach(pulse => {
         pulse.userData.offset = (pulse.userData.offset + 0.006) % 1.0;
         const pulsePos = new THREE.Vector3().lerpVectors(groundTargetPos, satPos, pulse.userData.offset);
@@ -1208,6 +1233,71 @@
         pulse.quaternion.copy(spaceBeamMesh.quaternion);
         pulse.scale.set(1 + pulse.userData.offset * 1.5, 1 + pulse.userData.offset * 1.5, 1);
       });
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // SIZING CALCULATOR LOGIC
+    // ──────────────────────────────────────────────────────────────────────────
+    function toggleCalculator() {
+      const modal = document.getElementById('calculator-modal');
+      const isOpen = (modal.style.display === 'block');
+      modal.style.display = isOpen ? 'none' : 'block';
+      if (!isOpen) updateCalculator();
+    }
+
+    function updateCalculator() {
+      const nodes = parseInt(document.getElementById('calc-nodes').value);
+      const hours = parseInt(document.getElementById('calc-hours').value);
+      const batPacks = parseInt(document.getElementById('calc-battery').value);
+      const panels = parseInt(document.getElementById('calc-solar').value);
+
+      document.getElementById('calc-val-nodes').textContent = `${nodes} Node${nodes > 1 ? 's' : ''} (${nodes * 275} TOPS)`;
+      document.getElementById('calc-val-hours').textContent = `${hours} hrs/day`;
+      document.getElementById('calc-val-battery').textContent = `${(batPacks * 5.12).toFixed(2)} kWh (${batPacks}x 48V)`;
+      document.getElementById('calc-val-solar').textContent = `${panels * 410}W (${panels}x 410W)`;
+
+      const baseWatts = 180;
+      const nodeWatts = 160;
+      const avgWatts = baseWatts + (nodes * nodeWatts * (hours / 24.0));
+      const dailyKwh = (avgWatts * 24.0) / 1000.0;
+      const solarKwh = (panels * 0.410 * 5.2);
+      const batKwh = batPacks * 5.12 * 0.85; // 85% usable DoD
+      const autonomyHours = (batKwh * 1000.0) / avgWatts;
+
+      const baseCost = 4500; // Enclosure, Inverter, Switch, PDU, Cooling
+      const nodeCost = nodes * 1500;
+      const batCost = batPacks * 1200;
+      const solarCost = panels * 180;
+      const totalCost = baseCost + nodeCost + batCost + solarCost;
+
+      document.getElementById('calc-res-draw').textContent = `${dailyKwh.toFixed(1)} kWh/day`;
+      document.getElementById('calc-res-yield').textContent = `${solarKwh.toFixed(1)} kWh/day`;
+      document.getElementById('calc-res-autonomy').textContent = `${autonomyHours.toFixed(1)} hrs`;
+      document.getElementById('calc-res-cost').textContent = `$${totalCost.toLocaleString()}`;
+    }
+
+    function exportBOMCSV() {
+      const nodes = document.getElementById('calc-nodes').value;
+      const batPacks = document.getElementById('calc-battery').value;
+      const panels = document.getElementById('calc-solar').value;
+      const cost = document.getElementById('calc-res-cost').textContent;
+
+      let csv = "Component,Quantity,Unit Cost,Category\n";
+      csv += `"NVIDIA DGX Spark / Jetson Orin Compute Node",${nodes},"$1,500","Compute"\n`;
+      csv += `"Server Rack LiFePO4 48V 100Ah Battery",${batPacks},"$1,200","Energy"\n`;
+      csv += `"Monocrystalline 410W PERC Solar Panels",${panels},"$180","Energy"\n`;
+      csv += `"Victron MultiPlus-II 48/3000 Inverter",1,"$1,100","Power"\n`;
+      csv += `"Victron SmartSolar MPPT 150/70",1,"$540","Power"\n`;
+      csv += `"MikroTik CRS309 10GbE Switch",1,"$270","Networking"\n`;
+      csv += `"9U 19 Inch Custom Aluminum Enclosure",1,"$450","Chassis"\n`;
+      csv += `"Dual 360mm Liquid Loop & D5 Pump",1,"$420","Thermal"\n`;
+      csv += `"Motorized Phased Array Space Terminal",1,"$850","Space Comm"\n`;
+
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = `sovereign_datacenter_bom_${nodes}nodes_${batPacks}bat_${panels}pv.csv`;
+      link.click();
     }
 
     function onPointerDown(event) {
@@ -1396,12 +1486,10 @@
 
       switch(preset) {
         case 'space':
-          // Dramatic high-angle shot framing the Phased Array and Orbiting Satellite together
           targetPos = new THREE.Vector3(1400, 1100, 1500);
           targetLookAt = new THREE.Vector3(200, 500, 100);
           break;
         case 'antenna':
-          // Close up inspection on the Motorized Phased Array
           targetPos = new THREE.Vector3(300, 480, 450);
           targetLookAt = new THREE.Vector3(0, 300, 0);
           break;
@@ -1462,7 +1550,6 @@
         f.rotation.z += 0.12;
       });
 
-      // Smooth orbital mechanics simulation in sky
       satAngle += 0.003;
       if (satelliteMesh) {
         const orbitRx = 1400;

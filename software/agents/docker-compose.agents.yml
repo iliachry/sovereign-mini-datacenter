@@ -1,0 +1,55 @@
+services:
+  knowledge-indexer:
+    image: python:3.11-alpine
+    container_name: sovereign_knowledge_indexer
+    restart: unless-stopped
+    working_dir: /app
+    volumes:
+      - .:/app
+      - ${NEXTCLOUD_DATA_PATH:-nextcloud_data}:/data/documents:ro
+    environment:
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - QDRANT_BASE_URL=http://qdrant:6333
+      - EMBEDDING_MODEL=nomic-embed-text
+      - DOCS_WATCH_DIR=/data/documents
+    networks:
+      - sovereign_net
+    command: ["python3", "knowledge_indexer.py"]
+
+  gitlab-reviewer:
+    image: python:3.11-alpine
+    container_name: sovereign_gitlab_reviewer
+    restart: unless-stopped
+    working_dir: /app
+    volumes:
+      - .:/app
+    environment:
+      - GITLAB_API_URL=http://gitlab/api/v4
+      - GITLAB_API_TOKEN=${GITLAB_REVIEWER_TOKEN:-}
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - OLLAMA_CODE_MODEL=qwen2.5-coder:7b
+    networks:
+      - sovereign_net
+    command: ["python3", "gitlab_reviewer.py"]
+
+  sentinel-copilot:
+    image: python:3.11-alpine
+    container_name: sovereign_sentinel_copilot
+    restart: unless-stopped
+    working_dir: /app
+    volumes:
+      - .:/app
+    environment:
+      - PROMETHEUS_URL=http://prometheus:9090
+      - POWER_EXPORTER_URL=http://power-exporter:9101/metrics
+    networks:
+      - sovereign_net
+    command: ["python3", "sentinel_copilot.py"]
+
+networks:
+  sovereign_net:
+    external: true
+
+volumes:
+  nextcloud_data:
+    external: true

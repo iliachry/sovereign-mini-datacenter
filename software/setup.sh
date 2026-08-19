@@ -1,247 +1,114 @@
 #!/usr/bin/env bash
 # ====================================================================
-# Sovereign Mini Datacenter — Unified Modular Setup & Deploy Engine
-# Tested on Ubuntu 24.04 LTS (Noble Numbat) x86_64 / arm64
+# Sovereign Mini Datacenter — Automated Setup & Deployment Script
+# Supports Core, Mailcow, Headscale VPN, Restic, Telemetry, Space & Agents
 # ====================================================================
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ARCH="$(uname -m)"
-case "$ARCH" in
-    x86_64)  ARCH="amd64" ;;
-    aarch64) ARCH="arm64" ;;
-    *) echo "Unsupported architecture: $ARCH"; exit 1 ;;
-esac
+RED="\033[1;31m"
+GREEN="\033[1;32m"
+YELLOW="\033[1;33m"
+CYAN="\033[1;36m"
+BOLD="\033[1m"
+RESET="\033[0m"
 
-log()  { echo -e "\033[1;32m[+] $*\033[0m"; }
-warn() { echo -e "\033[1;33m[!] $*\033[0m"; }
-err()  { echo -e "\033[1;31m[x] $*\033[0m" >&2; exit 1; }
+log_info()  { echo -e "${CYAN}[INFO]${RESET}  $*"; }
+log_ok()    { echo -e "${GREEN}[OK]${RESET}    $*"; }
+log_warn()  { echo -e "${YELLOW}[WARN]${RESET}  $*"; }
+log_error() { echo -e "${RED}[ERROR]${RESET} $*" >&2; }
 
-WITH_MAILCOW=false
-WITH_VPN=false
-WITH_BACKUP=false
-WITH_TELEMETRY=false
-WITH_SPACE=false
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ENV_FILE="${PROJECT_DIR}/.env"
+ENV_EXAMPLE="${PROJECT_DIR}/env.example"
+
+DEPLOY_ALL=false
+DEPLOY_MAILCOW=false
+DEPLOY_VPN=false
+DEPLOY_BACKUP=false
+DEPLOY_TELEMETRY=false
+DEPLOY_SPACE=false
+DEPLOY_AGENTS=false
+DEPLOY_SECURITY=false
 DRY_RUN=false
 
-show_help() {
+usage() {
     cat <<EOF
-Usage: sudo bash setup.sh [OPTIONS]
+${BOLD}Sovereign Mini Datacenter Setup${RESET}
+
+Usage: $(basename "$0") [OPTIONS]
 
 Options:
-  --all               Deploy core stack + Mailcow + VPN + Backup + Telemetry + Space Node
-  --with-mailcow      Deploy Mailcow email stack alongside core
-  --with-vpn          Deploy Headscale Zero-Trust Mesh VPN
-  --with-backup       Deploy automated Restic snapshot backup daemon
-  --with-telemetry    Deploy Solar/BMS Telemetry & Load-Shedder Sentinel
-  --with-space        Deploy Space Communications (DTN / Satellite) Node
-  --dry-run           Validate configurations and syntax without starting services
-  -h, --help          Show this help message
-
-Default (no flags): Deploys the Sovereign Core Stack (Traefik, Ollama, Open-WebUI,
-                    Qdrant, GitLab, OpenProject, Nextcloud, Vaultwarden,
-                    Prometheus, Grafana, cAdvisor, Node Exporter).
+    --all              Deploy full infrastructure stack
+    --with-mailcow     Include Mailcow container stack
+    --with-vpn         Include Headscale Zero-Trust VPN
+    --with-backup      Include Restic backup daemon
+    --with-telemetry   Include Prometheus power & thermal exporter
+    --with-space       Include Space Communications DTN & Orbit Tracking node
+    --with-agents      Include Autonomous Local AI Agents (GitLab Reviewer, Knowledge Indexer)
+    --with-security    Include CrowdSec Intrusion Prevention & Security Engine
+    --dry-run          Validate configuration and exit without launching
+    -h, --help         Show this help message
 EOF
     exit 0
 }
 
-# Parse flags
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --all)
-            WITH_MAILCOW=true
-            WITH_VPN=true
-            WITH_BACKUP=true
-            WITH_TELEMETRY=true
-            WITH_SPACE=true
-            shift
-            ;;
-        --with-mailcow)
-            WITH_MAILCOW=true
-            shift
-            ;;
-        --with-vpn)
-            WITH_VPN=true
-            shift
-            ;;
-        --with-backup)
-            WITH_BACKUP=true
-            shift
-            ;;
-        --with-telemetry)
-            WITH_TELEMETRY=true
-            shift
-            ;;
-        --with-space)
-            WITH_SPACE=true
-            shift
-            ;;
-        --dry-run)
-            DRY_RUN=true
-            shift
-            ;;
-        -h|--help)
-            show_help
-            ;;
-        *)
-            err "Unknown option: $1 (run with --help for usage)"
-            ;;
+        --all)            DEPLOY_ALL=true; shift ;;
+        --with-mailcow)   DEPLOY_MAILCOW=true; shift ;;
+        --with-vpn)       DEPLOY_VPN=true; shift ;;
+        --with-backup)    DEPLOY_BACKUP=true; shift ;;
+        --with-telemetry) DEPLOY_TELEMETRY=true; shift ;;
+        --with-space)     DEPLOY_SPACE=true; shift ;;
+        --with-agents)    DEPLOY_AGENTS=true; shift ;;
+        --with-security)  DEPLOY_SECURITY=true; shift ;;
+        --dry-run)        DRY_RUN=true; shift ;;
+        -h|--help)        usage ;;
+        *)                log_error "Unknown option: $1"; usage ;;
     esac
 done
 
-# Dry-run check or require root
+echo -e "\n${BOLD}${CYAN}=== Sovereign Mini Datacenter Setup ===${RESET}\n"
+
+# Ensure .env exists
+if [[ ! -f "$ENV_FILE" ]]; then
+    if [[ -f "$ENV_EXAMPLE" ]]; then
+        log_warn ".env not found. Generating default .env from env.example..."
+        cp "$ENV_EXAMPLE" "$ENV_FILE"
+        chmod 600 "$ENV_FILE"
+        log_ok "Created .env with restricted permissions (0600)."
+    fi
+fi
+
+# Build Compose Command
+COMPOSE_FILES=("-f" "${PROJECT_DIR}/docker-compose.yml")
+
+if [[ "$DEPLOY_ALL" == "true" || "$DEPLOY_VPN" == "true" ]]; then
+    COMPOSE_FILES+=("-f" "${PROJECT_DIR}/vpn/docker-compose.vpn.yml")
+fi
+if [[ "$DEPLOY_ALL" == "true" || "$DEPLOY_BACKUP" == "true" ]]; then
+    COMPOSE_FILES+=("-f" "${PROJECT_DIR}/backup/docker-compose.backup.yml")
+fi
+if [[ "$DEPLOY_ALL" == "true" || "$DEPLOY_TELEMETRY" == "true" ]]; then
+    COMPOSE_FILES+=("-f" "${PROJECT_DIR}/telemetry/docker-compose.telemetry.yml")
+fi
+if [[ "$DEPLOY_ALL" == "true" || "$DEPLOY_SPACE" == "true" ]]; then
+    COMPOSE_FILES+=("-f" "${PROJECT_DIR}/space/docker-compose.space.yml")
+fi
+if [[ "$DEPLOY_ALL" == "true" || "$DEPLOY_AGENTS" == "true" ]]; then
+    COMPOSE_FILES+=("-f" "${PROJECT_DIR}/agents/docker-compose.agents.yml")
+fi
+if [[ "$DEPLOY_ALL" == "true" || "$DEPLOY_SECURITY" == "true" ]]; then
+    COMPOSE_FILES+=("-f" "${PROJECT_DIR}/security/docker-compose.crowdsec.yml")
+fi
+
 if [[ "$DRY_RUN" == "true" ]]; then
-    log "DRY RUN MODE: Validating compose stacks and environment files..."
-    cd "$SCRIPT_DIR"
-    [[ -f .env ]] || cp env.example .env
-    docker compose -f docker-compose.yml config --quiet
-    docker compose -f vpn/docker-compose.vpn.yml config --quiet
-    docker compose -f backup/docker-compose.backup.yml config --quiet
-    docker compose -f telemetry/docker-compose.telemetry.yml config --quiet
-    docker compose -f space/docker-compose.space.yml config --quiet
-    echo "✅ All configurations valid."
+    log_info "DRY-RUN: Validating Docker Compose configuration..."
+    docker compose "${COMPOSE_FILES[@]}" config --quiet
+    log_ok "Docker Compose configuration is valid."
     exit 0
 fi
 
-# Require root
-[[ $EUID -eq 0 ]] || err "Please run as root or with sudo."
-
-log "[1/6] Updating system packages..."
-apt-get update -qq && apt-get upgrade -y -qq
-apt-get install -y -qq curl wget git build-essential ca-certificates gnupg lsb-release apache2-utils restic
-
-# -- Docker --------------------------------------------------------
-log "[2/6] Installing Docker Engine & Docker Compose..."
-if ! command -v docker &>/dev/null; then
-    install -m 0755 -d /etc/apt/keyrings
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
-        | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-    chmod a+r /etc/apt/keyrings/docker.gpg
-    echo \
-      "deb [arch=${ARCH} signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
-      | tee /etc/apt/sources.list.d/docker.list >/dev/null
-    apt-get update -qq
-    apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-compose-plugin
-    REAL_USER="${SUDO_USER:-}"
-    if [[ -z "$REAL_USER" ]]; then
-        REAL_USER=$(logname 2>/dev/null || true)
-    fi
-    if [[ -n "$REAL_USER" ]]; then
-        usermod -aG docker "$REAL_USER"
-        warn "Added $REAL_USER to docker group."
-    fi
-else
-    log "Docker already installed — skipping."
-fi
-
-# -- NVIDIA Drivers + CUDA Toolkit --------------------------------
-log "[3/6] Detecting GPU and installing NVIDIA stack..."
-if lspci 2>/dev/null | grep -qi nvidia; then
-    if ! command -v nvidia-smi &>/dev/null; then
-        log "  Installing NVIDIA drivers..."
-        apt-get install -y -qq ubuntu-drivers-common
-        ubuntu-drivers autoinstall
-    else
-        DRIVER_VER=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1 || echo "unknown")
-        log "  NVIDIA driver already installed (v${DRIVER_VER})."
-    fi
-
-    if ! dpkg -l 2>/dev/null | grep -q cuda-toolkit; then
-        log "  Installing CUDA Toolkit 12.x..."
-        CUDA_KEYRING_URL="https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/${ARCH}/cuda-keyring_1.1-1_all.deb"
-        wget -qO /tmp/cuda-keyring.deb "$CUDA_KEYRING_URL"
-        dpkg -i /tmp/cuda-keyring.deb
-        apt-get update -qq
-        apt-get install -y -qq cuda-toolkit-12-6
-        rm -f /tmp/cuda-keyring.deb
-    fi
-
-    if ! dpkg -l 2>/dev/null | grep -q nvidia-container-toolkit; then
-        log "  Installing NVIDIA Container Toolkit..."
-        curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
-            | gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
-        curl -sL https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
-            | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
-            | tee /etc/apt/sources.list.d/nvidia-container-toolkit.list >/dev/null
-        apt-get update -qq
-        apt-get install -y -qq nvidia-container-toolkit
-        nvidia-ctk runtime configure --runtime=docker
-        systemctl restart docker
-    fi
-else
-    warn "No NVIDIA GPU detected. Skipping GPU driver installation (CPU mode)."
-fi
-
-# -- Environment file ----------------------------------------------
-log "[4/6] Preparing environment configuration..."
-if [[ ! -f "${SCRIPT_DIR}/.env" ]]; then
-    cp "${SCRIPT_DIR}/env.example" "${SCRIPT_DIR}/.env"
-    warn ".env created from template. Edit ${SCRIPT_DIR}/.env before production use!"
-fi
-
-# -- Model pre-pull info -------------------------------------------
-log "[5/6] Checking default Ollama model..."
-OLLAMA_MODEL=""
-if [[ -f "${SCRIPT_DIR}/.env" ]]; then
-    OLLAMA_MODEL=$(grep -E '^OLLAMA_DEFAULT_MODEL=' "${SCRIPT_DIR}/.env" | cut -d= -f2 || true)
-fi
-
-# -- Start the stack -----------------------------------------------
-log "[6/6] Launching Selected Sovereign Stacks..."
-cd "$SCRIPT_DIR"
-
-# Launch Core Stack
-docker compose -f docker-compose.yml up -d --remove-orphans
-
-# Launch Optional Modules
-if [[ "$WITH_VPN" == "true" ]]; then
-    log "  Starting Headscale Mesh VPN..."
-    docker compose -f vpn/docker-compose.vpn.yml up -d
-fi
-
-if [[ "$WITH_BACKUP" == "true" ]]; then
-    log "  Starting Restic Backup Daemon..."
-    docker compose -f backup/docker-compose.backup.yml up -d
-fi
-
-if [[ "$WITH_TELEMETRY" == "true" ]]; then
-    log "  Starting Solar/BMS Telemetry & Exporter..."
-    docker compose -f telemetry/docker-compose.telemetry.yml up -d
-fi
-
-if [[ "$WITH_SPACE" == "true" ]]; then
-    log "  Starting Space Communications Node (DTN & Orbital Exporter)..."
-    docker compose -f space/docker-compose.space.yml up -d
-fi
-
-if [[ "$WITH_MAILCOW" == "true" ]]; then
-    log "  Mailcow integration enabled. See software/mailcow/README.md for initial mailbox setup."
-fi
-
-# Pull Ollama model
-if [[ -n "$OLLAMA_MODEL" ]]; then
-    log "  Pulling Ollama model: ${OLLAMA_MODEL}..."
-    sleep 10
-    docker exec sovereign_ollama ollama pull "${OLLAMA_MODEL}" || true
-fi
-
-get_env() { grep -E "^${1}=" .env 2>/dev/null | cut -d= -f2 || echo "${2}"; }
-
-echo ""
-echo "====================================================================="
-echo "  ✅ Sovereign Mini Datacenter Deployed Successfully!"
-echo "---------------------------------------------------------------------"
-echo "  • Open-WebUI (AI + RAG):  https://$(get_env DOMAIN_WEBUI ai.sovereign.local)"
-echo "  • GitLab CE:              https://$(get_env DOMAIN_GITLAB gitlab.sovereign.local)"
-echo "  • OpenProject:            https://$(get_env DOMAIN_PROJECTS projects.sovereign.local)"
-echo "  • Nextcloud:              https://$(get_env DOMAIN_NEXTCLOUD cloud.sovereign.local)"
-echo "  • Vaultwarden:            https://$(get_env DOMAIN_VAULT vault.sovereign.local)"
-echo "  • Grafana Dashboards:     https://$(get_env DOMAIN_GRAFANA grafana.sovereign.local)"
-echo "  • Traefik Proxy:          https://$(get_env DOMAIN_TRAEFIK traefik.sovereign.local)"
-if [[ "$WITH_VPN" == "true" ]]; then
-echo "  • Headscale Mesh VPN:     https://$(get_env DOMAIN_VPN vpn.sovereign.local)"
-fi
-if [[ "$WITH_SPACE" == "true" ]]; then
-echo "  • Space Comm Telemetry:   http://localhost:$(get_env SPACE_EXPORTER_PORT 9102)/metrics"
-fi
-echo "====================================================================="
+log_info "Starting sovereign datacenter container stacks..."
+docker compose "${COMPOSE_FILES[@]}" up -d --remove-orphans
+log_ok "Deployment complete! All services running."

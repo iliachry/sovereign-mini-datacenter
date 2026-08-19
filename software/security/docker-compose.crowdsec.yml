@@ -1,0 +1,26 @@
+services:
+  crowdsec:
+    image: crowdsecurity/crowdsec:v1.6.0
+    container_name: sovereign_crowdsec
+    restart: unless-stopped
+    environment:
+      - COLLECTIONS=crowdsecurity/traefik crowdsecurity/linux crowdsecurity/http-cve
+    volumes:
+      - /var/log:/var/log:ro
+      - traefik_logs:/var/log/traefik:ro
+      - crowdsec_data:/var/lib/crowdsec/data
+      - crowdsec_config:/etc/crowdsec
+    networks:
+      - sovereign_net
+
+volumes:
+  traefik_logs:
+    name: sovereign_traefik_logs
+  crowdsec_data:
+    name: sovereign_crowdsec_data
+  crowdsec_config:
+    name: sovereign_crowdsec_config
+
+networks:
+  sovereign_net:
+    external: true

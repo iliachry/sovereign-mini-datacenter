@@ -4,29 +4,31 @@ build-backend = "hatchling.build"
 
 [project]
 name = "sovereign-dc"
-version = "1.1.0"
-description = "Sovereign Mini Datacenter CLI, Space Communications & Infrastructure Management Engine"
+version = "1.2.0"
+description = "Sovereign Mini Datacenter — Self-Powered Micro-Grid, AI Cluster, Delay-Tolerant Space Comms & Autonomous Agents"
 readme = "README.md"
-license = "MIT"
+requires-python = ">=3.9"
+license = { text = "MIT" }
 authors = [
-    { name = "Ilias Chrysovergis", email = "iliachry@gmail.com" }
+    { name = "Ilias Chrysostomidis", email = "ilias@metatopia.gr" },
 ]
 keywords = [
     "datacenter",
-    "homelab",
-    "sovereign",
+    "sovereign-cloud",
+    "off-grid",
+    "solar-power",
+    "ai-cluster",
     "self-hosted",
-    "ai",
-    "solar",
-    "victron",
-    "space",
-    "satellite",
-    "dtn",
-    "bundle-protocol",
-    "orbital-mechanics",
-    "telemetry",
-    "wireguard",
-    "vpn",
+    "delay-tolerant-networking",
+    "space-communications",
+    "satellite-tracking",
+    "bundle-protocol-v7",
+    "autonomous-agents",
+    "crowdsec",
+    "esp32-bridge",
+    "victron-energy",
+    "lifepo4-bms",
+    "digital-twin"
 ]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
