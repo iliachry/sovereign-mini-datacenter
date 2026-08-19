@@ -6,7 +6,7 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <title>Sovereign Mini Datacenter — 3D Infrastructure Digital Twin (v1.2.0 Complete Edition)</title>
+  <title>Sovereign Mini Datacenter — 3D Infrastructure Digital Twin (v1.3.0 Master Edition)</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,300;0,400;0,600;0,700;1,400&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -217,7 +217,7 @@
       box-shadow: 0 0 10px rgba(168, 85, 247, 0.3);
     }
 
-    /* Sliders & Toggles */
+    /* Sliders */
     .slider-row {
       display: flex;
       flex-direction: column;
@@ -255,6 +255,60 @@
       padding: 6px 8px;
       border-radius: 6px;
       border-left: 2px solid var(--accent-blue);
+    }
+
+    /* Interactive Cyber Terminal */
+    #terminal-modal {
+      position: absolute;
+      bottom: 70px;
+      left: 24px;
+      width: 520px;
+      height: 280px;
+      background: rgba(4, 7, 17, 0.95);
+      border: 1px solid var(--accent);
+      border-radius: 8px;
+      display: none;
+      flex-direction: column;
+      box-shadow: 0 20px 50px rgba(0,0,0,0.8), 0 0 15px rgba(16,185,129,0.2);
+      font-family: 'JetBrains Mono', monospace;
+      z-index: 50;
+      overflow: hidden;
+    }
+    .term-header {
+      background: #090f1f;
+      padding: 6px 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid #1e293b;
+      font-size: 11px;
+      color: var(--accent);
+    }
+    .term-body {
+      flex: 1;
+      padding: 10px;
+      font-size: 11px;
+      color: #10b981;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      line-height: 1.4;
+    }
+    .term-input-row {
+      display: flex;
+      padding: 6px 10px;
+      background: #090f1f;
+      border-top: 1px solid #1e293b;
+      align-items: center;
+      gap: 8px;
+    }
+    .term-input {
+      flex: 1;
+      background: transparent;
+      border: none;
+      color: #fff;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      outline: none;
     }
 
     /* Component Details Modal */
@@ -395,7 +449,7 @@
       <div class="tab-group" style="margin-top: 8px;">
         <button class="tab-btn" id="btn-thermal" onclick="toggleThermalMode()">🌡️ Thermal Heatmap</button>
         <button class="tab-btn" id="btn-calc" onclick="toggleCalculator()" style="color:var(--accent-blue); border-color:rgba(56,189,248,0.4);">🧮 Sizing Calc</button>
-        <button class="tab-btn active" id="btn-autorotate" onclick="toggleAutoRotate()">🔄 Auto-Rotate</button>
+        <button class="tab-btn" id="btn-terminal" onclick="toggleTerminal()" style="color:var(--accent); border-color:rgba(16,185,129,0.4);">💻 Terminal</button>
         <button class="tab-btn" id="btn-door" onclick="toggleDoor()">🚪 Open Door</button>
       </div>
     </div>
@@ -469,6 +523,21 @@
 
   </div>
 
+  <!-- Interactive Cyber Terminal -->
+  <div id="terminal-modal" class="interactive">
+    <div class="term-header">
+      <span>💻 Sovereign CLI Terminal (smdc v1.3.0)</span>
+      <span style="cursor:pointer; color:#94a3b8;" onclick="toggleTerminal()">✕</span>
+    </div>
+    <div class="term-body" id="term-output">Sovereign Mini Datacenter Interactive Terminal.
+Type 'help', 'smdc status', 'smdc space passes', 'smdc space send', 'smdc audit', or 'smdc mesh'.
+</div>
+    <div class="term-input-row">
+      <span style="color:var(--accent); font-weight:bold;">smdc$</span>
+      <input type="text" id="term-cmd-input" class="term-input" placeholder="Type a command and press Enter..." onkeydown="handleTerminalInput(event)">
+    </div>
+  </div>
+
   <!-- Camera Presets -->
   <div class="overlay cam-presets interactive">
     <button class="cam-btn active" onclick="setCamera('iso', event)">Overview</button>
@@ -503,6 +572,7 @@
     let fanBlades = [];
     let materialsMap = new Map();
     let satAngle = 0.8;
+    let pulseSpeed = 0.006;
 
     const COMPONENT_DATA = {
       'space_antenna': {
@@ -1072,9 +1142,6 @@
       solarGroup.add(arrayGroup);
     }
 
-    // ──────────────────────────────────────────────────────────────────────────
-    // 6. PROMINENT SPACE & SATELLITE COMMUNICATIONS SUBSYSTEM
-    // ──────────────────────────────────────────────────────────────────────────
     function buildSpaceCommunicationsSubsystem() {
       phasedArrayMount = new THREE.Group();
       phasedArrayMount.position.set(0, 200.05, 0);
@@ -1122,7 +1189,7 @@
       registerInteractive(arrayFace, 'space_antenna');
       spaceGroup.add(phasedArrayMount);
 
-      // Glowing Orbital Trajectory Ring in the Sky
+      // Glowing Orbital Ring
       const orbitRadiusX = 1400;
       const orbitRadiusZ = 1200;
       const orbitY = 950;
@@ -1227,7 +1294,7 @@
       spaceBeamMesh.quaternion.setFromRotationMatrix(orientation);
 
       dataPulses.forEach(pulse => {
-        pulse.userData.offset = (pulse.userData.offset + 0.006) % 1.0;
+        pulse.userData.offset = (pulse.userData.offset + pulseSpeed) % 1.0;
         const pulsePos = new THREE.Vector3().lerpVectors(groundTargetPos, satPos, pulse.userData.offset);
         pulse.position.copy(pulsePos);
         pulse.quaternion.copy(spaceBeamMesh.quaternion);
@@ -1235,9 +1302,6 @@
       });
     }
 
-    // ──────────────────────────────────────────────────────────────────────────
-    // SIZING CALCULATOR LOGIC
-    // ──────────────────────────────────────────────────────────────────────────
     function toggleCalculator() {
       const modal = document.getElementById('calculator-modal');
       const isOpen = (modal.style.display === 'block');
@@ -1261,10 +1325,10 @@
       const avgWatts = baseWatts + (nodes * nodeWatts * (hours / 24.0));
       const dailyKwh = (avgWatts * 24.0) / 1000.0;
       const solarKwh = (panels * 0.410 * 5.2);
-      const batKwh = batPacks * 5.12 * 0.85; // 85% usable DoD
+      const batKwh = batPacks * 5.12 * 0.85;
       const autonomyHours = (batKwh * 1000.0) / avgWatts;
 
-      const baseCost = 4500; // Enclosure, Inverter, Switch, PDU, Cooling
+      const baseCost = 4500;
       const nodeCost = nodes * 1500;
       const batCost = batPacks * 1200;
       const solarCost = panels * 180;
@@ -1280,16 +1344,15 @@
       const nodes = document.getElementById('calc-nodes').value;
       const batPacks = document.getElementById('calc-battery').value;
       const panels = document.getElementById('calc-solar').value;
-      const cost = document.getElementById('calc-res-cost').textContent;
 
       let csv = "Component,Quantity,Unit Cost,Category\n";
-      csv += `"NVIDIA DGX Spark / Jetson Orin Compute Node",${nodes},"$1,500","Compute"\n`;
-      csv += `"Server Rack LiFePO4 48V 100Ah Battery",${batPacks},"$1,200","Energy"\n`;
-      csv += `"Monocrystalline 410W PERC Solar Panels",${panels},"$180","Energy"\n`;
+      csv += `"NVIDIA DGX Spark Compute Node",${nodes},"$1,500","Compute"\n`;
+      csv += `"LiFePO4 48V 100Ah Battery",${batPacks},"$1,200","Energy"\n`;
+      csv += `"410W PERC Solar Panels",${panels},"$180","Energy"\n`;
       csv += `"Victron MultiPlus-II 48/3000 Inverter",1,"$1,100","Power"\n`;
       csv += `"Victron SmartSolar MPPT 150/70",1,"$540","Power"\n`;
       csv += `"MikroTik CRS309 10GbE Switch",1,"$270","Networking"\n`;
-      csv += `"9U 19 Inch Custom Aluminum Enclosure",1,"$450","Chassis"\n`;
+      csv += `"9U 19 Inch Aluminum Enclosure",1,"$450","Chassis"\n`;
       csv += `"Dual 360mm Liquid Loop & D5 Pump",1,"$420","Thermal"\n`;
       csv += `"Motorized Phased Array Space Terminal",1,"$850","Space Comm"\n`;
 
@@ -1298,6 +1361,81 @@
       link.href = URL.createObjectURL(blob);
       link.download = `sovereign_datacenter_bom_${nodes}nodes_${batPacks}bat_${panels}pv.csv`;
       link.click();
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // INTERACTIVE CYBER TERMINAL
+    // ──────────────────────────────────────────────────────────────────────────
+    function toggleTerminal() {
+      const term = document.getElementById('terminal-modal');
+      const isOpen = (term.style.display === 'flex');
+      term.style.display = isOpen ? 'none' : 'flex';
+      if (!isOpen) {
+        document.getElementById('term-cmd-input').focus();
+      }
+    }
+
+    function handleTerminalInput(e) {
+      if (e.key === 'Enter') {
+        const input = document.getElementById('term-cmd-input');
+        const cmd = input.value.trim();
+        if (cmd) {
+          executeSimulatedCommand(cmd);
+          input.value = '';
+        }
+      }
+    }
+
+    function executeSimulatedCommand(cmd) {
+      const out = document.getElementById('term-output');
+      out.textContent += `\nsmdc$ ${cmd}\n`;
+
+      const parts = cmd.toLowerCase().split(' ');
+      const mainCmd = parts[0] === 'smdc' ? parts[1] : parts[0];
+      const subCmd = parts[0] === 'smdc' ? parts[2] : parts[1];
+
+      if (mainCmd === 'status') {
+        out.textContent += `=== Sovereign Mini Datacenter Status ===
+● All 11 Services Healthy (Traefik, Ollama, Qdrant, GitLab, Nextcloud)
+• Battery: 88.4% (52.8V) | Solar: 1,240W | Temp: 31.2°C
+• Space Link: ONLINE (IN CONTACT, 48.5° Elevation)
+• DTN Spool: 3 bundles waiting\n`;
+      } else if (mainCmd === 'space' && subCmd === 'passes') {
+        out.textContent += `🛰️ Next Satellite Passes (Athens Ground Station):
+Starlink-LEO-Alpha : AOS 14m 22s | Max El: 72.4° | Duration: 8m 10s
+Iridium-NEXT-42    : AOS 48m 10s | Max El: 41.2° | Duration: 6m 30s\n`;
+      } else if (mainCmd === 'space' && subCmd === 'send') {
+        pulseSpeed = 0.025; // Accelerate space beam pulse animation!
+        setTimeout(() => { pulseSpeed = 0.006; }, 4000);
+        out.textContent += `✅ Bundle dtn://smdc-node-01.space/7f9a2e enqueued!
+• Transmitting over active RF beam to LEO Relay Alpha (550km)...
+• Priority: CRITICAL (Tier 3) | Checksum: SHA-256 Validated\n`;
+      } else if (mainCmd === 'audit') {
+        out.textContent += `=== Security Compliance Audit ===
+[ PASS ] ASLR Level 2 Active
+[ PASS ] TCP SYN Flood Protection
+[ PASS ] AES-256 Encrypted Volumes (Restic/Vaultwarden)
+[ PASS ] WireGuard Mesh Zero-Trust Network
+✅ All security benchmarks satisfied.\n`;
+      } else if (mainCmd === 'mesh') {
+        out.textContent += `🌐 Sovereign Global Mesh Topology:
+• smdc-node-01 (Athens Core)    : 100.64.0.1 [ONLINE]
+• smdc-node-02 (Alpine Off-Grid): 100.64.0.2 [ONLINE]
+• smdc-node-03 (Aegean Island)  : 100.64.0.3 [STANDBY/DTN]\n`;
+      } else if (mainCmd === 'help') {
+        out.textContent += `Available commands:
+  smdc status        - Show system, power, and space telemetry
+  smdc space passes  - Predict upcoming satellite contact passes
+  smdc space send    - Enqueue encrypted DTN bundle to space relay
+  smdc audit         - Run security compliance audit
+  smdc mesh          - Inspect multi-node cluster topology
+  clear              - Clear terminal\n`;
+      } else if (mainCmd === 'clear') {
+        out.textContent = '';
+      } else {
+        out.textContent += `smdc: command not found: '${cmd}'. Type 'help' for commands.\n`;
+      }
+      out.scrollTop = out.scrollHeight;
     }
 
     function onPointerDown(event) {
@@ -1434,16 +1572,6 @@
     function toggleAutoRotate() {
       controls.autoRotate = !controls.autoRotate;
       document.getElementById('btn-autorotate').classList.toggle('active', controls.autoRotate);
-    }
-
-    function toggleWireframe() {
-      isWireframe = !isWireframe;
-      scene.traverse(c => {
-        if (c.isMesh && c.material) {
-          c.material.wireframe = isWireframe;
-        }
-      });
-      document.getElementById('btn-wireframe').classList.toggle('active', isWireframe);
     }
 
     function toggleThermalMode() {

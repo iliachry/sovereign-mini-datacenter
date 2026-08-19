@@ -1,0 +1,92 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sovereign
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ollama-gpu
+  namespace: sovereign
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ollama
+  template:
+    metadata:
+      labels:
+        app: ollama
+    spec:
+      containers:
+        - name: ollama
+          image: ollama/ollama:latest
+          ports:
+            - containerPort: 11434
+          resources:
+            limits:
+              nvidia.com/gpu: "1"
+              memory: 32Gi
+            requests:
+              nvidia.com/gpu: "1"
+              memory: 16Gi
+          volumeMounts:
+            - name: ollama-models
+              mountPath: /root/.ollama
+      volumes:
+        - name: ollama-models
+          persistentVolumeClaim:
+            claimName: ollama-pvc
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: qdrant-vector
+  namespace: sovereign
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: qdrant
+  template:
+    metadata:
+      labels:
+        app: qdrant
+    spec:
+      containers:
+        - name: qdrant
+          image: qdrant/qdrant:v1.12.1
+          ports:
+            - containerPort: 6333
+            - containerPort: 6334
+          volumeMounts:
+            - name: qdrant-storage
+              mountPath: /qdrant/storage
+      volumes:
+        - name: qdrant-storage
+          persistentVolumeClaim:
+            claimName: qdrant-pvc
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ollama-pvc
+  namespace: sovereign
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 200Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: qdrant-pvc
+  namespace: sovereign
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi

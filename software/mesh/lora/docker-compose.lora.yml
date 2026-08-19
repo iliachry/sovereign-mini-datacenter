@@ -1,0 +1,21 @@
+services:
+  lora-gateway:
+    image: python:3.11-alpine
+    container_name: sovereign_lora_gateway
+    restart: unless-stopped
+    working_dir: /app
+    volumes:
+      - .:/app
+    devices:
+      - "/dev/ttyUSB0:/dev/ttyUSB0"
+    environment:
+      - LORA_SERIAL_PORT=/dev/ttyUSB0
+      - LORA_BAUD_RATE=115200
+      - DTN_FALLBACK_ENABLED=true
+    networks:
+      - sovereign_net
+    command: ["python3", "meshtastic_gateway.py"]
+
+networks:
+  sovereign_net:
+    external: true

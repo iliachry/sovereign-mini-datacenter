@@ -1,0 +1,44 @@
+version: v1alpha1
+debug: false
+persist: true
+machine:
+  type: controlplane
+  token: sovereign-bootstrap-token
+  ca:
+    crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCg==
+  network:
+    interfaces:
+      - interface: eth0
+        dhcp: true
+      - interface: 10gbe0
+        addresses:
+          - 10.0.0.10/24
+        routes:
+          - network: 0.0.0.0/0
+            gateway: 10.0.0.1
+  kernel:
+    modules:
+      - name: nvidia
+      - name: nvidia_uvm
+      - name: nvidia_modeset
+  systemDiskEncryption:
+    state:
+      provider: luks2
+      keys:
+        - nodeID: {}
+          slot: 0
+    ephemeral:
+      provider: luks2
+      keys:
+        - nodeID: {}
+          slot: 0
+  sysctls:
+    net.ipv4.ip_forward: "1"
+    net.ipv4.tcp_syncookies: "1"
+    kernel.randomize_va_space: "2"
+cluster:
+  controlPlane:
+    endpoint: https://10.0.0.10:6443
+  network:
+    cni:
+      name: flannel

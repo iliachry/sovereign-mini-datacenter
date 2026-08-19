@@ -48,6 +48,7 @@ jobs:
           docker compose -f space/docker-compose.space.yml config --quiet
           docker compose -f agents/docker-compose.agents.yml config --quiet
           docker compose -f security/docker-compose.crowdsec.yml config --quiet
+          docker compose -f mesh/lora/docker-compose.lora.yml config --quiet
           echo "✅ All Docker Compose stacks validated successfully."
 
   # ── Job 3: Check env.example completeness ────────────────────────
