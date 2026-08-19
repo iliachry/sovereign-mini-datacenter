@@ -68,49 +68,47 @@ Inspect the 9U 19" chassis, rails, liquid-cooling radiator cutouts, and physical
 
 ```
 sovereign-mini-datacenter/
+├── src/
+│   └── sovereign_dc/            # Python CLI & Core Engine (`smdc`)
+│       ├── cli.py               # Unified management CLI entry point
+│       ├── __main__.py          # `python -m sovereign_dc` execution support
+│       ├── agents/              # Sentinel, Indexer & Reviewer AI integrations
+│       ├── mesh/                # Multi-node WireGuard & LoRa bridge logic
+│       ├── space/               # Space DTN routing & orbital propagator
+│       └── telemetry/           # Power & thermal telemetry collector
 ├── software/
 │   ├── docker-compose.yml       # Sovereign Core 11-service production stack
 │   ├── setup.sh                 # Modular deployment CLI (--all, --with-vpn, etc.)
 │   ├── env.example              # Environment configuration template
-│   ├── prometheus.yml           # Prometheus scrape configuration
+│   ├── prometheus.yml           # Prometheus scrape configuration (Node, Space, ESP32, LoRa)
+│   ├── agents/                  # AI Knowledge Indexer & Code Reviewer daemons
+│   ├── mesh/                    # WireGuard mesh & LoRa Meshtastic packet gateway
 │   ├── vpn/                     # Zero-Trust Mesh VPN (Headscale)
-│   │   ├── docker-compose.vpn.yml
-│   │   ├── config/headscale.yaml
-│   │   ├── register-node.sh     # Client onboarding & preauth key manager
-│   │   └── README.md
 │   ├── backup/                  # Encrypted Backup & Recovery (Restic)
-│   │   ├── docker-compose.backup.yml
-│   │   ├── backup.sh            # Automated volume & database snapshot script
-│   │   ├── restore.sh           # Interactive disaster recovery script
-│   │   └── README.md
 │   ├── telemetry/               # Solar/BMS Telemetry & Load-Shedding Sentinel
-│   │   ├── docker-compose.telemetry.yml
-│   │   ├── power_exporter.py    # Victron VE.Direct & LiFePO4 BMS Prometheus exporter
-│   │   └── load_shedder.sh      # Autonomous power & thermal load-shedder
 │   ├── space/                   # Space & Satellite Communications (DTN / BPv7)
-│   │   ├── dtn/                 # RFC 9171 Bundle Protocol v7 Store-and-Forward Router
-│   │   ├── orbital/             # SGP4 Orbit Mechanics & Pass Prediction
-│   │   ├── transceiver/         # Satellite RF Transceiver & Channel Simulator
-│   │   ├── space_exporter.py    # Prometheus Space Telemetry Exporter (Port 9102)
-│   │   └── docker-compose.space.yml
 │   ├── mailcow/                 # Sovereign Email Stack
-│   │   ├── docker-compose.mailcow-traefik.yml
-│   │   ├── docker-compose.override.yml
-│   │   └── README.md
 │   └── grafana/
-│       └── provisioning/        # Auto-provisioned Prometheus datasources & dashboards
+│       └── provisioning/        # Auto-provisioned dashboards (Power, Thermal, Space)
+├── kubernetes/
+│   └── helm/
+│       └── sovereign-stack/     # Production Helm chart (K3s/Talos AI & Telemetry cluster)
+├── firmware/
+│   ├── esp32_telemetry_bridge.ino # Arduino C++ ESP32 firmware with I2C OLED display
+│   └── esphome_smdc_bridge.yaml   # ESPHome firmware with MQTT discovery & metrics
 ├── hardware/
 │   ├── COMPONENTS.md            # Full Bill of Materials with pricing & electrical specs
 │   └── WIRING_DIAGRAM.md        # DC/AC electrical, liquid cooling & network schematics
 ├── cad/
 │   ├── rack_enclosure.scad      # Parametric OpenSCAD 9U 19" chassis model
+│   ├── accessories.scad         # 3D printable DIN rails, Jetson mounts, OLED bezels
 │   ├── MANUFACTURING_GUIDE.md   # Laser cut, CNC bend, and assembly instructions
 │   └── render.jpg               # Photorealistic 3D product render
+├── tests/                       # 38 Unit & integration tests (Pytest + Coverage)
 ├── docs/                        # Interactive Three.js WebGL CAD & Space Viewer for GitHub Pages
-│   └── index.html
 └── .github/
     └── workflows/
-        ├── ci.yml               # Complete CI pipeline + GitHub Pages automated deploy
+        ├── ci.yml               # Complete CI pipeline + Pytest + GitHub Pages deploy
         └── publish.yml          # Automated PyPI package & GHCR multi-arch release pipeline
 ```
 
@@ -118,7 +116,7 @@ sovereign-mini-datacenter/
 
 ## 🐍 Python CLI Package (`smdc`)
 
-Manage the datacenter, live telemetry, space communications, and security audits directly from your terminal:
+Manage the datacenter, live telemetry, space communications, autonomous AI agents, and security audits directly from your terminal:
 
 ```bash
 pip install sovereign-dc
@@ -132,6 +130,12 @@ smdc status
 
 # Run automated security compliance & CIS benchmark audit
 smdc audit
+
+# Autonomous AI Agent operations
+smdc agent status                                    # Inspect running agent daemons & Ollama status
+smdc agent ask "How do I throttle background jobs?" # Ask Sentinel Copilot directly
+smdc agent review --diff patch.diff                  # AI code review on local git diff
+smdc agent index --path /data/docs                   # Trigger semantic RAG vector indexing
 
 # Inspect multi-node global mesh cluster topology
 smdc mesh
@@ -151,6 +155,7 @@ smdc space queue
 # Deploy all container stacks (Core, VPN, Backup, Telemetry, Space, Agents, Security)
 smdc deploy --all
 ```
+
 
 ---
 
@@ -270,6 +275,34 @@ See [`software/backup/README.md`](software/backup/README.md) for automated cron 
 
 - **Real-time Metrics:** Collects solar PV generation, LiFePO4 battery pack SoC %, DC bus voltage, current, and coolant temperatures.
 - **Autonomous Load-Shedder:** If battery SoC drops below 20% or coolant exceeds 60°C, `software/telemetry/load_shedder.sh` automatically pauses intensive background AI batch processing.
+
+---
+
+## ☸️ Kubernetes & GitOps Deployment (Helm / K3s / Talos)
+
+Deploy the Sovereign stack onto edge Kubernetes clusters (K3s, Talos, MicroK8s):
+
+```bash
+# 1. Inspect the sovereign-stack Helm chart
+helm lint kubernetes/helm/sovereign-stack
+
+# 2. Deploy AI cluster & telemetry to your sovereign namespace
+helm upgrade --install sovereign-stack ./kubernetes/helm/sovereign-stack \
+  --namespace sovereign \
+  --create-namespace \
+  --values kubernetes/helm/sovereign-stack/values.yaml
+```
+
+---
+
+## 🧪 Comprehensive Unit & Integration Tests
+
+The project includes an extensive test suite covering DTN BPv7 routing, orbital mechanics, link budgets, AI agent prompts, mesh encoding, and CLI interfaces:
+
+```bash
+# Run the test suite with coverage
+uv run --with pytest --with pyyaml pytest -v --cov=sovereign_dc
+```
 
 ---
 
