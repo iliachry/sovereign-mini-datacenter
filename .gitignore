@@ -7,6 +7,10 @@ desktop.ini
 __pycache__/
 *.py[cod]
 *$py.class
+.venv/
+dist/
+build/
+*.egg-info/
 
 # Environment & Secrets
 .env
