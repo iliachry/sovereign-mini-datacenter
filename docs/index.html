@@ -467,7 +467,7 @@
         <button class="tab-btn" onclick="setSubsystem('solar', event)">☀️ Solar Array</button>
       </div>
 
-      <!-- Explode & Thermal Sliders -->
+      <!-- Explode & Sun Elevation Sliders -->
       <div class="slider-row">
         <div class="slider-row-header">
           <span>Exploded Assembly</span>
@@ -476,7 +476,17 @@
         <input type="range" id="slider-explode" min="0" max="100" value="0" oninput="onExplodeChange(this.value)">
       </div>
 
+      <div class="slider-row">
+        <div class="slider-row-header">
+          <span>☀️ Sun Elevation</span>
+          <span id="val-sun-el" style="color:var(--accent); font-weight:bold;">65° (1,486W)</span>
+        </div>
+        <input type="range" id="slider-sun-el" min="0" max="90" value="65" oninput="onSunElevationChange(this.value)">
+      </div>
+
       <div class="tab-group" style="margin-top: 8px;">
+        <button class="tab-btn" id="btn-day-night" onclick="toggleDayNight()">🌙 Night Mode</button>
+        <button class="tab-btn" id="btn-audio" onclick="toggleAudioEngine()">🔊 Audio: ON</button>
         <button class="tab-btn" id="btn-thermal" onclick="toggleThermalMode()">🌡️ Thermal Heatmap</button>
         <button class="tab-btn" id="btn-calc" onclick="toggleCalculator()" style="color:var(--accent-blue); border-color:rgba(56,189,248,0.4);">🧮 Sizing Calc</button>
         <button class="tab-btn" id="btn-investor" onclick="toggleInvestorModal()" style="color:var(--accent); border-color:rgba(16,185,129,0.6); font-weight:bold; background:rgba(16,185,129,0.1);">💰 Investor TCO/ROI</button>
@@ -665,6 +675,10 @@ Type 'help', 'smdc status', 'smdc space passes', 'smdc space send', 'smdc audit'
     let materialsMap = new Map();
     let satAngle = 0.8;
     let pulseSpeed = 0.006;
+    let sunLight, ambientLight, cyanFill, purpleGlow, starsParticles;
+    let isNightMode = false;
+    let audioMuted = false;
+    let audioCtx = null;
 
     const COMPONENT_DATA = {
       'space_antenna': {
@@ -791,10 +805,10 @@ Type 'help', 'smdc status', 'smdc space passes', 'smdc space send', 'smdc audit'
     }
 
     function setupLighting() {
-      const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+      ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
       scene.add(ambientLight);
 
-      const sunLight = new THREE.DirectionalLight(0xffffff, 1.3);
+      sunLight = new THREE.DirectionalLight(0xffffff, 1.3);
       sunLight.position.set(900, 1400, 800);
       sunLight.castShadow = true;
       sunLight.shadow.mapSize.width = 2048;
@@ -809,11 +823,11 @@ Type 'help', 'smdc status', 'smdc space passes', 'smdc space send', 'smdc audit'
       sunLight.shadow.bias = -0.0005;
       scene.add(sunLight);
 
-      const cyanFill = new THREE.PointLight(0x38bdf8, 0.9, 2000);
+      cyanFill = new THREE.PointLight(0x38bdf8, 0.9, 2000);
       cyanFill.position.set(-700, 500, -600);
       scene.add(cyanFill);
 
-      const purpleGlow = new THREE.PointLight(0xa855f7, 1.4, 2500);
+      purpleGlow = new THREE.PointLight(0xa855f7, 1.4, 2500);
       purpleGlow.position.set(200, 800, 300);
       scene.add(purpleGlow);
     }
@@ -829,6 +843,20 @@ Type 'help', 'smdc status', 'smdc space passes', 'smdc space send', 'smdc audit'
       pad.position.set(0, -224, 0);
       pad.receiveShadow = true;
       scene.add(pad);
+
+      // Starfield Particle System for Night / Orbit view
+      const starGeom = new THREE.BufferGeometry();
+      const starCount = 1200;
+      const starPos = new Float32Array(starCount * 3);
+      for (let i = 0; i < starCount * 3; i += 3) {
+        starPos[i] = (Math.random() - 0.5) * 8000;
+        starPos[i + 1] = Math.random() * 4000 + 100;
+        starPos[i + 2] = (Math.random() - 0.5) * 8000;
+      }
+      starGeom.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
+      const starMat = new THREE.PointsMaterial({ color: 0xffffff, size: 4, transparent: true, opacity: 0.35 });
+      starsParticles = new THREE.Points(starGeom, starMat);
+      scene.add(starsParticles);
     }
 
     function registerInteractive(mesh, compKey) {
@@ -1587,6 +1615,7 @@ Type 'help', 'smdc status', 'smdc space passes', 'smdc space send', 'smdc audit'
     }
 
     function triggerSpaceTransmission() {
+      playSpacePing();
       const term = document.getElementById('terminal-modal');
       if (term.style.display !== 'flex') toggleTerminal();
       executeSimulatedCommand('smdc space send');
@@ -1799,8 +1828,121 @@ Swarm-LoRa-Relay-1 : AOS 1h 12m  | Max El: 63.4° | Duration: 7m 30s\n`;
       phasedArrayMount.position.y = 200.05 + explodeVal * 100;
     }
 
+    // ──────────────────────────────────────────────────────────────────────────
+    // DAY / NIGHT & SOLAR TRAJECTORY DYNAMICS
+    // ──────────────────────────────────────────────────────────────────────────
+    function onSunElevationChange(val) {
+      const elDeg = parseFloat(val);
+      const rad = THREE.MathUtils.degToRad(elDeg);
+      const pvWatts = Math.round(1640 * Math.sin(rad));
+
+      document.getElementById('val-sun-el').textContent = `${elDeg}° (${pvWatts}W)`;
+      document.getElementById('hud-solar').textContent = `${pvWatts} W`;
+
+      if (sunLight) {
+        sunLight.position.x = Math.cos(rad) * 1400;
+        sunLight.position.y = Math.sin(rad) * 1400 + 50;
+        sunLight.intensity = Math.max(0.05, Math.sin(rad) * 1.5);
+      }
+    }
+
+    function toggleDayNight() {
+      isNightMode = !isNightMode;
+      playRelayClick();
+      const btn = document.getElementById('btn-day-night');
+      btn.textContent = isNightMode ? "☀️ Day Mode" : "🌙 Night Mode";
+      btn.classList.toggle('active', isNightMode);
+
+      const targetBg = isNightMode ? new THREE.Color(0x010309) : new THREE.Color(0x040711);
+      const targetAmbient = isNightMode ? 0.25 : 0.6;
+      const targetSun = isNightMode ? 0.1 : 1.3;
+
+      new TWEEN.Tween(scene.background)
+        .to({ r: targetBg.r, g: targetBg.g, b: targetBg.b }, 1000)
+        .start();
+
+      if (ambientLight) {
+        new TWEEN.Tween(ambientLight)
+          .to({ intensity: targetAmbient }, 1000)
+          .start();
+      }
+      if (sunLight) {
+        new TWEEN.Tween(sunLight)
+          .to({ intensity: targetSun }, 1000)
+          .start();
+      }
+      if (starsParticles) {
+        starsParticles.material.opacity = isNightMode ? 0.85 : 0.35;
+      }
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // PROCEDURAL WEB AUDIO API SOUND ENGINE
+    // ──────────────────────────────────────────────────────────────────────────
+    function initAudioContext() {
+      if (!audioCtx) {
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        if (AudioContext) audioCtx = new AudioContext();
+      }
+      if (audioCtx && audioCtx.state === 'suspended') {
+        audioCtx.resume();
+      }
+    }
+
+    function toggleAudioEngine() {
+      audioMuted = !audioMuted;
+      const btn = document.getElementById('btn-audio');
+      btn.textContent = audioMuted ? "🔇 Audio: OFF" : "🔊 Audio: ON";
+      btn.classList.toggle('active', !audioMuted);
+      if (!audioMuted) {
+        initAudioContext();
+        playSpacePing();
+      }
+    }
+
+    function playSpacePing() {
+      if (audioMuted) return;
+      initAudioContext();
+      if (!audioCtx) return;
+
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(880, audioCtx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(1760, audioCtx.currentTime + 0.3);
+
+      gain.gain.setValueAtTime(0.12, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.5);
+
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start();
+      osc.stop(audioCtx.currentTime + 0.5);
+    }
+
+    function playRelayClick() {
+      if (audioMuted) return;
+      initAudioContext();
+      if (!audioCtx) return;
+
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(220, audioCtx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(60, audioCtx.currentTime + 0.08);
+
+      gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.08);
+
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start();
+      osc.stop(audioCtx.currentTime + 0.08);
+    }
+
     function toggleDoor() {
       doorOpen = !doorOpen;
+      playRelayClick();
       const targetRot = doorOpen ? -Math.PI / 1.7 : 0;
       new TWEEN.Tween(doorMesh.rotation)
         .to({ y: targetRot }, 800)

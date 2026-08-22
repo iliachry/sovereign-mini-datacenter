@@ -178,6 +178,9 @@ uv run pytest tests/ --cov=src/sovereign_dc --cov-fail-under=85
 # Execute CLI locally
 .\.venv\Scripts\python -m sovereign_dc --help
 .\.venv\Scripts\python -m sovereign_dc status
+.\.venv\Scripts\python -m sovereign_dc benchmark --all
+.\.venv\Scripts\python -m sovereign_dc demo --steps 3
+.\.venv\Scripts\python -m sovereign_dc mesh consensus --nodes 3
 .\.venv\Scripts\python -m sovereign_dc space passes --hours 12
 .\.venv\Scripts\python -m sovereign_dc agent ask "Summarize power status"
 ```

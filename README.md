@@ -298,6 +298,24 @@ See [`software/backup/README.md`](software/backup/README.md) for automated cron 
 
 ---
 
+## 🧪 1-Click Local Demo Sandbox & CLI Benchmarking
+
+Run the complete Sovereign Mini Datacenter stack on any standard laptop without physical hardware:
+
+```bash
+# Launch the 1-click live demonstration sandbox
+./software/demo.sh                # Linux / macOS / WSL
+smdc demo --steps 5               # Cross-platform CLI
+
+# Run empirical performance benchmarks (AI, Space DTN & unified memory)
+smdc benchmark --all --export benchmark_results.json
+
+# Simulate decentralized Raft leader election across 4 swarm nodes
+smdc mesh consensus --nodes 4
+```
+
+---
+
 ## ☸️ Kubernetes & GitOps Deployment (Helm / K3s / Talos)
 
 Deploy the Sovereign stack onto edge Kubernetes clusters (K3s, Talos, MicroK8s):
