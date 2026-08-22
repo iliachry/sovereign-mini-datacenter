@@ -75,7 +75,12 @@ graph TD
     L2["L2: Deep Out-of-Band & DTN Routing (RFC 9171 BPv7, Meshtastic LoRa, SGP4 Orbit Tracker)"]:::l2
     L1["L1: Physical Microgrid & Telemetry (LiFePO4 BMS, Victron MPPT, ESP32, Coolant Loop)"]:::l1
 
-    L7 --> L6 --> L5 --> L4 --> L3 --> L2 --> L1
+    L7 --> L6
+    L6 --> L5
+    L5 --> L4
+    L4 --> L3
+    L3 --> L2
+    L2 --> L1
 ```
 
 | Layer | Subsystem | Sovereign Technology Stack | Primary Function |
@@ -101,16 +106,16 @@ graph TD
     classDef t3 fill:#78350f,stroke:#f59e0b,color:#fff;
     classDef t4 fill:#4c1d95,stroke:#a855f7,color:#fff;
 
-    Start[Outbound Packet / Payload] --> CheckT1{Tier 1: Terrestrial WireGuard / Fiber available?}
+    Start["Outbound Packet / Payload"] --> CheckT1{"Tier 1: Terrestrial WireGuard / Fiber available?"}
     
-    CheckT1 -- Yes --> T1[Tier 1: 10GbE / Fiber P2P Mesh<br/>Latency: 5-40ms | Bandwidth: 100Mbps-10Gbps]:::t1
-    CheckT1 -- No --> CheckT2{Tier 2: Commercial LEO Sat Starlink/5G available?}
+    CheckT1 -->|Yes| T1["Tier 1: 10GbE / Fiber P2P Mesh<br/>Latency: 5-40ms • Bandwidth: 100Mbps-10Gbps"]:::t1
+    CheckT1 -->|No| CheckT2{"Tier 2: Commercial LEO Sat Starlink/5G available?"}
     
-    CheckT2 -- Yes --> T2[Tier 2: Starlink / Private 5G NR<br/>Latency: 40-120ms | Bandwidth: 20-200Mbps]:::t2
-    CheckT2 -- No --> CheckT3{Tier 3: LoRa Mesh in Range?}
+    CheckT2 -->|Yes| T2["Tier 2: Starlink / Private 5G NR<br/>Latency: 40-120ms • Bandwidth: 20-200Mbps"]:::t2
+    CheckT2 -->|No| CheckT3{"Tier 3: LoRa Mesh in Range?"}
     
-    CheckT3 -- Yes --> T3[Tier 3: LoRa Meshtastic 868/915MHz<br/>Latency: 500-2000ms | Bandwidth: 0.3-5.4 kbps<br/>Encrypted Control Packets & Heartbeats]:::t3
-    CheckT3 -- No --> T4[Tier 4: Space DTN / BPv7 Store-and-Forward<br/>Latency: Minutes to Hours | Bandwidth: Burst 1-10Mbps<br/>LEO/MEO Satellite Orbital Pass Transmission]:::t4
+    CheckT3 -->|Yes| T3["Tier 3: LoRa Meshtastic 868/915MHz<br/>Latency: 500-2000ms • Bandwidth: 0.3-5.4 kbps<br/>Encrypted Control Packets & Heartbeats"]:::t3
+    CheckT3 -->|No| T4["Tier 4: Space DTN / BPv7 Store-and-Forward<br/>Latency: Minutes to Hours • Bandwidth: Burst 1-10Mbps<br/>LEO/MEO Satellite Orbital Pass Transmission"]:::t4
 ```
 
 ### Communication Tier Details
@@ -180,17 +185,17 @@ Where:
 stateDiagram-v2
     [*] --> L0_Nominal
     
-    L0_Nominal --> L1_MildThrottling : SoC < 50% OR Solar < 200W
-    L1_MildThrottling --> L0_Nominal : SoC > 65% AND Solar > 500W
+    L0_Nominal --> L1_MildThrottling : SoC under 50% or Solar under 200W
+    L1_MildThrottling --> L0_Nominal : SoC over 65% and Solar over 500W
     
-    L1_MildThrottling --> L2_HeavyShedding : SoC < 30%
-    L2_HeavyShedding --> L1_MildThrottling : SoC > 40%
+    L1_MildThrottling --> L2_HeavyShedding : SoC under 30%
+    L2_HeavyShedding --> L1_MildThrottling : SoC over 40%
     
-    L2_HeavyShedding --> L3_CriticalPreservation : SoC < 20%
-    L3_CriticalPreservation --> L2_HeavyShedding : SoC > 25%
+    L2_HeavyShedding --> L3_CriticalPreservation : SoC under 20%
+    L3_CriticalPreservation --> L2_HeavyShedding : SoC over 25%
     
-    L3_CriticalPreservation --> L4_BlackoutSafe : SoC < 10%
-    L4_BlackoutSafe --> L3_CriticalPreservation : SoC > 15% (Solar Recovery)
+    L3_CriticalPreservation --> L4_BlackoutSafe : SoC under 10%
+    L4_BlackoutSafe --> L3_CriticalPreservation : SoC over 15% (Solar Recovery)
 ```
 
 * **Level 0 (Nominal, SoC > 50%)**: Full power. Dual DGX/Jetson accelerators active, full RAG indexing, continuous Git CI/CD builds, open peer-relay bandwidth.
@@ -243,23 +248,23 @@ Each sovereign datacenter runs a localized multi-agent loop collaborating with p
 
 ```mermaid
 graph LR
-    subgraph LocalNode [Sovereign Node Autonomous Agent Runtime]
-        S[Sentinel Copilot Agent<br/>- Power & Thermal Guard<br/>- Hardware Failover]
-        R[GitLab Code Reviewer<br/>- Automated QA<br/>- Patch Generation]
-        I[Knowledge Indexer<br/>- Semantic Vectorization<br/>- Document RAG]
-        D[Swarm Dispatcher<br/>- Peer Negotiation<br/>- Workload Bidding]
+    subgraph LocalNode ["Sovereign Node Autonomous Agent Runtime"]
+        S["Sentinel Copilot Agent<br/>• Power & Thermal Guard<br/>• Hardware Failover"]
+        R["GitLab Code Reviewer<br/>• Automated QA<br/>• Patch Generation"]
+        I["Knowledge Indexer<br/>• Semantic Vectorization<br/>• Document RAG"]
+        D["Swarm Dispatcher<br/>• Peer Negotiation<br/>• Workload Bidding"]
     end
 
-    subgraph PeerNodes [Mesh Peer Nodes]
-        P1[Peer Node Alpha Agent]
-        P2[Peer Node Beta Agent]
+    subgraph PeerNodes ["Mesh Peer Nodes"]
+        P1["Peer Node Alpha Agent"]
+        P2["Peer Node Beta Agent"]
     end
 
     S -->|Status & Telemetry| D
     I -->|Vector Embeddings| D
     R -->|Build Status| D
-    D <-->|P2P Agent Gossip Protocol| P1
-    D <-->|P2P Agent Gossip Protocol| P2
+    D ---|P2P Agent Gossip Protocol| P1
+    D ---|P2P Agent Gossip Protocol| P2
 ```
 
 - **Sentinel Copilot Agent**: Parses hardware telemetry (`/dev/ttyUSB0` VE.Direct, RS485 Modbus, 1-Wire sensors) and executes deterministic emergency actions (GPU throttling, coolant pump speed adjustment, radiator fan PWM control).
@@ -307,24 +312,24 @@ When a node experiences a catastrophic blackout or hardware fault, it recovers a
 ```mermaid
 sequenceDiagram
     autonumber
-    participant Sun as ☀️ Solar Array (MPPT)
-    participant BMS as 🔋 LiFePO4 BMS
-    participant ESP as 🔌 ESP32 Micro-Controller
-    participant PDU as ⚡ DC-DC / AC PDU
-    participant Compute as 🖥️ Main Compute (Jetson/x86)
-    participant Mesh as 🌐 Sovereign Mesh Peers
+    participant Sun as "☀️ Solar Array (MPPT)"
+    participant BMS as "🔋 LiFePO4 BMS"
+    participant ESP as "🔌 ESP32 Micro-Controller"
+    participant PDU as "⚡ DC-DC / AC PDU"
+    participant Compute as "🖥️ Main Compute (Jetson/x86)"
+    participant Mesh as "🌐 Sovereign Mesh Peers"
 
-    Sun->>BMS: Solar irradiance restores voltage (>48V)
+    Sun->>BMS: Solar irradiance restores voltage (above 48V)
     BMS->>ESP: BMS activates 5V Auxiliary Rail
-    ESP->>ESP: Boot ESP32 firmware, read cell voltages & temperatures
-    Note over ESP: Wait until battery SoC > 25% (Safe Hysteresis)
+    ESP->>ESP: Boot ESP32 firmware, read cell voltages and temperatures
+    Note over ESP: Wait until battery SoC above 25% (Safe Hysteresis)
     ESP->>PDU: Trigger Relay Pin (Engage Main Inverter & 12V/19V Rails)
     PDU->>Compute: Cold Boot Compute Nodes (Wake-on-Power)
     Compute->>Compute: Load Talos Linux / K3s immutable OS
     Compute->>Compute: Initialize WireGuard & Headscale client
-    Compute->>Mesh: Send WireGuard & LoRa "NODE_ONLINE_RECOVERED" Beacon
+    Compute->>Mesh: Send WireGuard & LoRa NODE_ONLINE_RECOVERED Beacon
     Mesh-->>Compute: Replay missed CRDT state logs & DTN bundles
-    Note over Compute: Node fully synchronised & operational!
+    Note over Compute: Node fully synchronised & operational
 ```
 
 ---
