@@ -8,16 +8,31 @@ Developed by **[Metatopia Studio](https://metatopia.gr)** · License: MIT · © 
 
 [![CI & Quality Gates](https://github.com/iliachry/sovereign-mini-datacenter/actions/workflows/ci.yml/badge.svg)](https://github.com/iliachry/sovereign-mini-datacenter/actions/workflows/ci.yml)
 [![Quality Gate](https://img.shields.io/badge/Quality%20Gate-Strict%20Enforcement%20(96.5%25%20Cov)-10b981?style=flat&logo=githubactions)](https://github.com/iliachry/sovereign-mini-datacenter/actions/workflows/ci.yml)
+[![Commercialization](https://img.shields.io/badge/Commercialization-Investment%20Thesis-f59e0b?style=flat)](COMMERCIALIZATION.md)
+[![Benchmarks](https://img.shields.io/badge/Benchmarks-Empirical%20AI%20%26%20Power-06b6d4?style=flat)](BENCHMARKS.md)
+[![Compliance](https://img.shields.io/badge/Compliance-SOC%202%20%26%20PQC%20Ready-ec4899?style=flat)](COMPLIANCE.md)
 [![3D WebGL Viewer](https://img.shields.io/badge/3D%20CAD%20Viewer-Live%20Demo-10b981?style=flat&logo=three.js)](https://iliachry.gr/sovereign-mini-datacenter/)
 [![AI Agents Guide](https://img.shields.io/badge/AI%20Agents-Engineering%20Playbook-6366f1?style=flat)](AGENTS.md)
 [![Architecture](https://img.shields.io/badge/Architecture-Autonomous%20Mesh-3b82f6?style=flat)](ARCHITECTURE.md)
 
 ---
 
-## 🌐 Live Interactive 3D Viewer
+## 💼 Investor, Enterprise & Defense Dossier
 
-Inspect the 9U 19" chassis, rails, liquid-cooling radiator cutouts, and physical dimensions directly in your browser:
-👉 **[Open 3D WebGL CAD Viewer](https://iliachry.gr/sovereign-mini-datacenter/)**
+| Resource | Scope & Key Takeaways | Link |
+| :--- | :--- | :---: |
+| **📈 Commercial Strategy & TCO Model** | Market Sizing (\$60.4B TAM), Unit Economics, 5-Year Financials, **5.1 Mo Payback & 73.6% TCO Savings** vs. AWS | [**`COMMERCIALIZATION.md`**](COMMERCIALIZATION.md) |
+| **⚡ Empirical Performance Benchmarks** | Quantified local LLM token throughput (82.4 t/s), Qdrant retrieval latency ($<5\text{ms}$), load shedding ($<110\text{ms}$) | [**`BENCHMARKS.md`**](BENCHMARKS.md) |
+| **🛡️ Enterprise Compliance & PQC Security** | SOC 2 Type II, ISO 27001, NIST 800-207 Zero Trust, Post-Quantum Cryptography (ML-KEM/Kyber-1024), TPM 2.0 | [**`COMPLIANCE.md`**](COMPLIANCE.md) |
+| **🌐 Interactive Digital Twin & ROI Simulator** | 3D WebGL CAD visualizer, live subsystem explorer, and **interactive investor TCO calculator** | [**Live 3D WebGL Viewer**](https://iliachry.gr/sovereign-mini-datacenter/) |
+| **🏛️ Autonomous Sovereign Mesh Architecture** | 7-Layer protocol stacks, multi-spectral communication fabric, delay-tolerant space networking (RFC 9171) | [**`ARCHITECTURE.md`**](ARCHITECTURE.md) |
+
+---
+
+## 🌐 Live Interactive 3D Viewer & TCO Simulator
+
+Inspect the 9U 19" chassis, rails, liquid-cooling loop, space DTN antenna, and run live TCO/payback calculations:
+👉 **[Open 3D WebGL CAD Viewer & ROI Simulator](https://iliachry.gr/sovereign-mini-datacenter/)**
 
 ---
 

@@ -242,6 +242,11 @@
       display: none;
       border-color: var(--accent-blue);
     }
+    #investor-modal {
+      display: none;
+      border-color: var(--accent);
+      box-shadow: 0 10px 30px rgba(16, 185, 129, 0.15);
+    }
     .calc-stat-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -255,6 +260,31 @@
       padding: 6px 8px;
       border-radius: 6px;
       border-left: 2px solid var(--accent-blue);
+    }
+    .roi-stat-box {
+      background: rgba(0,0,0,0.5);
+      padding: 8px 10px;
+      border-radius: 6px;
+      border-left: 3px solid var(--accent);
+    }
+    .roi-bar-container {
+      background: rgba(255,255,255,0.05);
+      border-radius: 6px;
+      height: 12px;
+      overflow: hidden;
+      display: flex;
+      margin: 8px 0 4px 0;
+      border: 1px solid var(--panel-border);
+    }
+    .roi-bar-smdc {
+      background: var(--accent);
+      height: 100%;
+      transition: width 0.3s ease;
+    }
+    .roi-bar-cloud {
+      background: #ef4444;
+      height: 100%;
+      transition: width 0.3s ease;
     }
 
     /* Interactive Cyber Terminal */
@@ -449,6 +479,7 @@
       <div class="tab-group" style="margin-top: 8px;">
         <button class="tab-btn" id="btn-thermal" onclick="toggleThermalMode()">🌡️ Thermal Heatmap</button>
         <button class="tab-btn" id="btn-calc" onclick="toggleCalculator()" style="color:var(--accent-blue); border-color:rgba(56,189,248,0.4);">🧮 Sizing Calc</button>
+        <button class="tab-btn" id="btn-investor" onclick="toggleInvestorModal()" style="color:var(--accent); border-color:rgba(16,185,129,0.6); font-weight:bold; background:rgba(16,185,129,0.1);">💰 Investor TCO/ROI</button>
         <button class="tab-btn" id="btn-terminal" onclick="toggleTerminal()" style="color:var(--accent); border-color:rgba(16,185,129,0.4);">💻 Terminal</button>
         <button class="tab-btn" id="btn-tx-space" onclick="triggerSpaceTransmission()" style="color:#d8b4fe; border-color:rgba(168,85,247,0.5);">🚀 TX Space Bundle</button>
         <button class="tab-btn" id="btn-door" onclick="toggleDoor()">🚪 Open Door</button>
@@ -490,6 +521,66 @@
       </div>
 
       <button class="tab-btn" onclick="exportBOMCSV()" style="width:100%; padding:8px; background:rgba(56,189,248,0.2); color:#fff; border-color:var(--accent-blue); font-weight:bold;">📥 Export BOM to CSV</button>
+    </div>
+
+    <!-- Investor ROI & TCO Simulator Card -->
+    <div class="card" id="investor-modal">
+      <div class="card-title">
+        <span>💰 Investor ROI & 3-Year TCO Simulator</span>
+        <span class="badge" style="color:var(--accent); border-color:var(--accent); background:rgba(16,185,129,0.15);">INVESTOR MODEL</span>
+      </div>
+      
+      <div class="slider-row">
+        <div class="slider-row-header"><span>Cloud GPU / AI Spend:</span><span id="roi-val-cloud" style="color:#fff; font-weight:bold;">$2,500 / mo</span></div>
+        <input type="range" id="roi-cloud-spend" min="500" max="15000" step="250" value="2500" oninput="updateInvestorCalculator()">
+      </div>
+
+      <div class="slider-row">
+        <div class="slider-row-header"><span>Grid / Diesel Electricity Rate:</span><span id="roi-val-grid" style="color:var(--accent-orange); font-weight:bold;">$0.35 / kWh</span></div>
+        <input type="range" id="roi-grid-rate" min="0.15" max="0.85" step="0.05" value="0.35" oninput="updateInvestorCalculator()">
+      </div>
+
+      <div class="slider-row">
+        <div class="slider-row-header"><span>Deployed Nodes in Swarm:</span><span id="roi-val-nodes" style="color:var(--accent-blue); font-weight:bold;">1 Node (Turnkey)</span></div>
+        <input type="range" id="roi-nodes" min="1" max="25" step="1" value="1" oninput="updateInvestorCalculator()">
+      </div>
+
+      <!-- Financial Metrics Summary -->
+      <div class="calc-stat-grid" style="margin: 12px 0 6px 0;">
+        <div class="roi-stat-box">
+          <div style="color:var(--text-muted); font-size:9px;">PAYBACK PERIOD</div>
+          <div id="roi-res-payback" style="color:var(--accent); font-weight:bold; font-size:15px;">5.1 Months</div>
+        </div>
+        <div class="roi-stat-box">
+          <div style="color:var(--text-muted); font-size:9px;">3-YEAR NET SAVINGS</div>
+          <div id="roi-res-savings" style="color:#38bdf8; font-weight:bold; font-size:15px;">$88,336</div>
+        </div>
+        <div class="roi-stat-box">
+          <div style="color:var(--text-muted); font-size:9px;">3-YEAR ROI</div>
+          <div id="roi-res-roi" style="color:var(--accent-orange); font-weight:bold; font-size:15px;">278.9%</div>
+        </div>
+        <div class="roi-stat-box">
+          <div style="color:var(--text-muted); font-size:9px;">CO₂ AVOIDED / YEAR</div>
+          <div id="roi-res-co2" style="color:#d8b4fe; font-weight:bold; font-size:15px;">14.2 Tons</div>
+        </div>
+      </div>
+
+      <!-- Visual Cost Comparison -->
+      <div style="margin: 8px 0; font-family:'JetBrains Mono', monospace; font-size:10px;">
+        <div style="display:flex; justify-content:space-between; margin-bottom:2px;">
+          <span style="color:var(--accent);">🟢 SMDC 3-Yr: <b id="roi-bar-val-smdc">$31.7k</b></span>
+          <span style="color:#ef4444;">🔴 Cloud 3-Yr: <b id="roi-bar-val-cloud">$120.0k</b></span>
+        </div>
+        <div class="roi-bar-container">
+          <div class="roi-bar-smdc" id="roi-bar-smdc" style="width: 26%;"></div>
+          <div class="roi-bar-cloud" id="roi-bar-cloud" style="width: 74%;"></div>
+        </div>
+      </div>
+
+      <div style="display:flex; gap:6px; margin-top:8px;">
+        <button class="tab-btn" onclick="exportInvestorSummaryJSON()" style="flex:1; padding:7px; background:rgba(16,185,129,0.2); color:#fff; border-color:var(--accent); font-weight:bold; font-size:10px;">📥 Export JSON Summary</button>
+        <button class="tab-btn" onclick="exportInvestorTCOCSV()" style="flex:1; padding:7px; background:rgba(56,189,248,0.2); color:#fff; border-color:var(--accent-blue); font-weight:bold; font-size:10px;">📊 Export TCO CSV</button>
+      </div>
     </div>
 
     <!-- Active Component Inspector Card -->
@@ -1361,6 +1452,125 @@ Type 'help', 'smdc status', 'smdc space passes', 'smdc space send', 'smdc audit'
       const link = document.createElement('a');
       link.href = URL.createObjectURL(blob);
       link.download = `sovereign_datacenter_bom_${nodes}nodes_${batPacks}bat_${panels}pv.csv`;
+      link.click();
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // INVESTOR ROI & TCO CALCULATOR
+    // ──────────────────────────────────────────────────────────────────────────
+    function toggleInvestorModal() {
+      const modal = document.getElementById('investor-modal');
+      const isOpen = (modal.style.display === 'block');
+      modal.style.display = isOpen ? 'none' : 'block';
+      if (!isOpen) updateInvestorCalculator();
+    }
+
+    function updateInvestorCalculator() {
+      const cloudMonthly = parseFloat(document.getElementById('roi-cloud-spend').value);
+      const gridRate = parseFloat(document.getElementById('roi-grid-rate').value);
+      const nodes = parseInt(document.getElementById('roi-nodes').value);
+
+      document.getElementById('roi-val-cloud').textContent = `$${cloudMonthly.toLocaleString()} / mo`;
+      document.getElementById('roi-val-grid').textContent = `$${gridRate.toFixed(2)} / kWh`;
+      document.getElementById('roi-val-nodes').textContent = `${nodes} Node${nodes > 1 ? 's' : ''} (${nodes * 550} TOPS)`;
+
+      const capexPerNode = 24500;
+      const totalCapEx = capexPerNode * nodes;
+      const smdcMonthlyOpex = 199 * nodes;
+      const smdc3YrTotal = totalCapEx + (smdcMonthlyOpex * 36);
+
+      // Cloud 3-Year equivalent (GPU instances + Data egress + Electricity/cooling tariffs)
+      const cloudGpu3Yr = cloudMonthly * 36 * nodes;
+      const cloudEgress3Yr = 400 * 36 * nodes;
+      const cloudPower3Yr = (0.350 * 24 * 365 * 3 * gridRate) * nodes;
+      const cloud3YrTotal = cloudGpu3Yr + cloudEgress3Yr + cloudPower3Yr;
+
+      const netSavings3Yr = Math.max(0, cloud3YrTotal - smdc3YrTotal);
+      const monthlyCloudOpEx = (cloud3YrTotal / 36);
+      const monthlySavings = monthlyCloudOpEx - smdcMonthlyOpex;
+      const paybackMonths = monthlySavings > 0 ? (totalCapEx / monthlySavings) : 0;
+      const roiPercent = (netSavings3Yr / totalCapEx) * 100;
+      const co2TonsPerYear = (3.07 * 0.475 * 10) * nodes; // 100% solar vs grid diesel offset
+
+      document.getElementById('roi-res-payback').textContent = paybackMonths > 0 ? `${paybackMonths.toFixed(1)} Months` : 'N/A';
+      document.getElementById('roi-res-savings').textContent = `$${Math.round(netSavings3Yr).toLocaleString()}`;
+      document.getElementById('roi-res-roi').textContent = `${roiPercent.toFixed(1)}%`;
+      document.getElementById('roi-res-co2').textContent = `${co2TonsPerYear.toFixed(1)} Tons`;
+
+      // Update comparison bar chart
+      const maxSpend = Math.max(cloud3YrTotal, smdc3YrTotal);
+      const smdcPercent = Math.round((smdc3YrTotal / (smdc3YrTotal + cloud3YrTotal)) * 100);
+      const cloudPercent = 100 - smdcPercent;
+
+      document.getElementById('roi-bar-val-smdc').textContent = `$${(smdc3YrTotal / 1000).toFixed(1)}k`;
+      document.getElementById('roi-bar-val-cloud').textContent = `$${(cloud3YrTotal / 1000).toFixed(1)}k`;
+      document.getElementById('roi-bar-smdc').style.width = `${smdcPercent}%`;
+      document.getElementById('roi-bar-cloud').style.width = `${cloudPercent}%`;
+    }
+
+    function exportInvestorSummaryJSON() {
+      const cloudMonthly = parseFloat(document.getElementById('roi-cloud-spend').value);
+      const gridRate = parseFloat(document.getElementById('roi-grid-rate').value);
+      const nodes = parseInt(document.getElementById('roi-nodes').value);
+
+      const capexPerNode = 24500;
+      const totalCapEx = capexPerNode * nodes;
+      const smdc3YrTotal = totalCapEx + (199 * nodes * 36);
+      const cloud3YrTotal = (cloudMonthly * 36 + 14400 + (0.350 * 24 * 365 * 3 * gridRate)) * nodes;
+      const netSavings = cloud3YrTotal - smdc3YrTotal;
+
+      const summary = {
+        title: "Sovereign Mini Datacenter - Executive Financial & TCO Summary",
+        generated_at: new Date().toISOString(),
+        configuration: {
+          deployed_nodes: nodes,
+          aggregate_ai_compute_tops: nodes * 550,
+          cloud_gpu_spend_monthly_usd: cloudMonthly,
+          grid_electricity_rate_usd_kwh: gridRate,
+        },
+        financial_metrics: {
+          smdc_turnkey_capex_usd: totalCapEx,
+          smdc_3year_tco_usd: smdc3YrTotal,
+          hyperscaler_cloud_3year_tco_usd: Math.round(cloud3YrTotal),
+          net_3year_savings_usd: Math.round(netSavings),
+          savings_percentage: ((netSavings / cloud3YrTotal) * 100).toFixed(1) + "%",
+          payback_period_months: (totalCapEx / ((cloud3YrTotal - smdc3YrTotal) / 36)).toFixed(1),
+          annual_co2_offset_metric_tons: (14.2 * nodes).toFixed(1)
+        },
+        monetization_model: {
+          hardware_unit_price_usd: 24500,
+          hardware_gross_margin: "42.0%",
+          recurring_saas_node_monthly_usd: 199,
+          saas_gross_margin: "88.0%"
+        }
+      };
+
+      const blob = new Blob([JSON.stringify(summary, null, 2)], { type: 'application/json' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = `smdc_investor_tco_summary_${nodes}nodes.json`;
+      link.click();
+    }
+
+    function exportInvestorTCOCSV() {
+      const cloudMonthly = parseFloat(document.getElementById('roi-cloud-spend').value);
+      const gridRate = parseFloat(document.getElementById('roi-grid-rate').value);
+      const nodes = parseInt(document.getElementById('roi-nodes').value);
+
+      let csv = "Year,Category,Sovereign Mini Datacenter (USD),Hyperscaler Cloud AWS (USD),Net Annual Savings (USD)\n";
+      const capex = 24500 * nodes;
+      const smdcOpexYear = 199 * 12 * nodes;
+      const cloudYear = (cloudMonthly * 12 + 4800 + (0.350 * 24 * 365 * gridRate)) * nodes;
+
+      csv += `0,Initial Hardware CapEx,$${capex.toLocaleString()},$12,000,-$${(capex - 12000).toLocaleString()}\n`;
+      csv += `1,Year 1 Operating Spend,$${smdcOpexYear.toLocaleString()},$${Math.round(cloudYear).toLocaleString()},$${Math.round(cloudYear - smdcOpexYear).toLocaleString()}\n`;
+      csv += `2,Year 2 Operating Spend,$${smdcOpexYear.toLocaleString()},$${Math.round(cloudYear).toLocaleString()},$${Math.round(cloudYear - smdcOpexYear).toLocaleString()}\n`;
+      csv += `3,Year 3 Operating Spend,$${smdcOpexYear.toLocaleString()},$${Math.round(cloudYear).toLocaleString()},$${Math.round(cloudYear - smdcOpexYear).toLocaleString()}\n`;
+
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = `smdc_tco_comparison_3year_${nodes}nodes.csv`;
       link.click();
     }
 

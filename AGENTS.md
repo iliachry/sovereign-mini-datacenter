@@ -75,9 +75,12 @@ sovereign-mini-datacenter/
 │   ├── accessories.scad         # 3D printable brackets (DIN rail, Jetson mount, OLED bezel)
 │   └── MANUFACTURING_GUIDE.md   # Laser cut DXF export, CNC sheet metal bending specs
 ├── docs/                        # Interactive Three.js WebGL Digital Twin & GitHub Pages
-│   └── index.html               # 3D WebGL CAD viewer + interactive sizing calculator
-├── tests/                       # Complete automated Pytest suite (92+ tests, 94% coverage)
+│   └── index.html               # 3D WebGL CAD viewer + interactive sizing & TCO calculator
+├── tests/                       # Complete automated Pytest suite (92+ tests, 96.5% coverage)
 ├── ARCHITECTURE.md              # Multi-node autonomous network architecture specification
+├── COMMERCIALIZATION.md         # Investment thesis, TAM/SAM/SOM & 3-year TCO payback model
+├── BENCHMARKS.md                # Quantified LLM, vector search, load shedding & space metrics
+├── COMPLIANCE.md                # SOC 2, ISO 27001, NIST Zero Trust & PQC cryptographic attestation
 ├── pyproject.toml               # Python package metadata, dependencies & tool configs
 └── uv.lock                      # Deterministic uv dependency lockfile
 ```
