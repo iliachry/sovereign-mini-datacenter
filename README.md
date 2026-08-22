@@ -20,6 +20,8 @@ Inspect the 9U 19" chassis, rails, liquid-cooling radiator cutouts, and physical
 
 ## 🏛️ System Architecture
 
+> 📖 **Looking for the full multi-node network architecture?** See the comprehensive [Autonomous Sovereign Mesh Architecture](ARCHITECTURE.md) blueprint covering 7-layer protocol stacks, energy-directed workload scheduling, space DTN fallbacks, and zero-trust PQC security.
+
 ```
                     ┌─────────────────────────────────────────────────────────┐
                     │                   INTERNET / OFF-GRID                   │
