@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ====================================================================
-# Sovereign Mini Datacenter � Autonomous Load-Shedding Sentinel
+# Sovereign Mini Datacenter — Autonomous Load-Shedding Sentinel
 # ====================================================================
 
 set -euo pipefail
@@ -25,14 +25,14 @@ coolant_temp=$(echo "$metrics" | grep "^sovereign_temp_coolant_celsius " | awk '
 [[ -n "$soc" ]] || soc=100.0
 [[ -n "$coolant_temp" ]] || coolant_temp=30.0
 
-log "Telemetry status: Battery SoC = ${soc}%, Coolant Temp = ${coolant_temp}�C"
+log "Telemetry status: Battery SoC = ${soc}%, Coolant Temp = ${coolant_temp}°C"
 
 # Critical check: Low battery or excessive thermal load
 is_low_soc=$(awk -v s="$soc" -v t="$SOC_THRESHOLD_LOW" 'BEGIN {print (s < t) ? 1 : 0}')
 is_high_temp=$(awk -v temp="$coolant_temp" -v max="$TEMP_COOLANT_MAX" 'BEGIN {print (temp > max) ? 1 : 0}')
 
 if [[ "$is_low_soc" -eq 1 || "$is_high_temp" -eq 1 ]]; then
-    warn "? TRIGGERING LOAD SHEDDING (SoC: ${soc}%, Temp: ${coolant_temp}�C)"
+    warn "⚠️ TRIGGERING LOAD SHEDDING (SoC: ${soc}%, Temp: ${coolant_temp}°C)"
     
     # Check running containers and throttle heavy background jobs
     if docker ps --format '{{.Names}}' | grep -q "sovereign_ollama"; then

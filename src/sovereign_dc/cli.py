@@ -11,7 +11,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 # Ensure clean UTF-8 output on Windows consoles
@@ -468,7 +468,7 @@ def cmd_benchmark(args):
     print(f"\n{BOLD}{CYAN}=== Sovereign Mini Datacenter Benchmark Suite ==={RESET}\n")
     benchmarks_data: dict[str, Any] = {}
     results: dict[str, Any] = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "version": __version__,
         "benchmarks": benchmarks_data,
     }

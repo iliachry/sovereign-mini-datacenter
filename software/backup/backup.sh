@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ====================================================================
-# Sovereign Mini Datacenter � Automated Restic Backup Engine
+# Sovereign Mini Datacenter — Automated Restic Backup Engine
 # ====================================================================
 
 set -euo pipefail
@@ -78,5 +78,5 @@ restic forget \
     --keep-yearly 1 \
     --prune
 
-log "? Backup completed successfully. Current snapshot summary:"
+log "✅ Backup completed successfully. Current snapshot summary:"
 restic snapshots --tag "sovereign-snapshot" --compact | tail -n 10

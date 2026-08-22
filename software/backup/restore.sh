@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ====================================================================
-# Sovereign Mini Datacenter � Disaster Recovery & Restore Engine
+# Sovereign Mini Datacenter — Disaster Recovery & Restore Engine
 # ====================================================================
 
 set -euo pipefail
@@ -56,7 +56,7 @@ case "$cmd" in
         mkdir -p "$target"
         log "Restoring latest snapshot to $target..."
         restic restore latest --target "$target"
-        log "? Restore complete to $target"
+        log "✅ Restore complete to $target"
         ;;
     restore-id)
         snapshot_id="${1:-}"
@@ -65,12 +65,12 @@ case "$cmd" in
         mkdir -p "$target"
         log "Restoring snapshot $snapshot_id to $target..."
         restic restore "$snapshot_id" --target "$target"
-        log "? Restore complete to $target"
+        log "✅ Restore complete to $target"
         ;;
     verify)
         log "Verifying Restic repository consistency..."
         restic check --read-data-subset=10%
-        log "? Repository verification passed."
+        log "✅ Repository verification passed."
         ;;
     *)
         usage

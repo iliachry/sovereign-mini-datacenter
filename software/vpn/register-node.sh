@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ====================================================================
-# Sovereign Mini Datacenter � Headscale User & Device Manager
+# Sovereign Mini Datacenter — Headscale User & Device Manager
 # ====================================================================
 
 set -euo pipefail
