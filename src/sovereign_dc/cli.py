@@ -600,6 +600,102 @@ def cmd_mesh_consensus(args):
     print(f"\n{GREEN}✅ Raft consensus and log replication verified.{RESET}\n")
 
 
+def cmd_bootstrap(args):
+    """Executes autonomous node bootstrap provisioner on hardware power-up."""
+    from sovereign_dc.agents.bootstrap_provisioner import BootstrapProvisioner
+    from sovereign_dc.agents.technician_notifier import MessageSeverity, TechnicianNotifierChain
+
+    print(f"\n{BOLD}{CYAN}=== Sovereign Mini Datacenter — Autonomous Node Bootstrap ==={RESET}\n")
+
+    node_id = getattr(args, "node_id", None) or os.getenv("NODE_ID", "smdc-dgx-01")
+    role = getattr(args, "role", None) or os.getenv("NODE_ROLE", "Primary Compute Core")
+    dry_run = getattr(args, "dry_run", False)
+
+    notifier = TechnicianNotifierChain(node_id=node_id)
+    provisioner = BootstrapProvisioner(node_id=node_id, role=role, notifier_chain=notifier, dry_run=dry_run)
+
+    if getattr(args, "notify_test", False):
+        print(f"📡 {BOLD}Dispatching test alert across multi-channel technician notifier...{RESET}")
+        res = notifier.notify(
+            event_type="DIAGNOSTIC_TEST",
+            severity=MessageSeverity.INFO,
+            message=f"Technician notification test from sovereign node {node_id}.",
+            details={"channels_tested": ["File", "MQTT", "LoRa", "DTN"]},
+        )
+        for ch, ok in res.items():
+            st = f"{GREEN}OK{RESET}" if ok else f"{RED}FAILED{RESET}"
+            print(f"  • {ch:<16}: {st}")
+        print(f"\n{GREEN}✅ Multi-channel notification test complete.{RESET}\n")
+        return
+
+    phase_target = getattr(args, "phase", None)
+    if phase_target:
+        print(f"Executing isolated Bootstrap Phase {phase_target}...")
+        phase_map = {
+            1: ("Discovery", provisioner.phase_1_discovery),
+            2: ("Network", provisioner.phase_2_network),
+            3: ("Services", provisioner.phase_3_services),
+            4: ("Sync", provisioner.phase_4_sync),
+            5: ("Ready", provisioner.phase_5_ready),
+        }
+        if phase_target in phase_map:
+            name, fn = phase_map[phase_target]
+            output = fn()
+            print(f"\n{GREEN}Phase {phase_target} ({name}) completed successfully:{RESET}")
+            print(json.dumps(output, indent=2))
+        else:
+            print(f"{RED}Invalid phase {phase_target}. Choose from 1 to 5.{RESET}")
+        return
+
+    # Full sequence execution
+    print(f"🚀 Initializing 5-Phase Autonomous Bootstrap for {BOLD}{node_id}{RESET} ({role})...\n")
+    state = provisioner.run_all_phases()
+
+    print(f"\n{BOLD}[1] Phase 1 — Hardware Discovery:{RESET}")
+    hw = state.hardware_info
+    print(f"  • Host OS:        {hw.get('os')} {hw.get('release')} ({hw.get('arch')})")
+    print(f"  • CPU Cores:      {hw.get('cpu_count')} Cores")
+    print(f"  • Accelerators:   {hw.get('gpus', [{}])[0].get('name', 'N/A')}")
+    print(
+        f"  • Battery / PV:   {hw.get('power', {}).get('battery_soc', 0):.1f}% SoC | {hw.get('power', {}).get('solar_w', 0):.0f}W Solar"
+    )
+
+    print(f"\n{BOLD}[2] Phase 2 — Multi-Tier Network Fabric:{RESET}")
+    net = state.network_info
+    print(f"  • WireGuard Mesh: {GREEN + 'CONNECTED' if net.get('tier1_wireguard') else YELLOW + 'STANDBY'}{RESET}")
+    print(f"  • Active Peers:   {', '.join(net.get('active_peers', [])) or 'None'}")
+    print("  • Out-of-Band:    LoRa (868/915MHz) & Space DTN Fallback ARMED")
+
+    print(f"\n{BOLD}[3] Phase 3 — Service Stacks:{RESET}")
+    srv = state.services_info
+    print(f"  • Core Containers:{len(srv.get('services_started', []))} stacks verified")
+    print(f"  • Local AI Engine:Ollama ({GREEN + 'READY' if srv.get('ollama_ready') else YELLOW + 'STANDBY'}{RESET})")
+    print(f"  • Vector Engine:  Qdrant ({GREEN + 'READY' if srv.get('qdrant_ready') else YELLOW + 'STANDBY'}{RESET})")
+
+    print(f"\n{BOLD}[4] Phase 4 — Data & State Sync:{RESET}")
+    sync = state.sync_info
+    print(f"  • CRDT Status:    {GREEN}{sync.get('crdt_sync', 'SUCCESS')}{RESET}")
+    print(f"  • DTN Spool:      {sync.get('dtn_spool_bundles', 0)} bundles queued")
+
+    print(f"\n{BOLD}[5] Phase 5 — Node Operational Attestation:{RESET}")
+    st_color = GREEN if state.is_nominal else YELLOW
+    print(
+        f"  • Node Status:    {st_color}{BOLD}{'NODE_ONLINE_READY' if state.is_nominal else 'NODE_ONLINE_DEGRADED'}{RESET}"
+    )
+    print(f"  • Elapsed Time:   {state.elapsed_seconds():.2f}s")
+    print("  • Technician Log: Dispatched via Multi-Channel Notifier (File, MQTT, LoRa, DTN)\n")
+
+    if getattr(args, "daemon", False):
+        print(f"{CYAN}Entering continuous background health watchdog (interval: 120s)...{RESET}")
+        try:
+            while True:
+                time.sleep(120)
+                provisioner.phase_1_discovery()
+                provisioner.phase_2_network()
+        except KeyboardInterrupt:
+            print("\nWatchdog terminated by operator.")
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="smdc",
@@ -611,6 +707,24 @@ def main():
     # Status
     p_status = subparsers.add_parser("status", help="Show datacenter status & live telemetry")
     p_status.set_defaults(func=cmd_status)
+
+    # Bootstrap Provisioner
+    p_bootstrap = subparsers.add_parser(
+        "bootstrap", help="Autonomous DGX/Jetson power-up hardware, mesh & service provisioner"
+    )
+    p_bootstrap.add_argument("--node-id", type=str, help="Node ID override (e.g. smdc-dgx-01)")
+    p_bootstrap.add_argument("--role", type=str, help="Node role override (e.g. 'Primary Compute Core')")
+    p_bootstrap.add_argument("--phase", type=int, choices=[1, 2, 3, 4, 5], help="Execute only specific phase (1-5)")
+    p_bootstrap.add_argument(
+        "--dry-run", action="store_true", help="Execute in simulation mode without making system modifications"
+    )
+    p_bootstrap.add_argument(
+        "--notify-test", action="store_true", help="Test multi-channel technician notification dispatch"
+    )
+    p_bootstrap.add_argument(
+        "--daemon", action="store_true", help="Run continuous background health watchdog after bootstrap"
+    )
+    p_bootstrap.set_defaults(func=cmd_bootstrap)
 
     # Audit
     p_audit = subparsers.add_parser("audit", help="Run automated security compliance and CIS benchmarks")

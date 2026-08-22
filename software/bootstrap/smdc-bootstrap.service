@@ -1,0 +1,18 @@
+[Unit]
+Description=Sovereign Mini Datacenter Autonomous Bootstrap Provisioner & Watchdog
+After=network.target docker.service
+Wants=docker.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/sovereign-mini-datacenter
+Environment=PYTHONPATH=/opt/sovereign-mini-datacenter/src
+ExecStart=/usr/local/bin/smdc bootstrap --daemon
+Restart=always
+RestartSec=10
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=multi-user.target
