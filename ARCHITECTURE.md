@@ -146,13 +146,15 @@ Workload execution across the sovereign network is continuously steered by **rea
 
 ### Compute Routing Equation
 
-$$\text{Node Compute Score } S_i = \omega_1 \cdot \text{SoC}_i + \omega_2 \cdot \frac{P_{\text{solar}, i}}{P_{\text{max}}} + \omega_3 \cdot (1 - \text{GPU\_Util}_i) - \omega_4 \cdot T_{\text{coolant}, i}$$
+$$
+S_i = \omega_1 \cdot \mathrm{SoC}_i + \omega_2 \cdot \frac{P_{\mathrm{solar}, i}}{P_{\mathrm{max}}} + \omega_3 \cdot (1 - U_{\mathrm{gpu}, i}) - \omega_4 \cdot \hat{T}_{\mathrm{coolant}, i}
+$$
 
 Where:
-- $\text{SoC}_i \in [0, 1]$ is the battery State of Charge.
-- $P_{\text{solar}, i} / P_{\text{max}}$ is the normalized solar power harvesting rate.
-- $\text{GPU\_Util}_i \in [0, 1]$ is the active compute utilization.
-- $T_{\text{coolant}, i}$ is the coolant loop temperature normalized against maximum safe operating temperature.
+- $\mathrm{SoC}_i \in [0, 1]$ is the battery State of Charge.
+- $P_{\mathrm{solar}, i} / P_{\mathrm{max}}$ is the normalized solar power harvesting rate.
+- $U_{\mathrm{gpu}, i} \in [0, 1]$ is the active compute utilization.
+- $\hat{T}_{\mathrm{coolant}, i} \in [0, 1]$ is the coolant loop temperature normalized against maximum safe operating temperature.
 - $\omega_1, \omega_2, \omega_3, \omega_4$ are dynamically weighted scheduling coefficients.
 
 ```
@@ -268,7 +270,7 @@ graph LR
 ```
 
 - **Sentinel Copilot Agent**: Parses hardware telemetry (`/dev/ttyUSB0` VE.Direct, RS485 Modbus, 1-Wire sensors) and executes deterministic emergency actions (GPU throttling, coolant pump speed adjustment, radiator fan PWM control).
-- **Swarm Dispatcher Agent**: Participates in an open compute-bidding marketplace, shifting heavy compute tasks to nodes with $>80\%$ battery SoC and excess solar.
+- **Swarm Dispatcher Agent**: Participates in an open compute-bidding marketplace, shifting heavy compute tasks to nodes with >80% battery SoC and excess solar.
 - **Space Link Scheduler Agent**: Continuously recalculates orbital trajectories for LEO satellites using SGP4 algorithms, queueing DTN bundles for burst transmission during orbital passes.
 
 ---
