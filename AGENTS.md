@@ -76,7 +76,7 @@ sovereign-mini-datacenter/
 │   └── MANUFACTURING_GUIDE.md   # Laser cut DXF export, CNC sheet metal bending specs
 ├── docs/                        # Interactive Three.js WebGL Digital Twin & GitHub Pages
 │   └── index.html               # 3D WebGL CAD viewer + interactive sizing calculator
-├── tests/                       # Complete automated Pytest suite (38+ tests)
+├── tests/                       # Complete automated Pytest suite (92+ tests, 94% coverage)
 ├── ARCHITECTURE.md              # Multi-node autonomous network architecture specification
 ├── pyproject.toml               # Python package metadata, dependencies & tool configs
 └── uv.lock                      # Deterministic uv dependency lockfile
@@ -174,7 +174,7 @@ Agents should execute tests and verify functionality using the local environment
 
 ## 6. Checklist Before Completing Any Agent Task
 
-1. [ ] **Pass All Tests**: Verify that all 38+ unit tests in `tests/` pass with zero failures (`.\.venv\Scripts\pytest`).
+1. [ ] **Pass All Tests**: Verify that all 92+ unit tests in `tests/` pass with zero failures (`.\.venv\Scripts\pytest`).
 2. [ ] **Preserve Existing Interfaces**: Ensure CLI arguments, Prometheus metric names, and DTN bundle schemas remain backward-compatible.
 3. [ ] **Verify Markdown/Mermaid**: Ensure any new or modified `.md` files strictly comply with GitHub rendering guidelines.
 4. [ ] **Keep Clean Commits**: Format commit messages cleanly using Conventional Commits (`feat:`, `fix:`, `docs:`, `test:`, `refactor:`).

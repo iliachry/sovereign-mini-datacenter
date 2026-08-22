@@ -200,3 +200,45 @@ def test_next_pass_non_negative(ground_station, satellites, simulator, router):
     for line in output.strip().split("\n"):
         if line.startswith("sovereign_space_next_pass_seconds"):
             assert int(line.split()[1]) >= 0
+
+
+def test_space_exporter_module_metrics():
+    import io
+    from unittest.mock import patch, MagicMock
+    from sovereign_dc.space import space_exporter
+    
+    metrics = space_exporter.get_space_telemetry_metrics()
+    assert "sovereign_space_link_active" in metrics
+    assert "sovereign_space_elevation_degrees" in metrics
+    assert "sovereign_space_bundle_spool_count" in metrics
+
+    # Test HTTP handler
+    handler = space_exporter.SpaceMetricsHandler.__new__(space_exporter.SpaceMetricsHandler)
+    handler.path = "/metrics"
+    handler.wfile = io.BytesIO()
+    handler.send_response = MagicMock()
+    handler.send_header = MagicMock()
+    handler.end_headers = MagicMock()
+    handler.do_GET()
+    handler.send_response.assert_called_with(200)
+
+    # Test /health
+    handler.path = "/health"
+    handler.wfile = io.BytesIO()
+    handler.do_GET()
+    handler.send_response.assert_called_with(200)
+    assert handler.wfile.getvalue() == b"OK\n"
+
+    # Test 404
+    handler.path = "/invalid"
+    handler.wfile = io.BytesIO()
+    handler.do_GET()
+    handler.send_response.assert_called_with(404)
+
+    # Test run
+    mock_server = MagicMock()
+    mock_server.serve_forever.side_effect = KeyboardInterrupt
+    with patch("sovereign_dc.space.space_exporter.HTTPServer", return_value=mock_server):
+        space_exporter.run()
+        mock_server.server_close.assert_called_once()
+

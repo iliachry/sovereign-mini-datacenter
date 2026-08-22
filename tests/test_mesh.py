@@ -1,7 +1,14 @@
 import pytest
 import os
 import yaml
-from sovereign_dc.mesh.lora.meshtastic_gateway import encode_packet, decode_packet
+import logging
+from unittest.mock import patch, MagicMock
+from sovereign_dc.mesh.lora.meshtastic_gateway import (
+    encode_packet,
+    decode_packet,
+    forward_to_space_dtn,
+    run_lora_daemon
+)
 
 def test_cluster_config_validity():
     config_path = os.path.join(os.path.dirname(__file__), "..", "software", "mesh", "cluster_config.yaml")
@@ -30,3 +37,30 @@ def test_lora_packet_encoding_and_decoding():
     assert decoded["to"] == dst
     assert decoded["data"]["soc"] == 89.5
     assert decoded["data"]["solar_w"] == 1240
+
+def test_lora_packet_corrupt_decoding():
+    corrupted = b"\xff\xfe\x00\x12INVALID"
+    decoded = decode_packet(corrupted)
+    assert "error" in decoded
+    assert "Corrupt packet" in decoded["error"]
+
+def test_forward_to_space_dtn(caplog):
+    caplog.set_level(logging.INFO)
+    mock_router = MagicMock()
+    with patch("sovereign_dc.space.dtn.router.DTNRouter", return_value=mock_router):
+        forward_to_space_dtn("sensor-node-4", "BATTERY_CRITICAL_8_PERCENT")
+        mock_router.enqueue.assert_called_once()
+        assert "Emergency bundle" in caplog.text
+
+def test_forward_to_space_dtn_failure(caplog):
+    caplog.set_level(logging.INFO)
+    with patch("sovereign_dc.space.dtn.router.DTNRouter", side_effect=Exception("DB Locked")):
+        forward_to_space_dtn("sensor-node-4", "BATTERY_CRITICAL")
+        assert "DTN routing fallback notice" in caplog.text
+
+def test_run_lora_daemon(caplog):
+    caplog.set_level(logging.INFO)
+    with patch("time.sleep", side_effect=[None, StopIteration("End test")]):
+        with pytest.raises(StopIteration):
+            run_lora_daemon()
+    assert "Starting Sovereign LoRa" in caplog.text

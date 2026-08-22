@@ -11,12 +11,26 @@ import math
 import logging
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-# Import local space modules
-from software.space.dtn.bundle import Bundle, BundlePriority
-from software.space.dtn.router import DTNRouter
-from software.space.orbital.propagator import GroundStation
-from software.space.orbital.tle_updater import get_active_satellites
-from software.space.transceiver.simulated_link import SpaceChannelSimulator
+# Import space modules with fallback support
+try:
+    from sovereign_dc.space.dtn.bundle import Bundle, BundlePriority
+    from sovereign_dc.space.dtn.router import DTNRouter
+    from sovereign_dc.space.orbital.propagator import GroundStation
+    from sovereign_dc.space.orbital.tle_updater import get_active_satellites
+    from sovereign_dc.space.transceiver.simulated_link import SpaceChannelSimulator
+except ImportError:
+    try:
+        from software.space.dtn.bundle import Bundle, BundlePriority
+        from software.space.dtn.router import DTNRouter
+        from software.space.orbital.propagator import GroundStation
+        from software.space.orbital.tle_updater import get_active_satellites
+        from software.space.transceiver.simulated_link import SpaceChannelSimulator
+    except ImportError:
+        from .dtn.bundle import Bundle, BundlePriority
+        from .dtn.router import DTNRouter
+        from .orbital.propagator import GroundStation
+        from .orbital.tle_updater import get_active_satellites
+        from .transceiver.simulated_link import SpaceChannelSimulator
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
