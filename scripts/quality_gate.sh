@@ -25,12 +25,12 @@ echo "✅ Static type analysis passed."
 
 # Gate 4: Pytest & Coverage Enforcement (>=85%)
 echo -e "\n[Gate 4/5] Running Pytest Suite with Coverage Enforcement (>=85%)..."
-uv run pytest tests/ --cov=src/sovereign_dc --cov-fail-under=85
+uv run pytest tests/ --cov=sovereign_dc --cov-fail-under=85
 echo "✅ All unit tests passed with required coverage."
 
 # Gate 5: Docker Compose Stack Integrity
 echo -e "\n[Gate 5/5] Validating Docker Compose Multi-Stack..."
-if command -v docker &> /dev/null; then
+if command -v docker >/dev/null 2>&1; then
     (cd software && cp -n env.example .env 2>/dev/null || true)
     docker compose -f software/docker-compose.yml config --quiet
     echo "✅ Docker Compose configurations valid."

@@ -22,13 +22,13 @@ warn() { echo -e "\033[1;33m[WARN]   $*\033[0m"; }
 err()  { echo -e "\033[1;31m[ERROR]  $*\033[0m" >&2; exit 1; }
 
 # -- Ensure restic is installed ------------------------------------
-if ! command -v restic &>/dev/null; then
+if ! command -v restic >/dev/null 2>&1; then
     err "restic CLI not found. Install it with: apt-get install restic"
 fi
 
 # -- Initialize repository if not already initialized --------------
 log "Checking Restic repository: ${RESTIC_REPOSITORY}"
-if ! restic snapshots &>/dev/null; then
+if ! restic snapshots >/dev/null 2>&1; then
     log "Initializing new Restic encrypted repository..."
     mkdir -p "${RESTIC_REPOSITORY}" 2>/dev/null || true
     restic init

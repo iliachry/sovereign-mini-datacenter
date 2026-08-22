@@ -107,14 +107,14 @@ jobs:
       - name: Install package and test dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[test]" build
+          pip install -e ".[test]"
 
       - name: Run Test Suite with Strict Coverage Enforcement (>=85%)
         env:
           PYTHONPATH: src
         run: |
           python -m compileall software/ src/
-          pytest tests/ --cov=src/sovereign_dc --cov-fail-under=85
+          pytest tests/ --cov=sovereign_dc --cov-fail-under=85
           echo "✅ Pytest passed with >=85% code coverage."
 
   # ── Quality Gate 5: Security & Dependency Vulnerability Scan ───────

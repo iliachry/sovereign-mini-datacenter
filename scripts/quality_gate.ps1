@@ -24,7 +24,7 @@ Write-Host "✅ Static type analysis passed." -ForegroundColor Green
 
 # Gate 4: Pytest & Coverage Enforcement (>=85%)
 Write-Host "`n[Gate 4/5] Running Pytest Suite with Coverage Enforcement (>=85%)..." -ForegroundColor Yellow
-uv run pytest tests/ --cov=src/sovereign_dc --cov-fail-under=85
+uv run pytest tests/ --cov=sovereign_dc --cov-fail-under=85
 Write-Host "✅ All unit tests passed with required coverage." -ForegroundColor Green
 
 # Gate 5: Docker Compose Stack Integrity

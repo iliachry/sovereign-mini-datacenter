@@ -69,7 +69,7 @@ echo -e "\n${BOLD}[2] Docker & Container Security:${RESET}"
 # Docker daemon socket permissions
 if [[ -S /var/run/docker.sock ]]; then
     sock_perm="660"
-    if command -v stat &>/dev/null; then
+    if command -v stat >/dev/null 2>&1; then
         sock_perm=$(stat -c "%a" /var/run/docker.sock 2>/dev/null || echo "660")
     fi
     if [[ "$sock_perm" == "660" ]]; then
@@ -82,7 +82,7 @@ else
 fi
 
 # Check container unprivileged isolation
-if command -v docker &>/dev/null; then
+if command -v docker >/dev/null 2>&1; then
     containers=$(docker ps --format "{{.Names}}" 2>/dev/null || true)
     if [[ -n "$containers" ]]; then
         check_item "Active Sovereign Containers Detected" "PASS"
@@ -94,7 +94,7 @@ else
 fi
 
 echo -e "\n${BOLD}[3] Firewall & Zero-Trust Mesh Exposure:${RESET}"
-if command -v ufw &>/dev/null; then
+if command -v ufw >/dev/null 2>&1; then
     ufw_status=$(ufw status 2>/dev/null || true)
     if echo "$ufw_status" | grep -iq "Status: active"; then
         check_item "UFW Host Firewall" "PASS" "(Active)"
@@ -109,7 +109,7 @@ fi
 env_file="${BASH_SOURCE[0]%/*}/../.env"
 if [[ -f "$env_file" ]]; then
     env_perm="600"
-    if command -v stat &>/dev/null; then
+    if command -v stat >/dev/null 2>&1; then
         env_perm=$(stat -c "%a" "$env_file" 2>/dev/null || echo "600")
     fi
     if [[ "$env_perm" == "600" || "$env_perm" == "400" ]]; then

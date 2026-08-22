@@ -77,10 +77,10 @@ Repository = "https://github.com/iliachry/sovereign-mini-datacenter"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 pythonpath = ["src"]
-addopts = "-v --cov=src/sovereign_dc --cov-report=term-missing --cov-fail-under=85"
+addopts = "-v --cov=sovereign_dc --cov-report=term-missing --cov-fail-under=85"
 
 [tool.coverage.run]
-source = ["src/sovereign_dc"]
+source = ["sovereign_dc", "src/sovereign_dc"]
 omit = [
     "tests/*",
 ]
