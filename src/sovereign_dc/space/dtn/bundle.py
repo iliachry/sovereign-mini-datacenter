@@ -3,18 +3,19 @@ Sovereign Mini Datacenter - Bundle Protocol v7 (RFC 9171) & DTN Engine
 Asynchronous store-and-forward bundle routing for space and orbital links.
 """
 
-import time
-import json
 import base64
 import hashlib
+import json
+import time
 import uuid
-from typing import Dict, Any, Optional, List
+
 
 class BundlePriority:
-    BULK = 0        # AI models, dataset weights, bulk backups
-    NORMAL = 1      # Git commits, Nextcloud documents, email
-    EXPEDITED = 2   # Solar/BMS telemetry, GPS, health heartbeats
-    CRITICAL = 3    # Emergency load-shedding alerts, sentinel triggers, safe-mode
+    BULK = 0  # AI models, dataset weights, bulk backups
+    NORMAL = 1  # Git commits, Nextcloud documents, email
+    EXPEDITED = 2  # Solar/BMS telemetry, GPS, health heartbeats
+    CRITICAL = 3  # Emergency load-shedding alerts, sentinel triggers, safe-mode
+
 
 class Bundle:
     def __init__(
@@ -24,10 +25,10 @@ class Bundle:
         payload: bytes,
         priority: int = BundlePriority.NORMAL,
         lifetime_seconds: int = 86400 * 7,  # 7 days default space TTL
-        bundle_id: Optional[str] = None,
-        creation_timestamp: Optional[float] = None,
+        bundle_id: str | None = None,
+        creation_timestamp: float | None = None,
         fragment_offset: int = 0,
-        total_application_data_length: Optional[int] = None,
+        total_application_data_length: int | None = None,
     ):
         self.bundle_id = bundle_id or str(uuid.uuid4())
         self.source_eid = source_eid
@@ -99,7 +100,7 @@ class Bundle:
 
         return bundle
 
-    def create_fragments(self, max_fragment_size: int) -> List["Bundle"]:
+    def create_fragments(self, max_fragment_size: int) -> list["Bundle"]:
         """Splits a large bundle into MTU-sized fragments for short satellite passes."""
         if len(self.payload) <= max_fragment_size:
             return [self]

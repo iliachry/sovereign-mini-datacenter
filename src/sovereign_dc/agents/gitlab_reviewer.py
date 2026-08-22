@@ -4,13 +4,12 @@ Sovereign Mini Datacenter - Autonomous GitLab Code Reviewer Agent
 Inspects open GitLab merge request diffs and posts local LLM code reviews.
 """
 
-import os
-import sys
-import time
 import json
 import logging
-import urllib.request
+import os
+import time
 import urllib.error
+import urllib.request
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [GitLabReviewer] %(message)s")
 
@@ -19,15 +18,13 @@ GITLAB_TOKEN = os.getenv("GITLAB_API_TOKEN", "")
 OLLAMA_URL = os.getenv("OLLAMA_BASE_URL", "http://ollama:11434")
 REVIEW_MODEL = os.getenv("OLLAMA_CODE_MODEL", "qwen2.5-coder:7b")
 
+
 def query_ollama(prompt: str) -> str:
     """Generates code review comments via local Ollama LLM."""
     url = f"{OLLAMA_URL}/api/generate"
-    payload = json.dumps({
-        "model": REVIEW_MODEL,
-        "prompt": prompt,
-        "stream": False,
-        "options": {"temperature": 0.2}
-    }).encode("utf-8")
+    payload = json.dumps(
+        {"model": REVIEW_MODEL, "prompt": prompt, "stream": False, "options": {"temperature": 0.2}}
+    ).encode("utf-8")
     req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=60) as resp:
@@ -37,8 +34,9 @@ def query_ollama(prompt: str) -> str:
         logging.error(f"Ollama review generation failed: {e}")
         return f"Local LLM review unavailable: {e}"
 
-def review_code_diff(project_id: int, mr_iid: int, diff_text: str):
-    """Generates a structured review and posts it to GitLab MR notes."""
+
+def review_code_diff(project_id: int, mr_iid: int, diff_text: str) -> None:
+    """Sends a git diff to local Ollama and posts an automated code review comment."""
     prompt = f"""
 You are an expert software engineer and security auditor running on the Sovereign Mini Datacenter.
 Please review the following code changes from a GitLab Merge Request. Focus on:
@@ -61,17 +59,20 @@ Provide a concise, constructive markdown review with bullet points and code sugg
     if GITLAB_TOKEN:
         url = f"{GITLAB_URL}/projects/{project_id}/merge_requests/{mr_iid}/notes"
         payload = json.dumps({"body": comment}).encode("utf-8")
-        req = urllib.request.Request(url, data=payload, headers={
-            "PRIVATE-TOKEN": GITLAB_TOKEN,
-            "Content-Type": "application/json"
-        }, method="POST")
+        req = urllib.request.Request(
+            url,
+            data=payload,
+            headers={"PRIVATE-TOKEN": GITLAB_TOKEN, "Content-Type": "application/json"},
+            method="POST",
+        )
         try:
-            with urllib.request.urlopen(req, timeout=10) as resp:
+            with urllib.request.urlopen(req, timeout=10):
                 logging.info(f"Successfully posted AI review to MR !{mr_iid}.")
         except Exception as e:
             logging.error(f"Failed to post comment to GitLab: {e}")
     else:
         logging.info(f"Dry-run mode (No GITLAB_API_TOKEN set). Generated review:\n{comment}")
+
 
 def run_worker():
     logging.info("Starting Autonomous GitLab Reviewer Agent...")
@@ -96,6 +97,7 @@ def run_worker():
         except Exception as e:
             logging.warning(f"GitLab API check: {e}")
         time.sleep(60)
+
 
 if __name__ == "__main__":
     run_worker()

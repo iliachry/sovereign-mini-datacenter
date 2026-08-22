@@ -6,7 +6,8 @@
 
 Developed by **[Metatopia Studio](https://metatopia.gr)** · License: MIT · © 2026
 
-[![CI](https://github.com/iliachry/sovereign-mini-datacenter/actions/workflows/ci.yml/badge.svg)](https://github.com/iliachry/sovereign-mini-datacenter/actions/workflows/ci.yml)
+[![CI & Quality Gates](https://github.com/iliachry/sovereign-mini-datacenter/actions/workflows/ci.yml/badge.svg)](https://github.com/iliachry/sovereign-mini-datacenter/actions/workflows/ci.yml)
+[![Quality Gate](https://img.shields.io/badge/Quality%20Gate-Strict%20Enforcement%20(96.5%25%20Cov)-10b981?style=flat&logo=githubactions)](https://github.com/iliachry/sovereign-mini-datacenter/actions/workflows/ci.yml)
 [![3D WebGL Viewer](https://img.shields.io/badge/3D%20CAD%20Viewer-Live%20Demo-10b981?style=flat&logo=three.js)](https://iliachry.gr/sovereign-mini-datacenter/)
 [![AI Agents Guide](https://img.shields.io/badge/AI%20Agents-Engineering%20Playbook-6366f1?style=flat)](AGENTS.md)
 [![Architecture](https://img.shields.io/badge/Architecture-Autonomous%20Mesh-3b82f6?style=flat)](ARCHITECTURE.md)
@@ -299,13 +300,18 @@ helm upgrade --install sovereign-stack ./kubernetes/helm/sovereign-stack \
 
 ---
 
-## 🧪 Comprehensive Unit & Integration Tests
-
-The project includes an extensive test suite covering DTN BPv7 routing, orbital mechanics, link budgets, AI agent prompts, mesh encoding, and CLI interfaces:
+## 🛡️ Quality Gates & Automated Tests
+The project enforces strict automated Quality Gates covering Ruff linting, Ruff formatting, Mypy static typing, Docker Compose multi-stack integrity, and Pytest coverage ($\ge 85\%$):
 
 ```bash
-# Run the test suite with coverage
-uv run --with pytest --with pyyaml pytest -v --cov=sovereign_dc
+# Run all quality gates locally
+./scripts/quality_gate.sh          # Linux / macOS / WSL
+powershell -File scripts/quality_gate.ps1  # Windows PowerShell
+
+# Run individual checks
+uv tool run ruff check src/ tests/
+uv tool run mypy --ignore-missing-imports src/sovereign_dc
+uv run pytest tests/ --cov=src/sovereign_dc --cov-fail-under=85
 ```
 
 ---

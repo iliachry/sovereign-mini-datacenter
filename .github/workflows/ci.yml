@@ -1,7 +1,7 @@
 # ====================================================================
-# Sovereign Mini Datacenter — CI & Deployment Pipeline
+# Sovereign Mini Datacenter — Multi-Stage Quality Gates & CI Pipeline
 # ====================================================================
-name: CI
+name: Quality Gates & CI
 
 on:
   push:
@@ -16,9 +16,35 @@ permissions:
 
 jobs:
 
-  # ── Job 1: Lint shell scripts ─────────────────────────────────────
-  shellcheck:
-    name: ShellCheck
+  # ── Quality Gate 1: Code Style, Formatting & Static Typing ────────
+  quality-gate-code-analysis:
+    name: "Quality Gate: Lint, Format & Type Checks"
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Ruff & Mypy
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff mypy types-PyYAML
+
+      - name: Ruff Format Check
+        run: ruff format --check src/ tests/
+
+      - name: Ruff Linter Check
+        run: ruff check src/ tests/
+
+      - name: Mypy Static Type Checking
+        run: mypy --ignore-missing-imports src/sovereign_dc
+
+  # ── Quality Gate 2: Shell Script Static Analysis ───────────────────
+  quality-gate-shellcheck:
+    name: "Quality Gate: ShellCheck Analysis"
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -30,14 +56,25 @@ jobs:
         run: |
           find software/ -name "*.sh" -type f -exec shellcheck -S error {} +
 
-  # ── Job 2: Validate docker-compose stacks ────────────────────────
-  compose-validate:
-    name: Validate Docker Compose Stacks
+  # ── Quality Gate 3: Docker Compose Multi-Stack Validation ──────────
+  quality-gate-compose-validation:
+    name: "Quality Gate: Compose Stacks & Env Integrity"
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
-      - name: Validate all compose stacks with env.example
+      - name: Check env.example completeness
+        run: |
+          [ -s software/env.example ] || (echo "env.example is empty!" && exit 1)
+          for key in ACME_EMAIL DOMAIN_TRAEFIK DOMAIN_VPN WEBUI_SECRET_KEY OPENPROJECT_SECRET \
+                     NEXTCLOUD_ADMIN_PASSWORD VAULTWARDEN_ADMIN_TOKEN \
+                     GRAFANA_ADMIN_PASSWORD SMTP_HOST OLLAMA_DEFAULT_MODEL RESTIC_REPOSITORY SPACE_EXPORTER_PORT; do
+            grep -q "^${key}=" software/env.example \
+              || (echo "Missing key in env.example: ${key}" && exit 1)
+          done
+          echo "✅ env.example contains all required keys."
+
+      - name: Validate all Docker Compose stacks
         working-directory: software
         run: |
           cp env.example .env
@@ -51,50 +88,59 @@ jobs:
           docker compose -f mesh/lora/docker-compose.lora.yml config --quiet
           echo "✅ All Docker Compose stacks validated successfully."
 
-  # ── Job 3: Check env.example completeness ────────────────────────
-  env-check:
-    name: Env Example Check
+  # ── Quality Gate 4: Automated Test Matrix & Strict Coverage Gate ───
+  quality-gate-pytest-matrix:
+    name: "Quality Gate: Pytest & Coverage (Python ${{ matrix.python-version }})"
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.11', '3.12', '3.13']
     steps:
       - uses: actions/checkout@v4
 
-      - name: Verify env.example is non-empty and has expected keys
-        run: |
-          [ -s software/env.example ] || (echo "env.example is empty!" && exit 1)
-          for key in ACME_EMAIL DOMAIN_TRAEFIK DOMAIN_VPN WEBUI_SECRET_KEY OPENPROJECT_SECRET \
-                     NEXTCLOUD_ADMIN_PASSWORD VAULTWARDEN_ADMIN_TOKEN \
-                     GRAFANA_ADMIN_PASSWORD SMTP_HOST OLLAMA_DEFAULT_MODEL RESTIC_REPOSITORY SPACE_EXPORTER_PORT; do
-            grep -q "^${key}=" software/env.example \
-              || (echo "Missing key in env.example: ${key}" && exit 1)
-          done
-          echo "✅ env.example contains all required keys."
-
-  # ── Job 4: Python Telemetry & Space DTN Unit Tests ───────────────
-  python-lint:
-    name: Python Telemetry & Space Unit Tests
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Setup Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
-      - name: Install dependencies & package
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install package and test dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[test]" build
 
-      - name: Compile and run test suite
+      - name: Run Test Suite with Strict Coverage Enforcement (>=85%)
         env:
           PYTHONPATH: src
         run: |
           python -m compileall software/ src/
-          pytest tests/ --cov=sovereign_dc
-          echo "✅ Python test suite & coverage passed."
+          pytest tests/ --cov=src/sovereign_dc --cov-fail-under=85
+          echo "✅ Pytest passed with >=85% code coverage."
 
+  # ── Quality Gate 5: Security & Dependency Vulnerability Scan ───────
+  quality-gate-security-audit:
+    name: "Quality Gate: Security & Dependency Audit"
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
 
-  # ── Job 5: OpenSCAD syntax check (with virtual display) ──────────
-  scad-lint:
-    name: OpenSCAD Syntax Check & STL Export
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install pip-audit
+        run: |
+          python -m pip install --upgrade pip
+          pip install pip-audit
+
+      - name: Audit Python Dependencies
+        run: |
+          pip-audit --desc on || echo "⚠️ pip-audit non-blocking notice for dev dependencies"
+
+  # ── Quality Gate 6: OpenSCAD 3D CAD Geometry Export ────────────────
+  quality-gate-scad-export:
+    name: "Quality Gate: 3D CAD Geometry & STL Verification"
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -114,14 +160,21 @@ jobs:
             cad/rack_enclosure.scad
           echo "✅ OpenSCAD export succeeded: $(du -sh docs/cad/rack_enclosure.stl)"
 
-  # ── Job 6: Deploy 3D CAD Viewer to GitHub Pages ──────────────────
+  # ── Quality Gate Final: GitHub Pages Deployment ────────────────────
   deploy-pages:
-    name: Deploy 3D Viewer to GitHub Pages
-    needs: [shellcheck, compose-validate, env-check, python-lint, scad-lint]
+    name: "Deploy 3D Digital Twin to GitHub Pages"
+    needs:
+      - quality-gate-code-analysis
+      - quality-gate-shellcheck
+      - quality-gate-compose-validation
+      - quality-gate-pytest-matrix
+      - quality-gate-security-audit
+      - quality-gate-scad-export
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+
       - name: Deploy to gh-pages branch
         uses: peaceiris/actions-gh-pages@v4
         with:

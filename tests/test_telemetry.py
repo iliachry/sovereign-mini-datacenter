@@ -1,8 +1,9 @@
 import io
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
+
 from sovereign_dc import telemetry
-from sovereign_dc.telemetry import get_telemetry_metrics, MetricsHandler
+from sovereign_dc.telemetry import MetricsHandler, get_telemetry_metrics
+
 
 def test_telemetry_metrics_output():
     metrics_str = get_telemetry_metrics()
@@ -13,6 +14,7 @@ def test_telemetry_metrics_output():
     assert "sovereign_temp_coolant_celsius" in metrics_str
     assert "sovereign_load_shedding_active" in metrics_str
 
+
 def test_telemetry_metrics_parseable():
     metrics_str = get_telemetry_metrics()
     parsed = {}
@@ -21,10 +23,11 @@ def test_telemetry_metrics_parseable():
             parts = line.split()
             if len(parts) == 2:
                 parsed[parts[0]] = float(parts[1])
-                
+
     assert "sovereign_battery_soc_percent" in parsed
     assert 0.0 <= parsed["sovereign_battery_soc_percent"] <= 100.0
     assert parsed["sovereign_solar_pv_power_watts"] >= 0.0
+
 
 def test_telemetry_metrics_non_simulation():
     with patch("sovereign_dc.telemetry.SIMULATION", False):
@@ -32,6 +35,7 @@ def test_telemetry_metrics_non_simulation():
         assert "sovereign_battery_soc_percent 85.00" in metrics_str
         assert "sovereign_battery_voltage_volts 53.20" in metrics_str
         assert "sovereign_system_power_draw_watts 300.00" in metrics_str
+
 
 def test_metrics_handler_routes():
     class DummyRequest:
@@ -61,6 +65,7 @@ def test_metrics_handler_routes():
     handler.wfile = io.BytesIO()
     handler.do_GET()
     handler.send_response.assert_called_with(404)
+
 
 def test_telemetry_run():
     mock_server = MagicMock()

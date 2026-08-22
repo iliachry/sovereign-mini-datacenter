@@ -1,28 +1,29 @@
-import os
-import sys
-import json
 import logging
-import pytest
-from unittest.mock import patch, MagicMock
 import urllib.error
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 from sovereign_dc.agents import sentinel_copilot
+
 
 def test_sentinel_get_telemetry_success():
     sample_metrics = "sovereign_battery_soc_percent 84.5\nsovereign_solar_pv_power_watts 1250.0\n# comment\n"
     mock_resp = MagicMock()
     mock_resp.read.return_value = sample_metrics.encode("utf-8")
     mock_resp.__enter__.return_value = mock_resp
-    
+
     with patch("urllib.request.urlopen", return_value=mock_resp):
         metrics = sentinel_copilot.get_telemetry()
         assert metrics.get("sovereign_battery_soc_percent") == 84.5
         assert metrics.get("sovereign_solar_pv_power_watts") == 1250.0
 
+
 def test_sentinel_get_telemetry_failure():
     with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("Connection refused")):
         metrics = sentinel_copilot.get_telemetry()
         assert metrics == {}
+
 
 def test_sentinel_run_copilot_state_transitions(caplog):
     caplog.set_level(logging.INFO)
@@ -32,8 +33,9 @@ def test_sentinel_run_copilot_state_transitions(caplog):
         {"sovereign_battery_soc_percent": 85.0, "sovereign_solar_pv_power_watts": 1400.0},
         {"sovereign_battery_soc_percent": 60.0, "sovereign_solar_pv_power_watts": 500.0},
     ]
-    
+
     call_count = 0
+
     def mock_get_telemetry():
         nonlocal call_count
         if call_count < len(telemetry_sequence):

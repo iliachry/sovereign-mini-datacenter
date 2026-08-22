@@ -1,24 +1,29 @@
 import time
+
 import pytest
+
 from sovereign_dc.space.dtn.bundle import Bundle, BundlePriority
 from sovereign_dc.space.dtn.router import DTNRouter
+
 
 def test_bundle_creation_and_serialization():
     src = "dtn://node-alpha/sensor"
     dst = "dtn://ground-station/orbit"
     payload = b"CRITICAL_TELEMETRY_SAMPLE_001"
-    
-    b = Bundle(source_eid=src, destination_eid=dst, payload=payload, priority=BundlePriority.CRITICAL, lifetime_seconds=3600)
+
+    b = Bundle(
+        source_eid=src, destination_eid=dst, payload=payload, priority=BundlePriority.CRITICAL, lifetime_seconds=3600
+    )
     assert b.source_eid == src
     assert b.destination_eid == dst
     assert b.payload == payload
     assert b.priority == BundlePriority.CRITICAL
     assert not b.is_expired()
     assert not b.is_fragment()
-    
+
     raw = b.serialize()
     assert isinstance(raw, bytes)
-    
+
     b_restored = Bundle.deserialize(raw)
     assert b_restored.source_eid == src
     assert b_restored.destination_eid == dst
@@ -26,10 +31,12 @@ def test_bundle_creation_and_serialization():
     assert b_restored.priority == BundlePriority.CRITICAL
     assert b_restored.bundle_id == b.bundle_id
 
+
 def test_bundle_expiration():
     b = Bundle("dtn://src/a", "dtn://dst/b", b"data", lifetime_seconds=0)
     time.sleep(0.01)
     assert b.is_expired()
+
 
 def test_bundle_fragmentation():
     large_payload = b"X" * 1000
@@ -46,10 +53,12 @@ def test_bundle_fragmentation():
     small_frags = b.create_fragments(max_fragment_size=2000)
     assert len(small_frags) == 1
 
+
 def test_bundle_deserialize_invalid_version():
     raw_invalid_v = b'{"v":9,"id":"123","src":"a","dst":"b","pri":1,"ts":0,"ttl":100,"off":0,"total_len":4,"payload_b64":"ZGF0YQ==","chk":"xyz"}'
     with pytest.raises(ValueError, match="Unsupported Bundle Protocol version"):
         Bundle.deserialize(raw_invalid_v)
+
 
 def test_bundle_deserialize_checksum_mismatch():
     b = Bundle("dtn://src/a", "dtn://dst/b", b"data")
@@ -59,18 +68,19 @@ def test_bundle_deserialize_checksum_mismatch():
     with pytest.raises(ValueError, match="Bundle integrity checksum mismatch"):
         Bundle.deserialize(raw_corrupted)
 
+
 def test_dtn_router_spool(tmp_path):
     db_file = str(tmp_path / "spool.db")
     router = DTNRouter(db_path=db_file, local_node_eid="dtn://smdc-node-01")
-    
+
     b1 = Bundle("dtn://smdc-node-01/status", "dtn://ground/rx", b"normal_p1", priority=BundlePriority.NORMAL)
     b2 = Bundle("dtn://smdc-node-01/alert", "dtn://ground/rx", b"critical_p3", priority=BundlePriority.CRITICAL)
     b3 = Bundle("dtn://smdc-node-01/bulk", "dtn://ground/rx", b"bulk_p0", priority=BundlePriority.BULK)
-    
+
     assert router.queue_bundle(b1) is True
     assert router.queue_bundle(b2) is True
     assert router.queue_bundle(b3) is True
-    
+
     # Test rejecting expired bundle
     expired_bundle = Bundle("dtn://smdc/exp", "dtn://ground", b"dead", lifetime_seconds=0)
     time.sleep(0.01)

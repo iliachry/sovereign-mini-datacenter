@@ -7,17 +7,19 @@ Prometheus text format output structure.
 """
 
 import time
+
 import pytest
-from sovereign_dc.space.orbital.propagator import GroundStation, SatelliteOrbit
-from sovereign_dc.space.orbital.tle_updater import get_active_satellites
-from sovereign_dc.space.transceiver.simulated_link import SpaceChannelSimulator
+
 from sovereign_dc.space.dtn.bundle import Bundle, BundlePriority
 from sovereign_dc.space.dtn.router import DTNRouter
-
+from sovereign_dc.space.orbital.propagator import GroundStation
+from sovereign_dc.space.orbital.tle_updater import get_active_satellites
+from sovereign_dc.space.transceiver.simulated_link import SpaceChannelSimulator
 
 # ---------------------------------------------------------------------------
 # Prometheus metric line helpers
 # ---------------------------------------------------------------------------
+
 
 def _build_prometheus_output(
     ground_station: GroundStation,
@@ -28,7 +30,6 @@ def _build_prometheus_output(
     """Replicates the exporter's metric-building logic for test isolation."""
     now = time.time()
     active_link = False
-    best_sat_name = "none"
     max_elevation = -90.0
     active_azimuth = 0.0
     active_snr = 0.0
@@ -43,7 +44,6 @@ def _build_prometheus_output(
             active_range_km = metrics["range_km"]
             active_snr = metrics["snr_db"]
             active_doppler = metrics["doppler_shift_hz"]
-            best_sat_name = sat.name
             if metrics["is_in_contact"]:
                 active_link = True
 
@@ -93,7 +93,7 @@ def _build_prometheus_output(
         "# HELP sovereign_space_bundle_spool_bytes Total size in bytes of queued DTN bundles",
         "# TYPE sovereign_space_bundle_spool_bytes gauge",
         f"sovereign_space_bundle_spool_bytes {queue_bytes}",
-        ""
+        "",
     ]
     return "\n".join(lines) + "\n"
 
@@ -101,6 +101,7 @@ def _build_prometheus_output(
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def ground_station():
@@ -179,9 +180,7 @@ def test_link_active_is_binary(ground_station, satellites, simulator, router):
 
 def test_spool_metrics_with_queued_bundles(ground_station, satellites, simulator, router):
     """After queuing bundles, spool count and bytes should be non-zero."""
-    router.queue_bundle(
-        Bundle("dtn://test/src", "dtn://test/dst", b"payload_alpha", priority=BundlePriority.NORMAL)
-    )
+    router.queue_bundle(Bundle("dtn://test/src", "dtn://test/dst", b"payload_alpha", priority=BundlePriority.NORMAL))
     router.queue_bundle(
         Bundle("dtn://test/src", "dtn://test/dst", b"payload_beta_longer", priority=BundlePriority.CRITICAL)
     )
@@ -204,9 +203,10 @@ def test_next_pass_non_negative(ground_station, satellites, simulator, router):
 
 def test_space_exporter_module_metrics():
     import io
-    from unittest.mock import patch, MagicMock
+    from unittest.mock import MagicMock, patch
+
     from sovereign_dc.space import space_exporter
-    
+
     metrics = space_exporter.get_space_telemetry_metrics()
     assert "sovereign_space_link_active" in metrics
     assert "sovereign_space_elevation_degrees" in metrics
@@ -241,4 +241,3 @@ def test_space_exporter_module_metrics():
     with patch("sovereign_dc.space.space_exporter.HTTPServer", return_value=mock_server):
         space_exporter.run()
         mock_server.server_close.assert_called_once()
-

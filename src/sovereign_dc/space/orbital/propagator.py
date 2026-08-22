@@ -6,11 +6,12 @@ Standard library implementation (no external C-extensions required).
 
 import math
 import time
-from typing import Dict, List, Any, Tuple, Optional
+from typing import Any
 
 # Earth Constants (WGS-84)
 EARTH_RADIUS_KM = 6378.137
 SPEED_OF_LIGHT_MS = 299792458.0
+
 
 class SatelliteOrbit:
     def __init__(
@@ -21,7 +22,7 @@ class SatelliteOrbit:
         altitude_km: float,
         period_minutes: float,
         raan_deg: float = 0.0,
-        epoch_timestamp: Optional[float] = None
+        epoch_timestamp: float | None = None,
     ):
         self.name = name
         self.norad_id = norad_id
@@ -33,20 +34,21 @@ class SatelliteOrbit:
         self.raan_rad = math.radians(raan_deg)
         self.epoch_timestamp = epoch_timestamp or time.time()
 
-    def get_position_at(self, timestamp: float) -> Tuple[float, float, float]:
+    def get_position_at(self, timestamp: float) -> tuple[float, float, float]:
         """Calculates satellite geodetic position (lat_deg, lon_deg, alt_km)."""
         dt_s = timestamp - self.epoch_timestamp
         mean_anomaly = (dt_s * self.mean_motion_rad_s) % (2.0 * math.pi)
 
         # Simplified circular orbit projection
         lat_rad = math.asin(math.sin(self.inclination_rad) * math.sin(mean_anomaly))
-        
+
         # Earth rotation adjustment (15 deg / hour = 7.292115e-5 rad/s)
         earth_rot_rad = 7.292115e-5 * dt_s
-        lon_rad = (math.atan2(
-            math.cos(self.inclination_rad) * math.sin(mean_anomaly),
-            math.cos(mean_anomaly)
-        ) + self.raan_rad - earth_rot_rad) % (2.0 * math.pi)
+        lon_rad = (
+            math.atan2(math.cos(self.inclination_rad) * math.sin(mean_anomaly), math.cos(mean_anomaly))
+            + self.raan_rad
+            - earth_rot_rad
+        ) % (2.0 * math.pi)
 
         if lon_rad > math.pi:
             lon_rad -= 2.0 * math.pi
@@ -63,7 +65,9 @@ class GroundStation:
         self.lon_deg = longitude_deg
         self.altitude_km = altitude_m / 1000.0
 
-    def calculate_look_angles(self, sat_lat_deg: float, sat_lon_deg: float, sat_alt_km: float) -> Tuple[float, float, float]:
+    def calculate_look_angles(
+        self, sat_lat_deg: float, sat_lon_deg: float, sat_alt_km: float
+    ) -> tuple[float, float, float]:
         """
         Calculates Azimuth (0-360 deg), Elevation (-90 to 90 deg), and Slant Range (km).
         """
@@ -85,7 +89,7 @@ class GroundStation:
         dx = sx - gx
         dy = sy - gy
         dz = sz - gz
-        range_km = math.sqrt(dx*dx + dy*dy + dz*dz)
+        range_km = math.sqrt(dx * dx + dy * dy + dz * dz)
 
         # Topocentric SEZ (South, East, Zenith) coordinates
         sin_lat = math.sin(self.lat_rad)
@@ -113,18 +117,18 @@ class GroundStation:
         satellite: SatelliteOrbit,
         duration_hours: float = 12.0,
         min_elevation_deg: float = 10.0,
-        time_step_s: float = 30.0
-    ) -> List[Dict[str, Any]]:
+        time_step_s: float = 30.0,
+    ) -> list[dict[str, Any]]:
         """Predicts upcoming contact passes with AOS, TCA, LOS, and Max Elevation."""
         now = time.time()
         end_time = now + duration_hours * 3600.0
         t = now
 
-        passes = []
+        passes: list[dict[str, Any]] = []
         in_pass = False
-        current_pass = {}
+        current_pass: dict[str, Any] = {}
         max_el = 0.0
-        max_el_time = t
+        aos_t = t
 
         while t < end_time:
             sat_lat, sat_lon, sat_alt = satellite.get_position_at(t)
@@ -134,7 +138,7 @@ class GroundStation:
                 if not in_pass:
                     in_pass = True
                     max_el = el
-                    max_el_time = t
+                    aos_t = t
                     current_pass = {
                         "satellite": satellite.name,
                         "norad_id": satellite.norad_id,
@@ -147,7 +151,6 @@ class GroundStation:
                 else:
                     if el > max_el:
                         max_el = el
-                        max_el_time = t
                         current_pass["max_elevation"] = round(el, 1)
                         current_pass["tca_time"] = t
             else:
@@ -155,7 +158,7 @@ class GroundStation:
                     in_pass = False
                     current_pass["los_time"] = t
                     current_pass["los_azimuth"] = round(az, 1)
-                    current_pass["duration_seconds"] = int(t - current_pass["aos_time"])
+                    current_pass["duration_seconds"] = int(t - aos_t)
                     passes.append(current_pass)
                     current_pass = {}
 

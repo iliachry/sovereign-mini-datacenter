@@ -2,12 +2,11 @@
 Sovereign Mini Datacenter - Power, Solar & Thermal Prometheus Exporter
 """
 
-import os
-import sys
-import time
-import math
 import logging
-from http.server import HTTPServer, BaseHTTPRequestHandler
+import math
+import os
+import time
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
@@ -16,26 +15,27 @@ SIMULATION = os.getenv("SIMULATE_POWER_DATA", "true").lower() in ("true", "1", "
 
 start_time = time.time()
 
+
 def get_telemetry_metrics():
     """Collects hardware telemetry or generates realistic physics-based simulation data."""
     t = time.time() - start_time
-    
+
     if SIMULATION:
         hour = (time.time() / 3600) % 24
         daylight = max(0.0, math.sin(math.pi * (hour - 6) / 14)) if 6 <= hour <= 20 else 0.0
-        
+
         solar_watts = daylight * 1640.0 * (0.85 + 0.15 * math.sin(t / 10.0))
         base_load_watts = 280.0 + 80.0 * math.sin(t / 45.0)
         net_power = solar_watts - base_load_watts
-        
+
         soc_percent = min(100.0, max(15.0, 78.0 + 15.0 * math.sin(t / 600.0)))
         battery_voltage = 48.0 + (soc_percent / 100.0) * 5.6
         battery_current = net_power / max(1.0, battery_voltage)
-        
+
         rack_inlet_celsius = 21.5 + 2.0 * math.sin(t / 120.0)
         coolant_temp_celsius = 28.0 + (base_load_watts / 400.0) * 12.0
         rack_exhaust_celsius = rack_inlet_celsius + (base_load_watts / 350.0) * 8.5
-        
+
         daily_yield_kwh = max(1.2, 8.4 * daylight)
         load_shedding = 1.0 if soc_percent < 20.0 else 0.0
     else:
@@ -90,9 +90,10 @@ def get_telemetry_metrics():
         "# HELP sovereign_load_shedding_active 1 if load shedding is active, 0 otherwise",
         "# TYPE sovereign_load_shedding_active gauge",
         f"sovereign_load_shedding_active {load_shedding:.0f}",
-        ""
+        "",
     ]
     return "\n".join(lines) + "\n"
+
 
 class MetricsHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -115,6 +116,7 @@ class MetricsHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         pass
 
+
 def run(port=PORT, simulation=SIMULATION):
     global PORT, SIMULATION
     PORT = port
@@ -126,6 +128,7 @@ def run(port=PORT, simulation=SIMULATION):
     except KeyboardInterrupt:
         logging.info("Shutting down exporter.")
         server.server_close()
+
 
 if __name__ == "__main__":
     run()

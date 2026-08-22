@@ -4,10 +4,11 @@ Sovereign Mini Datacenter - Space Transceiver Base & Channel Simulator
 
 import math
 import time
-import random
-from typing import Dict, Any, Optional, Tuple
+from typing import Any
+
 from ..dtn.bundle import Bundle
 from ..orbital.propagator import GroundStation, SatelliteOrbit
+
 
 class BaseTransceiver:
     def connect(self) -> bool:
@@ -16,10 +17,10 @@ class BaseTransceiver:
     def transmit_bundle(self, bundle: Bundle) -> bool:
         raise NotImplementedError
 
-    def receive_bundle(self) -> Optional[Bundle]:
+    def receive_bundle(self) -> Bundle | None:
         raise NotImplementedError
 
-    def get_link_status(self) -> Dict[str, Any]:
+    def get_link_status(self) -> dict[str, Any]:
         raise NotImplementedError
 
 
@@ -28,7 +29,7 @@ class SpaceChannelSimulator(BaseTransceiver):
         self,
         ground_station: GroundStation,
         carrier_freq_mhz: float = 2200.0,  # S-Band space downlink
-        tx_power_dbm: float = 30.0,        # 1 Watt RF
+        tx_power_dbm: float = 30.0,  # 1 Watt RF
         ground_antenna_gain_dbi: float = 18.0,
         sat_antenna_gain_dbi: float = 6.0,
     ):
@@ -47,7 +48,7 @@ class SpaceChannelSimulator(BaseTransceiver):
             return 0.0
         return 20.0 * math.log10(distance_km) + 20.0 * math.log10(self.carrier_freq_mhz) + 32.44
 
-    def get_active_link_metrics(self, satellite: SatelliteOrbit) -> Dict[str, Any]:
+    def get_active_link_metrics(self, satellite: SatelliteOrbit) -> dict[str, Any]:
         """Calculates real-time RF link budget, SNR, elevation, and contact status."""
         sat_lat, sat_lon, sat_alt = satellite.get_position_at(time.time())
         az, el, rng = self.ground_station.calculate_look_angles(sat_lat, sat_lon, sat_alt)
@@ -57,7 +58,7 @@ class SpaceChannelSimulator(BaseTransceiver):
         noise_floor_dbm = -110.0
         snr_db = max(-10.0, received_power_dbm - noise_floor_dbm)
 
-        is_in_contact = (el >= 10.0)
+        is_in_contact = el >= 10.0
 
         # Approximate Doppler shift
         range_rate_kms = math.cos(math.radians(el)) * 7.5 * (1.0 if az < 180 else -1.0)
@@ -82,10 +83,10 @@ class SpaceChannelSimulator(BaseTransceiver):
         self.total_tx_bytes += len(raw)
         return True
 
-    def receive_bundle(self) -> Optional[Bundle]:
+    def receive_bundle(self) -> Bundle | None:
         return None
 
-    def get_link_status(self) -> Dict[str, Any]:
+    def get_link_status(self) -> dict[str, Any]:
         return {
             "connected": self.connected,
             "total_tx_bytes": self.total_tx_bytes,

@@ -3,14 +3,14 @@ Sovereign Mini Datacenter CLI (smdc)
 Includes Space Communications, Delay-Tolerant Networking, Security Audits & Multi-Node Mesh.
 """
 
+import argparse
+import json
 import os
+import subprocess
 import sys
 import time
-import json
-import argparse
-import subprocess
-import urllib.request
 import urllib.error
+import urllib.request
 from datetime import datetime
 
 # Ensure clean UTF-8 output on Windows consoles
@@ -20,30 +20,12 @@ if hasattr(sys.stdout, "reconfigure"):
     except Exception:
         pass
 
-try:
-    from . import __version__
-    from . import telemetry
-    from .space.dtn.bundle import Bundle, BundlePriority
-    from .space.dtn.router import DTNRouter
-    from .space.orbital.propagator import GroundStation
-    from .space.orbital.tle_updater import get_active_satellites
-    from .space.transceiver.simulated_link import SpaceChannelSimulator
-except ImportError:
-    try:
-        from sovereign_dc import __version__, telemetry
-        from sovereign_dc.space.dtn.bundle import Bundle, BundlePriority
-        from sovereign_dc.space.dtn.router import DTNRouter
-        from sovereign_dc.space.orbital.propagator import GroundStation
-        from sovereign_dc.space.orbital.tle_updater import get_active_satellites
-        from sovereign_dc.space.transceiver.simulated_link import SpaceChannelSimulator
-    except ImportError:
-        __version__ = "1.2.0"
-        import telemetry
-        from space.dtn.bundle import Bundle, BundlePriority
-        from space.dtn.router import DTNRouter
-        from space.orbital.propagator import GroundStation
-        from space.orbital.tle_updater import get_active_satellites
-        from space.transceiver.simulated_link import SpaceChannelSimulator
+from sovereign_dc import __version__, telemetry
+from sovereign_dc.space.dtn.bundle import Bundle, BundlePriority
+from sovereign_dc.space.dtn.router import DTNRouter
+from sovereign_dc.space.orbital.propagator import GroundStation
+from sovereign_dc.space.orbital.tle_updater import get_active_satellites
+from sovereign_dc.space.transceiver.simulated_link import SpaceChannelSimulator
 
 # Color codes
 GREEN = "\033[1;32m"
@@ -55,6 +37,7 @@ RED = "\033[1;31m"
 BOLD = "\033[1m"
 RESET = "\033[0m"
 
+
 def get_project_root():
     cwd = os.getcwd()
     if os.path.exists(os.path.join(cwd, "software", "docker-compose.yml")):
@@ -63,14 +46,17 @@ def get_project_root():
         return os.path.dirname(cwd)
     return cwd
 
+
 def cmd_status(args):
     """Displays infrastructure status, containers, power telemetry, and space link."""
     print(f"\n{BOLD}{CYAN}=== Sovereign Mini Datacenter — System Status ==={RESET}")
-    
+
     # 1. Container health check
     print(f"\n{BOLD}[1] Container Subsystems:{RESET}")
     try:
-        res = subprocess.run(["docker", "ps", "--format", "table {{.Names}}\t{{.Status}}\t{{.Ports}}"], capture_output=True, text=True)
+        res = subprocess.run(
+            ["docker", "ps", "--format", "table {{.Names}}\t{{.Status}}\t{{.Ports}}"], capture_output=True, text=True
+        )
         if res.returncode == 0 and res.stdout.strip():
             lines = res.stdout.strip().split("\n")
             for line in lines:
@@ -98,7 +84,7 @@ def cmd_status(args):
                     parts = line.split()
                     if len(parts) == 2:
                         metrics[parts[0]] = float(parts[1])
-            
+
             soc = metrics.get("sovereign_battery_soc_percent", 0.0)
             volts = metrics.get("sovereign_battery_voltage_volts", 0.0)
             solar = metrics.get("sovereign_solar_pv_power_watts", 0.0)
@@ -148,9 +134,12 @@ def cmd_status(args):
         next_sec = max(0, int(passes[0]["aos_time"] - time.time())) if passes else 0
         print(f"  • Status:          {YELLOW}STANDBY (Offline Exporter){RESET}")
         print(f"  • Primary Relay:   {CYAN}{sats[0].name}{RESET}")
-        print(f"  • Next Pass (AOS): {CYAN}{next_sec // 60}m {next_sec % 60}s{RESET} (Max El: {passes[0]['max_elevation']}°)")
+        print(
+            f"  • Next Pass (AOS): {CYAN}{next_sec // 60}m {next_sec % 60}s{RESET} (Max El: {passes[0]['max_elevation']}°)"
+        )
 
     print(f"\n{BOLD}[4] Live 3D Digital Twin:{RESET} {CYAN}https://iliachry.gr/sovereign-mini-datacenter/{RESET}\n")
+
 
 def cmd_audit(args):
     """Executes automated security compliance and CIS benchmark audit."""
@@ -167,26 +156,56 @@ def cmd_audit(args):
             ("TCP SYN Flood Protection", True, "(Active)"),
             ("Container Secret Encryption", True, "(AES-256 Vaultwarden/Restic)"),
             ("Zero-Trust WireGuard Mesh", True, "(Noise Protocol IK)"),
-            ("Space Link Data Integrity", True, "(SHA-256 Checksums)")
+            ("Space Link Data Integrity", True, "(SHA-256 Checksums)"),
         ]
         for name, passed, note in checks:
             tag = f"{GREEN}PASS{RESET}" if passed else f"{YELLOW}WARN{RESET}"
             print(f"  [ {tag} ] {name} {note}")
         print(f"\n{GREEN}✅ Security audit completed: All critical hardening benchmarks satisfied.{RESET}\n")
 
+
 def cmd_mesh(args):
     """Displays multi-node sovereign mesh cluster topology and peer status."""
     print(f"\n{BOLD}{CYAN}🌐 Sovereign Global Mesh — Multi-Node Topology{RESET}\n")
     peers = [
-        ("smdc-node-01", "Ground Station Alpha (Athens)", "100.64.0.1", "Primary Gateway", "550 TOPS", "10.24 kWh", f"{GREEN}ONLINE{RESET}"),
-        ("smdc-node-02", "Alpine Off-Grid (Switzerland)", "100.64.0.2", "Edge Node", "275 TOPS", "15.36 kWh", f"{GREEN}ONLINE{RESET}"),
-        ("smdc-node-03", "Aegean Island Autonomous", "100.64.0.3", "Edge Satellite Node", "275 TOPS", "20.48 kWh", f"{CYAN}STANDBY (DTN ARMED){RESET}")
+        (
+            "smdc-node-01",
+            "Ground Station Alpha (Athens)",
+            "100.64.0.1",
+            "Primary Gateway",
+            "550 TOPS",
+            "10.24 kWh",
+            f"{GREEN}ONLINE{RESET}",
+        ),
+        (
+            "smdc-node-02",
+            "Alpine Off-Grid (Switzerland)",
+            "100.64.0.2",
+            "Edge Node",
+            "275 TOPS",
+            "15.36 kWh",
+            f"{GREEN}ONLINE{RESET}",
+        ),
+        (
+            "smdc-node-03",
+            "Aegean Island Autonomous",
+            "100.64.0.3",
+            "Edge Satellite Node",
+            "275 TOPS",
+            "20.48 kWh",
+            f"{CYAN}STANDBY (DTN ARMED){RESET}",
+        ),
     ]
-    print(f"{'Node ID':<14} {'Location / Name':<32} {'Mesh IP':<13} {'Role':<18} {'Compute':<10} {'Battery':<10} {'Status'}")
+    print(
+        f"{'Node ID':<14} {'Location / Name':<32} {'Mesh IP':<13} {'Role':<18} {'Compute':<10} {'Battery':<10} {'Status'}"
+    )
     print("-" * 115)
     for nid, loc, ip, role, tops, bat, status in peers:
         print(f"{BOLD}{nid:<14}{RESET} {loc:<32} {ip:<13} {role:<18} {tops:<10} {bat:<10} {status}")
-    print(f"\n{BOLD}Sync Transports:{RESET} WireGuard Overlay (Terrestrial) ➔ Delay-Tolerant Space Relays (Orbital Fallback)\n")
+    print(
+        f"\n{BOLD}Sync Transports:{RESET} WireGuard Overlay (Terrestrial) ➔ Delay-Tolerant Space Relays (Orbital Fallback)\n"
+    )
+
 
 def cmd_space_passes(args):
     """Predicts and lists upcoming satellite contact passes."""
@@ -212,6 +231,7 @@ def cmd_space_passes(args):
             print(f"{sat.name:<24} {aos_dt:<20} {dur:<10} {max_el:<10} {az:<10}")
     print("")
 
+
 def cmd_space_status(args):
     """Displays detailed space link budget and live orbital coordinates."""
     lat = float(os.getenv("GROUND_STATION_LAT", "37.9838"))
@@ -226,15 +246,20 @@ def cmd_space_status(args):
         contact_str = f"{GREEN}● IN CONTACT{RESET}" if m["is_in_contact"] else f"{YELLOW}○ OUT OF RANGE{RESET}"
         print(f"{BOLD}Satellite:{RESET} {CYAN}{sat.name:<22}{RESET} [{contact_str}]")
         print(f"  • Sub-Satellite Coordinates: NORAD ID {sat.norad_id}, Altitude {sat.altitude_km:.0f} km")
-        print(f"  • Look Angles: Azimuth {m['azimuth_deg']}°, Elevation {m['elevation_deg']}°, Slant Range {m['range_km']} km")
-        print(f"  • RF Budget:   Path Loss {m['path_loss_db']} dB, SNR {m['snr_db']} dB, Doppler {m['doppler_shift_hz']} Hz")
+        print(
+            f"  • Look Angles: Azimuth {m['azimuth_deg']}°, Elevation {m['elevation_deg']}°, Slant Range {m['range_km']} km"
+        )
+        print(
+            f"  • RF Budget:   Path Loss {m['path_loss_db']} dB, SNR {m['snr_db']} dB, Doppler {m['doppler_shift_hz']} Hz"
+        )
         print("")
+
 
 def cmd_space_send(args):
     """Queues a bundle into the DTN store-and-forward spool for the next pass."""
     db_path = os.getenv("DTN_DB_PATH", "/tmp/dtn_spool.db")
     router = DTNRouter(db_path=db_path)
-    
+
     if os.path.exists(args.message_or_file):
         with open(args.message_or_file, "rb") as f:
             payload = f.read()
@@ -242,7 +267,12 @@ def cmd_space_send(args):
         payload = args.message_or_file.encode("utf-8")
 
     src_eid = "dtn://smdc-node-01.sovereign.space"
-    prio_map = {0: BundlePriority.BULK, 1: BundlePriority.NORMAL, 2: BundlePriority.EXPEDITED, 3: BundlePriority.CRITICAL}
+    prio_map = {
+        0: BundlePriority.BULK,
+        1: BundlePriority.NORMAL,
+        2: BundlePriority.EXPEDITED,
+        3: BundlePriority.CRITICAL,
+    }
     prio = prio_map.get(args.priority, BundlePriority.NORMAL)
 
     bundle = Bundle(
@@ -250,7 +280,7 @@ def cmd_space_send(args):
         destination_eid=args.destination_eid,
         payload=payload,
         priority=prio,
-        lifetime_seconds=args.ttl
+        lifetime_seconds=args.ttl,
     )
 
     if router.queue_bundle(bundle):
@@ -259,7 +289,8 @@ def cmd_space_send(args):
         print(f"  • Destination:   {CYAN}{bundle.destination_eid}{RESET}")
         print(f"  • Size:          {len(payload)} bytes")
         print(f"  • Priority:      Tier {prio}")
-        print(f"  • Status:        Waiting in spool for next orbital contact pass.\n")
+        print("  • Status:        Waiting in spool for next orbital contact pass.\n")
+
 
 def cmd_space_queue(args):
     """Lists bundles currently queued in the DTN store-and-forward spool."""
@@ -271,23 +302,24 @@ def cmd_space_queue(args):
     print(f"Spool Location: {BOLD}{db_path}{RESET}\n")
     print(f"  • Total Queued Bundles: {stats['queued_bundle_count']}")
     print(f"  • Total Spool Size:     {stats['total_spool_bytes']:,} bytes")
-    print(f"  • Priority Breakdown:")
+    print("  • Priority Breakdown:")
     for prio, count in stats["priority_counts"].items():
         print(f"      - {prio.capitalize():<12}: {count}")
     print("")
+
 
 def cmd_deploy(args):
     """Deploys specified datacenter stacks using docker compose."""
     root = get_project_root()
     soft_dir = os.path.join(root, "software") if os.path.exists(os.path.join(root, "software")) else root
-    
+
     compose_main = os.path.join(soft_dir, "docker-compose.yml")
     if not os.path.exists(compose_main):
         print(f"{RED}Error: Could not find docker-compose.yml in {soft_dir}{RESET}")
         sys.exit(1)
 
     cmd = ["docker", "compose", "-f", compose_main]
-    
+
     if args.all or args.with_vpn:
         cmd.extend(["-f", os.path.join(soft_dir, "vpn", "docker-compose.vpn.yml")])
     if args.all or args.with_backup:
@@ -313,10 +345,12 @@ def cmd_deploy(args):
     cmd.extend(["up", "-d", "--remove-orphans"])
     subprocess.run(cmd, cwd=soft_dir)
 
+
 def cmd_telemetry(args):
     """Starts the power & thermal Prometheus exporter."""
     print(f"{BOLD}{CYAN}Starting Sovereign Power & Thermal Exporter on port {args.port}...{RESET}")
     telemetry.run(port=args.port, simulation=not args.hardware)
+
 
 def cmd_agent_status(args):
     """Checks local Ollama LLM and Qdrant vector database."""
@@ -339,10 +373,13 @@ def cmd_agent_status(args):
             data = json.loads(resp.read().decode("utf-8"))
             collections = [c.get("name") for c in data.get("result", {}).get("collections", [])]
             print(f"  {GREEN}●{RESET} {BOLD}Qdrant Vector DB:{RESET}  ONLINE at {qdrant_url}")
-            print(f"    Collections ({len(collections)}): {', '.join(collections) if collections else 'sovereign_knowledge (pending)'}")
+            print(
+                f"    Collections ({len(collections)}): {', '.join(collections) if collections else 'sovereign_knowledge (pending)'}"
+            )
     except Exception as e:
         print(f"  {YELLOW}○{RESET} {BOLD}Qdrant Vector DB:{RESET}  OFFLINE ({e})")
     print("")
+
 
 def cmd_agent_ask(args):
     """Runs a direct query against the sovereign local LLM."""
@@ -351,19 +388,20 @@ def cmd_agent_ask(args):
     ollama_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
     print(f"{BOLD}{CYAN}Querying Sovereign AI ({model})...{RESET}\n")
     try:
-        req_data = json.dumps({
-            "model": model,
-            "prompt": query,
-            "stream": False
-        }).encode("utf-8")
-        req = urllib.request.Request(f"{ollama_url}/api/generate", data=req_data, headers={"Content-Type": "application/json"})
+        req_data = json.dumps({"model": model, "prompt": query, "stream": False}).encode("utf-8")
+        req = urllib.request.Request(
+            f"{ollama_url}/api/generate", data=req_data, headers={"Content-Type": "application/json"}
+        )
         with urllib.request.urlopen(req, timeout=45) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             answer = data.get("response", "No output.")
             print(answer)
     except Exception as e:
         print(f"{RED}Error communicating with Ollama: {e}{RESET}")
-        print(f"{YELLOW}Ensure Ollama container is running (run 'smdc deploy' or 'docker compose up -d ollama').{RESET}")
+        print(
+            f"{YELLOW}Ensure Ollama container is running (run 'smdc deploy' or 'docker compose up -d ollama').{RESET}"
+        )
+
 
 def cmd_agent_review(args):
     """Reviews code diff or file using local AI reviewer agent."""
@@ -371,7 +409,7 @@ def cmd_agent_review(args):
     if not os.path.exists(path):
         print(f"{RED}Error: Target file or diff '{path}' not found.{RESET}")
         return
-    with open(path, "r", encoding="utf-8", errors="replace") as f:
+    with open(path, encoding="utf-8", errors="replace") as f:
         content = f.read()
 
     try:
@@ -391,17 +429,18 @@ Review the following code/diff and provide actionable feedback, security finding
     review = query_ollama(prompt)
     print(review)
 
+
 def cmd_agent_index(args):
     """Indexes documents from a target directory into Qdrant for semantic RAG."""
     path = args.directory
     if not os.path.exists(path):
         print(f"{RED}Error: Target directory '{path}' does not exist.{RESET}")
         return
-    
+
     try:
-        from sovereign_dc.agents.knowledge_indexer import process_file, ensure_qdrant_collection
+        from sovereign_dc.agents.knowledge_indexer import ensure_qdrant_collection, process_file
     except ImportError:
-        from software.agents.knowledge_indexer import process_file, ensure_qdrant_collection
+        from software.agents.knowledge_indexer import ensure_qdrant_collection, process_file
 
     print(f"{BOLD}{CYAN}Indexing documents from {path} into Qdrant vector database...{RESET}")
     ensure_qdrant_collection()
@@ -414,12 +453,14 @@ def cmd_agent_index(args):
                 indexed_count += 1
     print(f"{GREEN}✅ Successfully indexed {indexed_count} documents into Sovereign RAG collection.{RESET}\n")
 
+
 def cmd_docs(args):
     """Prints documentation and 3D digital twin URL."""
     print(f"\n{BOLD}Sovereign Mini Datacenter v{__version__}{RESET}")
     print(f"• Repository:  {CYAN}https://github.com/iliachry/sovereign-mini-datacenter{RESET}")
     print(f"• 3D Viewer:   {GREEN}https://iliachry.gr/sovereign-mini-datacenter/{RESET}")
     print(f"• Docs & BOM:  {BOLD}hardware/COMPONENTS.md{RESET} & {BOLD}hardware/WIRING_DIAGRAM.md{RESET}\n")
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -443,7 +484,9 @@ def main():
 
     # Deploy
     p_deploy = subparsers.add_parser("deploy", help="Deploy or update container stacks")
-    p_deploy.add_argument("--all", action="store_true", help="Deploy all modules (Core, VPN, Backup, Telemetry, Space, Agents, Security)")
+    p_deploy.add_argument(
+        "--all", action="store_true", help="Deploy all modules (Core, VPN, Backup, Telemetry, Space, Agents, Security)"
+    )
     p_deploy.add_argument("--with-vpn", action="store_true", help="Deploy Headscale mesh VPN")
     p_deploy.add_argument("--with-backup", action="store_true", help="Deploy Restic backup daemon")
     p_deploy.add_argument("--with-telemetry", action="store_true", help="Deploy solar & BMS telemetry exporter")
@@ -456,7 +499,9 @@ def main():
     # Telemetry
     p_telem = subparsers.add_parser("telemetry", help="Run power, solar & thermal Prometheus exporter")
     p_telem.add_argument("--port", type=int, default=9101, help="Port to listen on (default: 9101)")
-    p_telem.add_argument("--hardware", action="store_true", help="Read physical serial/RS485 data instead of simulation")
+    p_telem.add_argument(
+        "--hardware", action="store_true", help="Read physical serial/RS485 data instead of simulation"
+    )
     p_telem.set_defaults(func=cmd_telemetry)
 
     # Agent Subcommand Suite
@@ -492,10 +537,16 @@ def main():
     p_sp_status.set_defaults(func=cmd_space_status)
 
     p_sp_send = space_subs.add_parser("send", help="Enqueue a bundle for space transmission on next pass")
-    p_sp_send.add_argument("destination_eid", help="Destination Endpoint Identifier (e.g., dtn://ground-station.earth/telemetry)")
+    p_sp_send.add_argument(
+        "destination_eid", help="Destination Endpoint Identifier (e.g., dtn://ground-station.earth/telemetry)"
+    )
     p_sp_send.add_argument("message_or_file", help="Text message or path to binary file to transmit")
-    p_sp_send.add_argument("--priority", type=int, choices=[0, 1, 2, 3], default=1, help="0=Bulk, 1=Normal, 2=Expedited, 3=Critical")
-    p_sp_send.add_argument("--ttl", type=int, default=86400 * 7, help="Bundle TTL lifetime in seconds (default: 7 days)")
+    p_sp_send.add_argument(
+        "--priority", type=int, choices=[0, 1, 2, 3], default=1, help="0=Bulk, 1=Normal, 2=Expedited, 3=Critical"
+    )
+    p_sp_send.add_argument(
+        "--ttl", type=int, default=86400 * 7, help="Bundle TTL lifetime in seconds (default: 7 days)"
+    )
     p_sp_send.set_defaults(func=cmd_space_send)
 
     p_sp_queue = space_subs.add_parser("queue", help="List bundles in DTN store-and-forward spool")
@@ -510,6 +561,7 @@ def main():
         args.func(args)
     else:
         parser.print_help()
+
 
 if __name__ == "__main__":
     main()

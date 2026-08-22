@@ -37,7 +37,7 @@ def query_ollama(prompt: str) -> str:
         logging.error(f"Ollama review generation failed: {e}")
         return f"Local LLM review unavailable: {e}"
 
-def review_code_diff(project_id: int, mr_iid: int, diff_text: str):
+def review_code_diff(project_id: int, mr_iid: int, diff_text: str) -> None:
     """Generates a structured review and posts it to GitLab MR notes."""
     prompt = f"""
 You are an expert software engineer and security auditor running on the Sovereign Mini Datacenter.

@@ -3,14 +3,16 @@ Sovereign Mini Datacenter - DTN Store-and-Forward Router
 Manages persistent bundle queues, priorities, and opportunistic sync.
 """
 
+import logging
 import os
 import sqlite3
 import time
-import logging
-from typing import List, Optional, Dict, Any
+from typing import Any
+
 from .bundle import Bundle, BundlePriority
 
 logger = logging.getLogger("dtn.router")
+
 
 class DTNRouter:
     def __init__(self, db_path: str = "/tmp/dtn_spool.db", local_node_eid: str = "dtn://smdc-node-01.sovereign.space"):
@@ -52,7 +54,9 @@ class DTNRouter:
                     delivered_at REAL
                 )
             """)
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_spool_prio ON outbound_spool (priority DESC, creation_timestamp ASC)")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_spool_prio ON outbound_spool (priority DESC, creation_timestamp ASC)"
+            )
 
     def queue_bundle(self, bundle: Bundle) -> bool:
         """Enqueues a bundle into the persistent store-and-forward spool."""
@@ -62,28 +66,31 @@ class DTNRouter:
 
         serialized = bundle.serialize()
         with sqlite3.connect(self.db_path) as conn:
-            conn.execute("""
-                INSERT OR REPLACE INTO outbound_spool 
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO outbound_spool
                 (bundle_id, source_eid, destination_eid, priority, creation_timestamp, lifetime_seconds, fragment_offset, total_length, serialized_data, status)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'QUEUED')
-            """, (
-                bundle.bundle_id,
-                bundle.source_eid,
-                bundle.destination_eid,
-                bundle.priority,
-                bundle.creation_timestamp,
-                bundle.lifetime_seconds,
-                bundle.fragment_offset,
-                bundle.total_application_data_length,
-                serialized
-            ))
+            """,
+                (
+                    bundle.bundle_id,
+                    bundle.source_eid,
+                    bundle.destination_eid,
+                    bundle.priority,
+                    bundle.creation_timestamp,
+                    bundle.lifetime_seconds,
+                    bundle.fragment_offset,
+                    bundle.total_application_data_length,
+                    serialized,
+                ),
+            )
         logger.info(f"Queued bundle {bundle.bundle_id} [Prio {bundle.priority}] -> {bundle.destination_eid}")
         return True
 
-    def get_outbound_queue(self, max_bytes: int = 10 * 1024 * 1024) -> List[Bundle]:
+    def get_outbound_queue(self, max_bytes: int = 10 * 1024 * 1024) -> list[Bundle]:
         """Fetches prioritized bundles to transmit during an upcoming satellite pass."""
         self.purge_expired()
-        bundles = []
+        bundles: list[Bundle] = []
         accumulated_bytes = 0
 
         with sqlite3.connect(self.db_path) as conn:
@@ -105,28 +112,36 @@ class DTNRouter:
 
         return bundles
 
-    def mark_delivered(self, bundle_id: str):
+    def mark_delivered(self, bundle_id: str) -> None:
         """Removes bundle from spool after successful transmission confirmation."""
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("DELETE FROM outbound_spool WHERE bundle_id = ?", (bundle_id,))
-            conn.execute("INSERT OR REPLACE INTO delivered_bundles (bundle_id, delivered_at) VALUES (?, ?)", (bundle_id, time.time()))
+            conn.execute(
+                "INSERT OR REPLACE INTO delivered_bundles (bundle_id, delivered_at) VALUES (?, ?)",
+                (bundle_id, time.time()),
+            )
 
-    def purge_expired(self):
+    def purge_expired(self) -> None:
         """Purges expired bundles from the spool database."""
         now = time.time()
         with sqlite3.connect(self.db_path) as conn:
-            conn.execute("""
-                DELETE FROM outbound_spool 
+            conn.execute(
+                """
+                DELETE FROM outbound_spool
                 WHERE (creation_timestamp + lifetime_seconds) < ?
-            """, (now,))
+            """,
+                (now,),
+            )
 
-    def get_queue_stats(self) -> Dict[str, Any]:
+    def get_queue_stats(self) -> dict[str, Any]:
         """Returns statistics on active queues and priorities."""
         with sqlite3.connect(self.db_path) as conn:
             cur = conn.cursor()
-            cur.execute("SELECT count(*), coalesce(sum(length(serialized_data)), 0) FROM outbound_spool WHERE status = 'QUEUED'")
+            cur.execute(
+                "SELECT count(*), coalesce(sum(length(serialized_data)), 0) FROM outbound_spool WHERE status = 'QUEUED'"
+            )
             count, total_bytes = cur.fetchone()
-            
+
             cur.execute("SELECT priority, count(*) FROM outbound_spool WHERE status = 'QUEUED' GROUP BY priority")
             prio_counts = {row[0]: row[1] for row in cur.fetchall()}
 
@@ -138,5 +153,5 @@ class DTNRouter:
                 "expedited": prio_counts.get(BundlePriority.EXPEDITED, 0),
                 "normal": prio_counts.get(BundlePriority.NORMAL, 0),
                 "bulk": prio_counts.get(BundlePriority.BULK, 0),
-            }
+            },
         }

@@ -4,15 +4,13 @@ Sovereign Mini Datacenter - Autonomous Document & Knowledge Base Indexer
 Extracts, chunks, embeds via local Ollama, and indexes into Qdrant for Open-WebUI RAG.
 """
 
-import os
-import sys
-import time
-import json
 import hashlib
+import json
 import logging
-import urllib.request
+import os
+import time
 import urllib.error
-from typing import List, Dict, Any
+import urllib.request
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [KnowledgeIndexer] %(message)s")
 
@@ -21,6 +19,7 @@ QDRANT_URL = os.getenv("QDRANT_BASE_URL", "http://qdrant:6333")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "nomic-embed-text")
 COLLECTION_NAME = "sovereign_knowledge"
 WATCH_DIR = os.getenv("DOCS_WATCH_DIR", "/data/documents")
+
 
 def ensure_qdrant_collection():
     """Creates the Qdrant collection if it does not exist."""
@@ -42,7 +41,8 @@ def ensure_qdrant_collection():
     except Exception as e:
         logging.warning(f"Qdrant not reachable yet: {e}")
 
-def get_embedding(text: str) -> List[float]:
+
+def get_embedding(text: str) -> list[float]:
     """Generates embedding vector via local Ollama API."""
     url = f"{OLLAMA_URL}/api/embeddings"
     payload = json.dumps({"model": EMBEDDING_MODEL, "prompt": text}).encode("utf-8")
@@ -51,7 +51,8 @@ def get_embedding(text: str) -> List[float]:
         data = json.loads(resp.read().decode("utf-8"))
         return data.get("embedding", [0.0] * 768)
 
-def chunk_text(text: str, chunk_size: int = 500, overlap: int = 50) -> List[str]:
+
+def chunk_text(text: str, chunk_size: int = 500, overlap: int = 50) -> list[str]:
     """Splits document text into overlapping token windows."""
     words = text.split()
     chunks = []
@@ -62,44 +63,48 @@ def chunk_text(text: str, chunk_size: int = 500, overlap: int = 50) -> List[str]
         i += chunk_size - overlap
     return chunks
 
-def index_file(filepath: str):
-    """Reads, chunks, and indexes a file into Qdrant."""
+
+def index_file(filepath: str) -> None:
+    """Chunks and embeds a document, then stores vectors in Qdrant."""
     try:
-        with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+        with open(filepath, encoding="utf-8", errors="ignore") as f:
             content = f.read()
 
         chunks = chunk_text(content)
         points = []
 
         for idx, chunk in enumerate(chunks):
-            point_id = int(hashlib.md5(f"{filepath}-{idx}".encode("utf-8")).hexdigest()[:8], 16)
+            point_id = int(hashlib.md5(f"{filepath}-{idx}".encode()).hexdigest()[:8], 16)
             vector = get_embedding(chunk)
-            points.append({
-                "id": point_id,
-                "vector": vector,
-                "payload": {
-                    "source": os.path.basename(filepath),
-                    "path": filepath,
-                    "chunk_index": idx,
-                    "text": chunk,
-                    "indexed_at": time.time()
+            points.append(
+                {
+                    "id": point_id,
+                    "vector": vector,
+                    "payload": {
+                        "source": os.path.basename(filepath),
+                        "path": filepath,
+                        "chunk_index": idx,
+                        "text": chunk,
+                        "indexed_at": time.time(),
+                    },
                 }
-            })
+            )
 
         if points:
             url = f"{QDRANT_URL}/collections/{COLLECTION_NAME}/points"
             payload = json.dumps({"points": points}).encode("utf-8")
             req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="PUT")
-            with urllib.request.urlopen(req, timeout=10) as resp:
+            with urllib.request.urlopen(req, timeout=10):
                 logging.info(f"Indexed {len(points)} chunks from '{os.path.basename(filepath)}'.")
     except Exception as e:
         logging.error(f"Failed to index {filepath}: {e}")
+
 
 def run_worker():
     logging.info("Starting Autonomous Knowledge Indexer Worker...")
     ensure_qdrant_collection()
     os.makedirs(WATCH_DIR, exist_ok=True)
-    
+
     indexed_files = set()
     while True:
         try:
@@ -116,6 +121,10 @@ def run_worker():
         except Exception as e:
             logging.error(f"Indexer loop error: {e}")
         time.sleep(30)
+
+
+# Backward compatibility alias
+process_file = index_file
 
 if __name__ == "__main__":
     run_worker()

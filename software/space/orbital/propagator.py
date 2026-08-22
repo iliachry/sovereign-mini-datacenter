@@ -120,11 +120,12 @@ class GroundStation:
         end_time = now + duration_hours * 3600.0
         t = now
 
-        passes = []
+        passes: List[Dict[str, Any]] = []
         in_pass = False
-        current_pass = {}
+        current_pass: Dict[str, Any] = {}
         max_el = 0.0
         max_el_time = t
+        aos_t = t
 
         while t < end_time:
             sat_lat, sat_lon, sat_alt = satellite.get_position_at(t)
@@ -135,6 +136,7 @@ class GroundStation:
                     in_pass = True
                     max_el = el
                     max_el_time = t
+                    aos_t = t
                     current_pass = {
                         "satellite": satellite.name,
                         "norad_id": satellite.norad_id,
@@ -155,7 +157,7 @@ class GroundStation:
                     in_pass = False
                     current_pass["los_time"] = t
                     current_pass["los_azimuth"] = round(az, 1)
-                    current_pass["duration_seconds"] = int(t - current_pass["aos_time"])
+                    current_pass["duration_seconds"] = int(t - aos_t)
                     passes.append(current_pass)
                     current_pass = {}
 

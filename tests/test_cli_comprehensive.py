@@ -1,13 +1,15 @@
+import json
 import os
 import sys
-import json
-import pytest
-from unittest.mock import patch, MagicMock
 from argparse import Namespace
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 from sovereign_dc import cli
 
 # === Test cmd_status ===
+
 
 def test_cmd_status_full_online(capsys):
     mock_docker_res = MagicMock()
@@ -48,6 +50,7 @@ def test_cmd_status_full_online(capsys):
     assert "ONLINE (IN CONTACT)" in out
     assert "4 bundles queued" in out
 
+
 def test_cmd_status_offline_fallbacks(capsys):
     with patch("subprocess.run", side_effect=Exception("Docker socket missing")):
         with patch("urllib.request.urlopen", side_effect=Exception("Connection refused")):
@@ -58,7 +61,9 @@ def test_cmd_status_offline_fallbacks(capsys):
     assert "Power telemetry exporter offline" in out
     assert "STANDBY (Offline Exporter)" in out
 
+
 # === Test cmd_audit ===
+
 
 def test_cmd_audit(capsys):
     with patch("sys.platform", "win32"):
@@ -69,7 +74,9 @@ def test_cmd_audit(capsys):
     assert "Zero-Trust WireGuard Mesh" in out
     assert "All critical hardening benchmarks satisfied" in out
 
+
 # === Test cmd_mesh ===
+
 
 def test_cmd_mesh(capsys):
     cli.cmd_mesh(Namespace())
@@ -79,7 +86,9 @@ def test_cmd_mesh(capsys):
     assert "smdc-node-02" in out
     assert "smdc-node-03" in out
 
+
 # === Test cmd_space_passes & cmd_space_status ===
+
 
 def test_cmd_space_passes(capsys):
     args = Namespace(hours=6.0, min_el=10.0)
@@ -87,22 +96,22 @@ def test_cmd_space_passes(capsys):
     out = capsys.readouterr().out
     assert "Upcoming Space Contact Passes" in out
 
+
 def test_cmd_space_status(capsys):
     cli.cmd_space_status(Namespace())
     out = capsys.readouterr().out
     assert "Space Communication & Link Budget Status" in out
 
+
 # === Test cmd_space_send & cmd_space_queue ===
+
 
 def test_cmd_space_send_and_queue(tmp_path, capsys):
     spool_db = str(tmp_path / "cli_spool.db")
     with patch.dict(os.environ, {"DTN_DB_PATH": spool_db}):
         # Send text message
         send_args = Namespace(
-            destination_eid="dtn://target.earth/rx",
-            message_or_file="HELLO_SPACE_MESH",
-            priority=3,
-            ttl=3600
+            destination_eid="dtn://target.earth/rx", message_or_file="HELLO_SPACE_MESH", priority=3, ttl=3600
         )
         cli.cmd_space_send(send_args)
         out = capsys.readouterr().out
@@ -113,10 +122,7 @@ def test_cmd_space_send_and_queue(tmp_path, capsys):
         test_file = tmp_path / "telemetry.bin"
         test_file.write_bytes(b"\x00\x01\x02\x03\x04")
         send_file_args = Namespace(
-            destination_eid="dtn://target.earth/rx",
-            message_or_file=str(test_file),
-            priority=1,
-            ttl=86400
+            destination_eid="dtn://target.earth/rx", message_or_file=str(test_file), priority=1, ttl=86400
         )
         cli.cmd_space_send(send_file_args)
         out = capsys.readouterr().out
@@ -128,13 +134,15 @@ def test_cmd_space_send_and_queue(tmp_path, capsys):
         assert "DTN Store-and-Forward Spool Queue" in queue_out
         assert "Total Queued Bundles: 2" in queue_out
 
+
 # === Test cmd_deploy ===
+
 
 def test_cmd_deploy_dry_run(tmp_path, capsys):
     soft_dir = tmp_path / "software"
     soft_dir.mkdir()
     (soft_dir / "docker-compose.yml").write_text("version: '3.8'")
-    
+
     mock_run = MagicMock()
     mock_run.returncode = 0
 
@@ -148,21 +156,35 @@ def test_cmd_deploy_dry_run(tmp_path, capsys):
                 with_space=False,
                 with_agents=False,
                 with_security=False,
-                dry_run=True
+                dry_run=True,
             )
             cli.cmd_deploy(args)
             mock_sub.assert_called_once()
     out = capsys.readouterr().out
     assert "DRY RUN: Validating compose stack" in out
 
+
 def test_cmd_deploy_missing_compose(tmp_path, capsys):
     with patch("sovereign_dc.cli.get_project_root", return_value=str(tmp_path)):
         with pytest.raises(SystemExit):
-            cli.cmd_deploy(Namespace(all=False, with_vpn=False, with_backup=False, with_telemetry=False, with_space=False, with_agents=False, with_security=False, dry_run=False))
+            cli.cmd_deploy(
+                Namespace(
+                    all=False,
+                    with_vpn=False,
+                    with_backup=False,
+                    with_telemetry=False,
+                    with_space=False,
+                    with_agents=False,
+                    with_security=False,
+                    dry_run=False,
+                )
+            )
     out = capsys.readouterr().out
     assert "Error: Could not find docker-compose.yml" in out
 
+
 # === Test cmd_telemetry ===
+
 
 def test_cmd_telemetry(capsys):
     with patch("sovereign_dc.telemetry.run") as mock_run:
@@ -171,7 +193,9 @@ def test_cmd_telemetry(capsys):
     out = capsys.readouterr().out
     assert "Starting Sovereign Power & Thermal Exporter" in out
 
+
 # === Test cmd_agent_* ===
+
 
 def test_cmd_agent_status_online(capsys):
     mock_ollama = MagicMock()
@@ -179,7 +203,9 @@ def test_cmd_agent_status_online(capsys):
     mock_ollama.__enter__.return_value = mock_ollama
 
     mock_qdrant = MagicMock()
-    mock_qdrant.read.return_value = json.dumps({"result": {"collections": [{"name": "sovereign_knowledge"}]}}).encode("utf-8")
+    mock_qdrant.read.return_value = json.dumps({"result": {"collections": [{"name": "sovereign_knowledge"}]}}).encode(
+        "utf-8"
+    )
     mock_qdrant.__enter__.return_value = mock_qdrant
 
     with patch("urllib.request.urlopen", side_effect=[mock_ollama, mock_qdrant]):
@@ -190,12 +216,14 @@ def test_cmd_agent_status_online(capsys):
     assert "Qdrant Vector DB:" in out and "ONLINE" in out
     assert "qwen2.5-coder:7b" in out
 
+
 def test_cmd_agent_status_offline(capsys):
     with patch("urllib.request.urlopen", side_effect=Exception("Offline")):
         cli.cmd_agent_status(Namespace())
     out = capsys.readouterr().out
     assert "Ollama LLM Engine:" in out and "OFFLINE" in out
     assert "Qdrant Vector DB:" in out and "OFFLINE" in out
+
 
 def test_cmd_agent_ask_success(capsys):
     mock_resp = MagicMock()
@@ -208,11 +236,13 @@ def test_cmd_agent_ask_success(capsys):
     out = capsys.readouterr().out
     assert "To throttle jobs, set Sentinel to L2." in out
 
+
 def test_cmd_agent_ask_error(capsys):
     with patch("urllib.request.urlopen", side_effect=Exception("Timeout")):
         cli.cmd_agent_ask(Namespace(query="test", model=None))
     out = capsys.readouterr().out
     assert "Error communicating with Ollama" in out
+
 
 def test_cmd_agent_review(tmp_path, capsys):
     diff_file = tmp_path / "patch.diff"
@@ -229,6 +259,7 @@ def test_cmd_agent_review(tmp_path, capsys):
     cli.cmd_agent_review(Namespace(target="/non/existent/diff.patch"))
     err_out = capsys.readouterr().out
     assert "Error: Target file or diff" in err_out
+
 
 def test_cmd_agent_index(tmp_path, capsys):
     docs_dir = tmp_path / "docs"
@@ -248,26 +279,31 @@ def test_cmd_agent_index(tmp_path, capsys):
     err_out = capsys.readouterr().out
     assert "Error: Target directory" in err_out
 
+
 def test_cmd_docs(capsys):
     cli.cmd_docs(Namespace())
     out = capsys.readouterr().out
     assert "https://github.com/iliachry/sovereign-mini-datacenter" in out
 
+
 # === Test main() CLI Router ===
+
 
 def test_cli_main_router(monkeypatch, capsys):
     monkeypatch.setattr(sys, "argv", ["smdc", "docs"])
     cli.main()
     assert "https://github.com/iliachry/sovereign-mini-datacenter" in capsys.readouterr().out
 
+
 def test_cli_main_help(monkeypatch, capsys):
     monkeypatch.setattr(sys, "argv", ["smdc"])
     cli.main()
     assert "Available commands" in capsys.readouterr().out or "usage:" in capsys.readouterr().out
 
+
 def test_main_module_execution(monkeypatch, capsys):
     import runpy
+
     monkeypatch.setattr(sys, "argv", ["smdc", "docs"])
     runpy.run_module("sovereign_dc", run_name="__main__")
     assert "https://github.com/iliachry/sovereign-mini-datacenter" in capsys.readouterr().out
-

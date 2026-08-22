@@ -2,20 +2,19 @@
 Tests for the SpaceChannelSimulator (transceiver) and RF link budget calculations.
 """
 
-import math
-import time
 import pytest
+
+from sovereign_dc.space.dtn.bundle import Bundle
+from sovereign_dc.space.orbital.propagator import GroundStation, SatelliteOrbit
 from sovereign_dc.space.transceiver.simulated_link import (
     BaseTransceiver,
     SpaceChannelSimulator,
 )
-from sovereign_dc.space.orbital.propagator import GroundStation, SatelliteOrbit
-from sovereign_dc.space.dtn.bundle import Bundle, BundlePriority
-
 
 # ---------------------------------------------------------------------------
 # BaseTransceiver contract
 # ---------------------------------------------------------------------------
+
 
 def test_base_transceiver_raises_not_implemented():
     """BaseTransceiver is an abstract interface; every method must raise."""
@@ -33,6 +32,7 @@ def test_base_transceiver_raises_not_implemented():
 # ---------------------------------------------------------------------------
 # SpaceChannelSimulator – Free-Space Path Loss
 # ---------------------------------------------------------------------------
+
 
 def test_fspl_zero_distance():
     """FSPL at zero distance should return 0.0 (degenerate case guard)."""
@@ -69,6 +69,7 @@ def test_fspl_increases_with_distance():
 # SpaceChannelSimulator – Active Link Metrics
 # ---------------------------------------------------------------------------
 
+
 def test_active_link_metrics_keys():
     """get_active_link_metrics must return all expected telemetry keys."""
     gs = GroundStation("Test-GS", 37.98, 23.72)
@@ -77,9 +78,16 @@ def test_active_link_metrics_keys():
 
     metrics = sim.get_active_link_metrics(sat)
     expected_keys = {
-        "satellite_name", "norad_id", "is_in_contact",
-        "azimuth_deg", "elevation_deg", "range_km",
-        "path_loss_db", "snr_db", "doppler_shift_hz", "link_margin_db",
+        "satellite_name",
+        "norad_id",
+        "is_in_contact",
+        "azimuth_deg",
+        "elevation_deg",
+        "range_km",
+        "path_loss_db",
+        "snr_db",
+        "doppler_shift_hz",
+        "link_margin_db",
     }
     assert expected_keys == set(metrics.keys())
 
@@ -120,6 +128,7 @@ def test_azimuth_within_range():
 # SpaceChannelSimulator – Bundle Transmission
 # ---------------------------------------------------------------------------
 
+
 def test_transmit_bundle_tracking():
     """Transmit should increment the total TX byte counter."""
     gs = GroundStation("Test-GS", 37.98, 23.72)
@@ -156,6 +165,7 @@ def test_receive_bundle_returns_none():
 # SpaceChannelSimulator – Link Status
 # ---------------------------------------------------------------------------
 
+
 def test_link_status_structure():
     """get_link_status must contain connected, total_tx_bytes, total_rx_bytes."""
     gs = GroundStation("Test-GS", 37.98, 23.72)
@@ -169,6 +179,7 @@ def test_link_status_structure():
 # ---------------------------------------------------------------------------
 # SpaceChannelSimulator – Antenna Gain Configuration
 # ---------------------------------------------------------------------------
+
 
 def test_custom_antenna_gains():
     """Custom antenna gains should affect link budget calculations."""

@@ -1,20 +1,17 @@
-import os
 import json
 import logging
-import pytest
-from unittest.mock import patch, MagicMock
 import urllib.error
+from unittest.mock import MagicMock, patch
 
-from sovereign_dc.agents.gitlab_reviewer import query_ollama, review_code_diff, run_worker as run_gitlab_worker
-from sovereign_dc.agents.knowledge_indexer import (
-    chunk_text,
-    ensure_qdrant_collection,
-    get_embedding,
-    index_file,
-    run_worker as run_indexer_worker
-)
+import pytest
+
+from sovereign_dc.agents.gitlab_reviewer import query_ollama, review_code_diff
+from sovereign_dc.agents.gitlab_reviewer import run_worker as run_gitlab_worker
+from sovereign_dc.agents.knowledge_indexer import chunk_text, ensure_qdrant_collection, get_embedding, index_file
+from sovereign_dc.agents.knowledge_indexer import run_worker as run_indexer_worker
 
 # === GitLab Reviewer Tests ===
+
 
 def test_gitlab_reviewer_diff_prompt():
     diff_sample = """
@@ -27,6 +24,7 @@ def test_gitlab_reviewer_diff_prompt():
 """
     assert len(diff_sample) > 0
 
+
 def test_gitlab_query_ollama_success():
     mock_resp = MagicMock()
     mock_resp.read.return_value = json.dumps({"response": "Looks secure. LGTM."}).encode("utf-8")
@@ -36,10 +34,12 @@ def test_gitlab_query_ollama_success():
         res = query_ollama("Review this code")
         assert "Looks secure" in res
 
+
 def test_gitlab_query_ollama_failure():
     with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("Connection refused")):
         res = query_ollama("Review this code")
         assert "unavailable" in res.lower()
+
 
 def test_gitlab_review_code_diff_dry_run(caplog):
     caplog.set_level(logging.INFO)
@@ -47,6 +47,7 @@ def test_gitlab_review_code_diff_dry_run(caplog):
         with patch("sovereign_dc.agents.gitlab_reviewer.GITLAB_TOKEN", ""):
             review_code_diff(project_id=42, mr_iid=7, diff_text="diff --git a/b")
             assert "Dry-run mode" in caplog.text
+
 
 def test_gitlab_review_code_diff_with_token(caplog):
     caplog.set_level(logging.INFO)
@@ -60,12 +61,14 @@ def test_gitlab_review_code_diff_with_token(caplog):
                 review_code_diff(project_id=42, mr_iid=7, diff_text="diff --git a/b")
                 assert "Successfully posted AI review to MR !7" in caplog.text
 
+
 def test_gitlab_review_code_diff_post_error(caplog):
     with patch("sovereign_dc.agents.gitlab_reviewer.query_ollama", return_value="AI Review Output"):
         with patch("sovereign_dc.agents.gitlab_reviewer.GITLAB_TOKEN", "glpat-fake-token"):
             with patch("urllib.request.urlopen", side_effect=urllib.error.HTTPError("url", 403, "Forbidden", {}, None)):
                 review_code_diff(project_id=42, mr_iid=7, diff_text="diff --git a/b")
                 assert "Failed to post comment to GitLab" in caplog.text
+
 
 def test_gitlab_run_worker(caplog):
     caplog.set_level(logging.INFO)
@@ -88,11 +91,13 @@ def test_gitlab_run_worker(caplog):
 
 # === Knowledge Indexer Tests ===
 
+
 def test_knowledge_indexer_chunking():
     text = "Word " * 1200
     chunks = chunk_text(text, chunk_size=500, overlap=50)
     assert len(chunks) >= 2
     assert len(chunks[0].split()) == 500
+
 
 def test_ensure_qdrant_collection_exists(caplog):
     caplog.set_level(logging.INFO)
@@ -103,6 +108,7 @@ def test_ensure_qdrant_collection_exists(caplog):
     with patch("urllib.request.urlopen", return_value=mock_resp):
         ensure_qdrant_collection()
         assert "ready" in caplog.text
+
 
 def test_ensure_qdrant_collection_created_on_404(caplog):
     caplog.set_level(logging.INFO)
@@ -115,10 +121,12 @@ def test_ensure_qdrant_collection_created_on_404(caplog):
         ensure_qdrant_collection()
         assert "Created Qdrant collection" in caplog.text
 
+
 def test_ensure_qdrant_collection_failure(caplog):
     with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("Refused")):
         ensure_qdrant_collection()
         assert "not reachable" in caplog.text
+
 
 def test_get_embedding():
     fake_vec = [0.1] * 768
@@ -130,6 +138,7 @@ def test_get_embedding():
         vec = get_embedding("Test chunk")
         assert len(vec) == 768
         assert vec[0] == 0.1
+
 
 def test_index_file(tmp_path, caplog):
     caplog.set_level(logging.INFO)
@@ -146,10 +155,12 @@ def test_index_file(tmp_path, caplog):
             index_file(str(test_doc))
             assert "Indexed" in caplog.text
 
+
 def test_index_file_error(caplog):
-    with patch("builtins.open", side_effect=IOError("Permission denied")):
+    with patch("builtins.open", side_effect=OSError("Permission denied")):
         index_file("/invalid/path.md")
         assert "Failed to index" in caplog.text
+
 
 def test_knowledge_indexer_run_worker(tmp_path, caplog):
     caplog.set_level(logging.INFO)

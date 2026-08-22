@@ -144,22 +144,31 @@ When contributing code, modifying existing modules, or adding new features, agen
 
 ---
 
-## 5. Development & Testing Commands
+## 5. Development, Quality Gates & Testing Commands
 
-Agents should execute tests and verify functionality using the local environment:
+Agents and contributors must verify code against the repository quality gates before submitting changes:
 
 ```powershell
-# Run the entire pytest suite
-.\.venv\Scripts\pytest
+# Run all quality gates locally (PowerShell)
+powershell -ExecutionPolicy Bypass -File scripts/quality_gate.ps1
 
-# Run tests with coverage reporting
-.\.venv\Scripts\pytest --cov=src/sovereign_dc
+# Run all quality gates locally (Bash / Linux / macOS)
+./scripts/quality_gate.sh
+```
 
-# Run a specific test module
-.\.venv\Scripts\pytest tests/test_dtn.py
-.\.venv\Scripts\pytest tests/test_orbital.py
-.\.venv\Scripts\pytest tests/test_agents.py
-.\.venv\Scripts\pytest tests/test_cli.py
+### Individual Quality Gate Commands
+```powershell
+# 1. Code Formatting Check (Ruff)
+uv tool run ruff format --check src/ tests/
+
+# 2. Code Linting Check (Ruff)
+uv tool run ruff check src/ tests/
+
+# 3. Static Type Analysis (Mypy)
+uv tool run mypy --ignore-missing-imports src/sovereign_dc
+
+# 4. Pytest with Coverage Enforcement (>=85%)
+uv run pytest tests/ --cov=src/sovereign_dc --cov-fail-under=85
 ```
 
 ```powershell
@@ -174,7 +183,8 @@ Agents should execute tests and verify functionality using the local environment
 
 ## 6. Checklist Before Completing Any Agent Task
 
-1. [ ] **Pass All Tests**: Verify that all 92+ unit tests in `tests/` pass with zero failures (`.\.venv\Scripts\pytest`).
-2. [ ] **Preserve Existing Interfaces**: Ensure CLI arguments, Prometheus metric names, and DTN bundle schemas remain backward-compatible.
-3. [ ] **Verify Markdown/Mermaid**: Ensure any new or modified `.md` files strictly comply with GitHub rendering guidelines.
-4. [ ] **Keep Clean Commits**: Format commit messages cleanly using Conventional Commits (`feat:`, `fix:`, `docs:`, `test:`, `refactor:`).
+1. [ ] **Pass All Quality Gates**: Run `scripts/quality_gate.ps1` or `scripts/quality_gate.sh` (Ruff lint/format, Mypy typing, Pytest $\ge 85\%$ coverage).
+2. [ ] **Pass All Unit Tests**: Verify all 92+ unit tests in `tests/` pass with zero failures.
+3. [ ] **Preserve Existing Interfaces**: Ensure CLI arguments, Prometheus metric names, and DTN bundle schemas remain backward-compatible.
+4. [ ] **Verify Markdown/Mermaid**: Ensure any new or modified `.md` files strictly comply with GitHub rendering guidelines.
+5. [ ] **Keep Clean Commits**: Format commit messages cleanly using Conventional Commits (`feat:`, `fix:`, `docs:`, `test:`, `refactor:`).

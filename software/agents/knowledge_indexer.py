@@ -62,7 +62,7 @@ def chunk_text(text: str, chunk_size: int = 500, overlap: int = 50) -> List[str]
         i += chunk_size - overlap
     return chunks
 
-def index_file(filepath: str):
+def index_file(filepath: str) -> None:
     """Reads, chunks, and indexes a file into Qdrant."""
     try:
         with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
@@ -70,20 +70,18 @@ def index_file(filepath: str):
 
         chunks = chunk_text(content)
         points = []
-
         for idx, chunk in enumerate(chunks):
-            point_id = int(hashlib.md5(f"{filepath}-{idx}".encode("utf-8")).hexdigest()[:8], 16)
+            point_id = int(hashlib.md5(f"{filepath}-{idx}".encode()).hexdigest()[:8], 16)
             vector = get_embedding(chunk)
             points.append({
                 "id": point_id,
                 "vector": vector,
                 "payload": {
-                    "source": os.path.basename(filepath),
+                    "filename": os.path.basename(filepath),
                     "path": filepath,
                     "chunk_index": idx,
                     "text": chunk,
-                    "indexed_at": time.time()
-                }
+                },
             })
 
         if points:
@@ -96,11 +94,10 @@ def index_file(filepath: str):
         logging.error(f"Failed to index {filepath}: {e}")
 
 def run_worker():
-    logging.info("Starting Autonomous Knowledge Indexer Worker...")
     ensure_qdrant_collection()
-    os.makedirs(WATCH_DIR, exist_ok=True)
-    
+    logging.info(f"Watching directory {WATCH_DIR} for sovereign knowledge updates...")
     indexed_files = set()
+
     while True:
         try:
             for root, _, files in os.walk(WATCH_DIR):
@@ -116,6 +113,9 @@ def run_worker():
         except Exception as e:
             logging.error(f"Indexer loop error: {e}")
         time.sleep(30)
+
+# Backward compatibility alias
+process_file = index_file
 
 if __name__ == "__main__":
     run_worker()

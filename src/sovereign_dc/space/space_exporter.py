@@ -4,33 +4,15 @@ Sovereign Mini Datacenter - Space Communications Prometheus Exporter
 Runs on port 9102. Standard library implementation.
 """
 
-import os
-import sys
-import time
-import math
 import logging
-from http.server import HTTPServer, BaseHTTPRequestHandler
+import os
+import time
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
-# Import space modules with fallback support
-try:
-    from sovereign_dc.space.dtn.bundle import Bundle, BundlePriority
-    from sovereign_dc.space.dtn.router import DTNRouter
-    from sovereign_dc.space.orbital.propagator import GroundStation
-    from sovereign_dc.space.orbital.tle_updater import get_active_satellites
-    from sovereign_dc.space.transceiver.simulated_link import SpaceChannelSimulator
-except ImportError:
-    try:
-        from software.space.dtn.bundle import Bundle, BundlePriority
-        from software.space.dtn.router import DTNRouter
-        from software.space.orbital.propagator import GroundStation
-        from software.space.orbital.tle_updater import get_active_satellites
-        from software.space.transceiver.simulated_link import SpaceChannelSimulator
-    except ImportError:
-        from .dtn.bundle import Bundle, BundlePriority
-        from .dtn.router import DTNRouter
-        from .orbital.propagator import GroundStation
-        from .orbital.tle_updater import get_active_satellites
-        from .transceiver.simulated_link import SpaceChannelSimulator
+from sovereign_dc.space.dtn.router import DTNRouter
+from sovereign_dc.space.orbital.propagator import GroundStation
+from sovereign_dc.space.orbital.tle_updater import get_active_satellites
+from sovereign_dc.space.transceiver.simulated_link import SpaceChannelSimulator
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
@@ -45,18 +27,18 @@ satellites = get_active_satellites()
 simulator = SpaceChannelSimulator(ground_station)
 router = DTNRouter(db_path=os.getenv("DTN_DB_PATH", "/tmp/dtn_spool.db"))
 
+
 def get_space_telemetry_metrics() -> str:
     now = time.time()
-    
+
     # 1. Evaluate all satellites in constellation
     active_link = False
-    best_sat_name = "none"
     max_elevation = -90.0
     active_azimuth = 0.0
     active_snr = 0.0
     active_doppler = 0.0
     active_range_km = 0.0
-    
+
     for sat in satellites:
         metrics = simulator.get_active_link_metrics(sat)
         if metrics["elevation_deg"] > max_elevation:
@@ -65,7 +47,6 @@ def get_space_telemetry_metrics() -> str:
             active_range_km = metrics["range_km"]
             active_snr = metrics["snr_db"]
             active_doppler = metrics["doppler_shift_hz"]
-            best_sat_name = sat.name
             if metrics["is_in_contact"]:
                 active_link = True
 
@@ -118,9 +99,10 @@ def get_space_telemetry_metrics() -> str:
         "# HELP sovereign_space_bundle_spool_bytes Total size in bytes of queued DTN bundles",
         "# TYPE sovereign_space_bundle_spool_bytes gauge",
         f"sovereign_space_bundle_spool_bytes {queue_bytes}",
-        ""
+        "",
     ]
     return "\n".join(lines) + "\n"
+
 
 class SpaceMetricsHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -143,6 +125,7 @@ class SpaceMetricsHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         pass
 
+
 def run():
     server = HTTPServer(("0.0.0.0", PORT), SpaceMetricsHandler)
     logging.info(f"Sovereign Space Communications Exporter listening on :http://0.0.0.0:{PORT}/metrics")
@@ -151,6 +134,7 @@ def run():
     except KeyboardInterrupt:
         logging.info("Shutting down space exporter.")
         server.server_close()
+
 
 if __name__ == "__main__":
     run()

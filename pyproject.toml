@@ -50,6 +50,20 @@ test = [
     "pytest-cov>=4.0.0",
     "pyyaml>=6.0",
 ]
+lint = [
+    "ruff>=0.4.0",
+    "mypy>=1.10.0",
+    "types-PyYAML",
+]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "pyyaml>=6.0",
+    "ruff>=0.4.0",
+    "mypy>=1.10.0",
+    "pre-commit>=3.7.0",
+    "pip-audit>=2.7.0",
+]
 
 [project.scripts]
 smdc = "sovereign_dc.cli:main"
@@ -63,4 +77,54 @@ Repository = "https://github.com/iliachry/sovereign-mini-datacenter"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 pythonpath = ["src"]
-addopts = "-v"
+addopts = "-v --cov=src/sovereign_dc --cov-report=term-missing --cov-fail-under=85"
+
+[tool.coverage.run]
+source = ["src/sovereign_dc"]
+omit = [
+    "tests/*",
+]
+
+[tool.coverage.report]
+fail_under = 85
+show_missing = true
+precision = 1
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "S",    # flake8-bandit (security)
+]
+ignore = [
+    "E501", # line length handled by formatter
+    "S101", # allow assert statements in tests
+    "S104", # allow binding to all interfaces (0.0.0.0 for Prometheus exporters)
+    "S108", # allow default temporary spool path (/tmp/dtn_spool.db)
+    "S110", # allow try-except-pass
+    "S311", # allow pseudo-random generators in simulation link models
+    "S310", # allow urllib.request open
+    "S324", # allow md5 for non-cryptographic point ID generation
+    "S603", # allow subprocess run with trusted parameters
+    "S607", # allow starting processes with partial paths
+    "B008", # allow function call in argument default
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["sovereign_dc"]
+
+[tool.mypy]
+python_version = "3.11"
+check_untyped_defs = true
+disallow_incomplete_defs = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+ignore_missing_imports = true

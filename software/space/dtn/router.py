@@ -83,7 +83,7 @@ class DTNRouter:
     def get_outbound_queue(self, max_bytes: int = 10 * 1024 * 1024) -> List[Bundle]:
         """Fetches prioritized bundles to transmit during an upcoming satellite pass."""
         self.purge_expired()
-        bundles = []
+        bundles: List[Bundle] = []
         accumulated_bytes = 0
 
         with sqlite3.connect(self.db_path) as conn:
