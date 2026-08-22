@@ -189,8 +189,10 @@ uv run pytest tests/ --cov=src/sovereign_dc --cov-fail-under=85
 
 ## 6. Checklist Before Completing Any Agent Task
 
-1. [ ] **Pass All Quality Gates**: Run `scripts/quality_gate.ps1` or `scripts/quality_gate.sh` (Ruff lint/format, Mypy typing, Pytest $\ge 85\%$ coverage).
-2. [ ] **Pass All Unit Tests**: Verify all 92+ unit tests in `tests/` pass with zero failures.
+1. [ ] **Pass All Quality Gates Locally**: Run `scripts/quality_gate.ps1` or `scripts/quality_gate.sh` (Ruff lint/format, Mypy typing, Pytest $\ge 85\%$ coverage).
+2. [ ] **Pass All Unit Tests**: Verify all 126+ unit tests in `tests/` pass with zero failures.
 3. [ ] **Preserve Existing Interfaces**: Ensure CLI arguments, Prometheus metric names, and DTN bundle schemas remain backward-compatible.
 4. [ ] **Verify Markdown/Mermaid**: Ensure any new or modified `.md` files strictly comply with GitHub rendering guidelines.
-5. [ ] **Keep Clean Commits**: Format commit messages cleanly using Conventional Commits (`feat:`, `fix:`, `docs:`, `test:`, `refactor:`).
+5. [ ] **Clean Conventional Commits**: Format commit messages cleanly using Conventional Commits (`feat:`, `fix:`, `docs:`, `test:`, `refactor:`).
+6. [ ] **Commit & Push to Remote**: Always stage changes, commit, and push directly to `origin/main` (or working feature branch).
+7. [ ] **Verify GitHub Actions CI Pipeline**: Always check and verify that the remote GitHub Actions CI pipeline passes with 100% green status after pushing.

@@ -117,11 +117,12 @@ def test_dtn_router_spool(tmp_path):
     router.purge_expired()
     assert router.get_queue_stats()["queued_bundle_count"] == 2
 
+
 def test_orbital_blackout_priority_simulation(tmp_path):
     """Simulates a 12-hour orbital blackout where many bundles are queued, and ensures CRITICAL are prioritized upon AOS."""
     db_file = str(tmp_path / "blackout_spool.db")
     router = DTNRouter(db_path=db_file, local_node_eid="dtn://smdc-node-01")
-    
+
     # Simulate a blackout period by queueing bundles with different priorities
     # First, 10 NORMAL telemetry bundles
     for i in range(10):
@@ -129,40 +130,40 @@ def test_orbital_blackout_priority_simulation(tmp_path):
             source_eid="dtn://smdc-node-01/telemetry",
             destination_eid="dtn://ground-station/log",
             payload=f"Normal telemetry {i}".encode(),
-            priority=BundlePriority.NORMAL
+            priority=BundlePriority.NORMAL,
         )
         router.queue_bundle(b)
-        
+
     # Then a hardware failure happens during blackout, triggering a CRITICAL alert
     critical_bundle = Bundle(
         source_eid="dtn://smdc-node-01/alert",
         destination_eid="dtn://technician.sovereign.space/alerts",
         payload=b"CRITICAL: NVMe Array Degraded",
-        priority=BundlePriority.CRITICAL
+        priority=BundlePriority.CRITICAL,
     )
     router.queue_bundle(critical_bundle)
-    
+
     # Finally, 5 more NORMAL bundles
     for i in range(5):
         b = Bundle(
             source_eid="dtn://smdc-node-01/telemetry",
             destination_eid="dtn://ground-station/log",
             payload=f"Normal telemetry post-failure {i}".encode(),
-            priority=BundlePriority.NORMAL
+            priority=BundlePriority.NORMAL,
         )
         router.queue_bundle(b)
-        
+
     # Total bundles: 16
     assert router.get_queue_stats()["queued_bundle_count"] == 16
-    
-    # Now simulate satellite AOS (Acquisition of Signal). 
+
+    # Now simulate satellite AOS (Acquisition of Signal).
     # Fetch queue to transmit.
     transmit_queue = router.get_outbound_queue()
-    
+
     # Ensure the CRITICAL bundle is at the very front of the queue, bypassing all older NORMAL bundles
     assert transmit_queue[0].priority == BundlePriority.CRITICAL
     assert transmit_queue[0].payload == b"CRITICAL: NVMe Array Degraded"
-    
+
     # The rest should be NORMAL
     for b in transmit_queue[1:]:
         assert b.priority == BundlePriority.NORMAL

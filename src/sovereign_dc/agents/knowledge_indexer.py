@@ -21,11 +21,12 @@ ECO_EMBEDDING_MODEL = os.getenv("ECO_EMBEDDING_MODEL", "all-minilm")
 COLLECTION_NAME = "sovereign_knowledge"
 WATCH_DIR = os.getenv("DOCS_WATCH_DIR", "/data/documents")
 
+
 def get_current_model() -> str:
     """Reads the current Sentinel mode and returns the appropriate embedding model."""
     try:
         if os.path.exists("/tmp/sovereign_mode"):
-            with open("/tmp/sovereign_mode", "r") as f:
+            with open("/tmp/sovereign_mode") as f:
                 mode = f.read().strip()
             if mode == "ECO_PRESERVATION":
                 return ECO_EMBEDDING_MODEL
@@ -121,14 +122,14 @@ def run_worker():
 
     indexed_files = set()
     last_mode = get_current_model()
-    
+
     while True:
         try:
             current_mode = get_current_model()
             if current_mode != last_mode:
                 logging.info(f"🔄 Swapping AI Model due to Sentinel mode change: {last_mode} -> {current_mode}")
                 last_mode = current_mode
-                
+
             for root, _, files in os.walk(WATCH_DIR):
                 for f in files:
                     if f.endswith((".md", ".txt", ".csv", ".json", ".py", ".sh")):
