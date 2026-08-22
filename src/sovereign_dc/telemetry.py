@@ -14,6 +14,7 @@ PORT = int(os.getenv("EXPORTER_PORT", "9101"))
 SIMULATION = os.getenv("SIMULATE_POWER_DATA", "true").lower() in ("true", "1", "yes")
 
 start_time = time.time()
+fault_overrides = {}
 
 
 def get_telemetry_metrics():
@@ -49,6 +50,14 @@ def get_telemetry_metrics():
         coolant_temp_celsius = 32.0
         daily_yield_kwh = 4.5
         load_shedding = 0.0
+        
+    # Apply fault overrides
+    if "soc" in fault_overrides:
+        soc_percent = float(fault_overrides["soc"])
+    if "temp" in fault_overrides:
+        coolant_temp_celsius = float(fault_overrides["temp"])
+        rack_inlet_celsius = coolant_temp_celsius - 8.0
+        rack_exhaust_celsius = coolant_temp_celsius + 5.0
 
     lines = [
         "# HELP sovereign_battery_soc_percent Battery Bank State of Charge (0-100%)",
@@ -109,6 +118,33 @@ class MetricsHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "text/plain")
             self.end_headers()
             self.wfile.write(b"OK\n")
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def do_POST(self):
+        if self.path == "/fault":
+            content_length = int(self.headers.get('Content-Length', 0))
+            post_data = self.rfile.read(content_length)
+            try:
+                import json
+                data = json.loads(post_data.decode('utf-8'))
+                fault_overrides.update(data)
+                logging.warning(f"Applied fault overrides: {data}")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"status": "ok", "overrides": fault_overrides}).encode('utf-8'))
+            except Exception as e:
+                self.send_response(400)
+                self.end_headers()
+                self.wfile.write(f"Error parsing fault JSON: {e}".encode('utf-8'))
+        elif self.path == "/fault/clear":
+            fault_overrides.clear()
+            logging.info("Cleared fault overrides")
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b'{"status": "cleared"}')
         else:
             self.send_response(404)
             self.end_headers()

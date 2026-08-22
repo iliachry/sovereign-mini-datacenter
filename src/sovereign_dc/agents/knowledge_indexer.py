@@ -16,9 +16,22 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [KnowledgeIndexer] %
 
 OLLAMA_URL = os.getenv("OLLAMA_BASE_URL", "http://ollama:11434")
 QDRANT_URL = os.getenv("QDRANT_BASE_URL", "http://qdrant:6333")
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "nomic-embed-text")
+DEFAULT_EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "nomic-embed-text")
+ECO_EMBEDDING_MODEL = os.getenv("ECO_EMBEDDING_MODEL", "all-minilm")
 COLLECTION_NAME = "sovereign_knowledge"
 WATCH_DIR = os.getenv("DOCS_WATCH_DIR", "/data/documents")
+
+def get_current_model() -> str:
+    """Reads the current Sentinel mode and returns the appropriate embedding model."""
+    try:
+        if os.path.exists("/tmp/sovereign_mode"):
+            with open("/tmp/sovereign_mode", "r") as f:
+                mode = f.read().strip()
+            if mode == "ECO_PRESERVATION":
+                return ECO_EMBEDDING_MODEL
+    except Exception as e:
+        logging.warning(f"Failed to read sovereign mode: {e}")
+    return DEFAULT_EMBEDDING_MODEL
 
 
 def ensure_qdrant_collection():
@@ -45,7 +58,8 @@ def ensure_qdrant_collection():
 def get_embedding(text: str) -> list[float]:
     """Generates embedding vector via local Ollama API."""
     url = f"{OLLAMA_URL}/api/embeddings"
-    payload = json.dumps({"model": EMBEDDING_MODEL, "prompt": text}).encode("utf-8")
+    current_model = get_current_model()
+    payload = json.dumps({"model": current_model, "prompt": text}).encode("utf-8")
     req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=10) as resp:
         data = json.loads(resp.read().decode("utf-8"))
@@ -106,8 +120,15 @@ def run_worker():
     os.makedirs(WATCH_DIR, exist_ok=True)
 
     indexed_files = set()
+    last_mode = get_current_model()
+    
     while True:
         try:
+            current_mode = get_current_model()
+            if current_mode != last_mode:
+                logging.info(f"🔄 Swapping AI Model due to Sentinel mode change: {last_mode} -> {current_mode}")
+                last_mode = current_mode
+                
             for root, _, files in os.walk(WATCH_DIR):
                 for f in files:
                     if f.endswith((".md", ".txt", ".csv", ".json", ".py", ".sh")):

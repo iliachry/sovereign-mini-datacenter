@@ -305,7 +305,22 @@ def cmd_space_queue(args):
     print(f"  • Total Spool Size:     {stats['total_spool_bytes']:,} bytes")
     print("  • Priority Breakdown:")
     for prio, count in stats["priority_counts"].items():
-        print(f"      - {prio.capitalize():<12}: {count}")
+        if count > 0:
+            color = RED if prio == "critical" else (YELLOW if prio == "expedited" else CYAN)
+            print(f"      - {color}{prio.capitalize():<12}{RESET}: {count}")
+    
+    print(f"\n{BOLD}Next Transmission Window (Top 5 Bundles):{RESET}")
+    queue = router.get_outbound_queue()
+    if not queue:
+        print(f"  {YELLOW}Queue is empty.{RESET}\n")
+    else:
+        for i, b in enumerate(queue[:5]):
+            prio_color = RED if b.priority == BundlePriority.CRITICAL else (YELLOW if b.priority == BundlePriority.EXPEDITED else GREEN)
+            prio_name = {3: "CRITICAL", 2: "EXPEDITED", 1: "NORMAL", 0: "BULK"}.get(b.priority, "UNKNOWN")
+            print(f"  {i+1}. [{prio_color}{prio_name}{RESET}] ID: {b.bundle_id}")
+            print(f"     Dst: {CYAN}{b.destination_eid}{RESET} | Size: {b.total_application_data_length} bytes")
+        if len(queue) > 5:
+            print(f"  ... and {len(queue) - 5} more.")
     print("")
 
 
@@ -823,7 +838,7 @@ def main():
     )
     p_sp_send.set_defaults(func=cmd_space_send)
 
-    p_sp_queue = space_subs.add_parser("queue", help="List bundles in DTN store-and-forward spool")
+    p_sp_queue = space_subs.add_parser("queue", aliases=["dtn-spool"], help="List bundles in DTN store-and-forward spool")
     p_sp_queue.set_defaults(func=cmd_space_queue)
 
     # Docs
