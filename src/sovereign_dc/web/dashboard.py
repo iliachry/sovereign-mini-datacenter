@@ -205,8 +205,8 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
   <div class="grid">
     <!-- Card 5: Swarm Mesh Topology -->
-    <div class="card" style="grid-column: span 2;">
-      <div class="card-title"><span>🌐 Sovereign Mesh Cluster Consensus</span><span class="code" id="raft-role">RAFT LEADER</span></div>
+    <div class="card">
+      <div class="card-title"><span>🌐 Sovereign Mesh Cluster</span><span class="code" id="raft-role">RAFT LEADER</span></div>
       <div id="mesh-nodes-list">
         <div class="status-row"><span>smdc-node-01 (Athens Core)</span><span class="code" style="color: var(--accent);">100.64.0.1 • 550 TOPS • ONLINE</span></div>
         <div class="status-row"><span>smdc-node-02 (Alpine Edge)</span><span class="code" style="color: var(--accent);">100.64.0.2 • 275 TOPS • ONLINE</span></div>
@@ -214,12 +214,21 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       </div>
     </div>
 
-    <!-- Card 6: Storage & Security -->
+    <!-- Card 6: Compute Economy & Wallet -->
+    <div class="card">
+      <div class="card-title"><span>💰 Compute Economy & Wallet</span><span class="code" id="econ-pricing-mode" style="color: var(--accent);">50% SOLAR DISCOUNT</span></div>
+      <div class="metric-value" style="color: var(--accent-orange);" id="wallet-balance">-- Credits</div>
+      <div class="metric-sub" id="wallet-addr">Wallet: --</div>
+      <div class="status-row" style="margin-top: 10px;"><span>Dynamic Rate Multiplier</span><span class="code" id="econ-multiplier">1.00x</span></div>
+      <div class="status-row"><span>Ledger Transactions</span><span class="code" id="econ-tx-count">0 Recorded</span></div>
+    </div>
+
+    <!-- Card 7: Storage & Security -->
     <div class="card">
       <div class="card-title"><span>🔐 Storage & Cryptography</span><span class="code">ZFS ENCRYPTED</span></div>
       <div class="status-row"><span>NVMe Storage</span><span class="code" id="storage-used">-- GB / -- GB Free</span></div>
-      <div class="status-row"><span>PQC Digital Signatures</span><span class="code" style="color: var(--accent);">ML-DSA-65 (FIPS 204)</span></div>
-      <div class="status-row"><span>PQC Key Encapsulation</span><span class="code" style="color: var(--accent-purple);">ML-KEM-768 (FIPS 203)</span></div>
+      <div class="status-row"><span>PQC Digital Signatures</span><span class="code" style="color: var(--accent);">ML-DSA-87 (FIPS 204)</span></div>
+      <div class="status-row"><span>PQC Key Encapsulation</span><span class="code" style="color: var(--accent-purple);">ML-KEM-1024 (FIPS 203)</span></div>
       <div class="status-row"><span>Intrusion Prevention</span><span class="code" style="color: var(--accent);">CrowdSec ACTIVE</span></div>
     </div>
   </div>
@@ -242,9 +251,11 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
         // Battery
         const soc = data.power.battery_soc || 0;
-        document.getElementById('battery-soc').textContent = `${soc.toFixed(1)}%`;
-        document.getElementById('battery-voltage').textContent = `Voltage: ${data.power.battery_voltage.toFixed(1)}V | Load: ${data.power.system_load_watts.toFixed(0)}W`;
+        document.getElementById('battery-soc').textContent = `${soc.toFixed(1)} %`;
+        document.getElementById('battery-voltage').textContent = `Voltage: ${data.power.battery_voltage.toFixed(1)} V | Load: ${data.power.system_load_watts.toFixed(0)} W`;
         document.getElementById('soc-bar').style.width = `${Math.min(100, Math.max(0, soc))}%`;
+        document.getElementById('shedding-mode').textContent = data.power.load_shedding_active ? 'L2 SHEDDING' : 'L0 NOMINAL';
+        document.getElementById('shedding-mode').style.color = data.power.load_shedding_active ? 'var(--accent-red)' : 'var(--accent)';
 
         // Solar
         const solar = data.power.solar_watts || 0;
@@ -263,6 +274,16 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         document.getElementById('satellite-pass').textContent = `Next Pass: ${data.space.next_satellite} in ${Math.round(data.space.next_pass_seconds / 60)}m`;
         document.getElementById('dtn-bar').style.width = `${Math.min(100, data.space.queued_bundles * 10)}%`;
 
+        // Economy
+        if (data.economy) {
+          document.getElementById('wallet-balance').textContent = `${data.economy.balance_credits.toFixed(2)} Credits`;
+          document.getElementById('wallet-addr').textContent = `Wallet: ${data.economy.wallet_address.substring(0, 16)}... (${data.economy.algorithm})`;
+          document.getElementById('econ-multiplier').textContent = `${data.economy.energy_multiplier.toFixed(2)}x`;
+          document.getElementById('econ-pricing-mode').textContent = data.economy.energy_state.replace(/_/g, ' ');
+          document.getElementById('econ-pricing-mode').style.color = data.economy.energy_multiplier <= 1.0 ? 'var(--accent)' : 'var(--accent-orange)';
+          document.getElementById('econ-tx-count').textContent = `${data.economy.recent_transactions_count} Recorded`;
+        }
+
         // Storage
         document.getElementById('storage-used').textContent = `${data.storage.free_gb.toFixed(0)}GB Free of ${data.storage.total_gb.toFixed(0)}GB`;
       } catch (err) {
@@ -279,6 +300,13 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
 def get_system_status_payload() -> dict[str, Any]:
     """Assembles unified live system status JSON for REST API and dashboard."""
+    import os
+    import tempfile
+
+    from sovereign_dc.economy.ledger import Ledger
+    from sovereign_dc.economy.market import ComputeMarket
+    from sovereign_dc.economy.wallet import NodeWallet
+
     cfg = get_config()
     power = read_power()
     thermal = read_thermal()
@@ -298,6 +326,21 @@ def get_system_status_payload() -> dict[str, Any]:
 
     cluster = RaftCluster(["smdc-node-01", "smdc-node-02", "smdc-node-03"])
     leader = cluster.step_election("smdc-node-01")
+
+    # Economy and wallet status
+    wallet_path = os.path.join(tempfile.gettempdir(), "smdc_dashboard_wallet.json")
+    db_path = os.path.join(tempfile.gettempdir(), "smdc_dashboard_ledger.db")
+    if not os.path.exists(wallet_path):
+        wallet = NodeWallet.create(node_id=cfg.node_id)
+        wallet.save_to_file(wallet_path)
+        ledger = Ledger(db_path=db_path)
+        ledger.mint(wallet.address, 100.0, memo="DASHBOARD_GENESIS")
+    else:
+        wallet = NodeWallet.load_from_file(wallet_path)
+        ledger = Ledger(db_path=db_path)
+
+    market = ComputeMarket()
+    mult, status_desc = market.get_dynamic_multiplier(power.battery_soc, power.solar_watts)
 
     return {
         "node_id": cfg.node_id,
@@ -331,6 +374,14 @@ def get_system_status_payload() -> dict[str, Any]:
         "mesh": {
             "raft_leader": leader,
             "nodes_count": len(cluster.nodes),
+        },
+        "economy": {
+            "wallet_address": wallet.address,
+            "balance_credits": ledger.get_balance(wallet.address),
+            "algorithm": wallet.keypair.algorithm.value,
+            "energy_multiplier": mult,
+            "energy_state": status_desc,
+            "recent_transactions_count": len(ledger.get_history(limit=50)),
         },
         "pqc": {
             "algorithm": PQCAlgorithm.ML_DSA_65.value,

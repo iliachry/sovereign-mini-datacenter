@@ -7,7 +7,7 @@
 Developed by **[Metatopia Studio](https://metatopia.gr)** · Author & Lead Architect: **[Ilias Chrysovergis](https://iliachry.gr)** · License: MIT · © 2026
 
 [![CI & Quality Gates](https://github.com/iliachry/sovereign-mini-datacenter/actions/workflows/ci.yml/badge.svg)](https://github.com/iliachry/sovereign-mini-datacenter/actions/workflows/ci.yml)
-[![Quality Gate](https://img.shields.io/badge/Quality%20Gate-Strict%20Enforcement%20(93.4%25%20Cov)-10b981?style=flat&logo=githubactions)](https://github.com/iliachry/sovereign-mini-datacenter/actions/workflows/ci.yml)
+[![Quality Gate](https://img.shields.io/badge/Quality%20Gate-Strict%20Enforcement%20(93.3%25%20Cov)-10b981?style=flat&logo=githubactions)](https://github.com/iliachry/sovereign-mini-datacenter/actions/workflows/ci.yml)
 [![Commercialization](https://img.shields.io/badge/Commercialization-Investment%20Thesis-f59e0b?style=flat)](COMMERCIALIZATION.md)
 [![Benchmarks](https://img.shields.io/badge/Benchmarks-Empirical%20AI%20%26%20Power-06b6d4?style=flat)](BENCHMARKS.md)
 [![Compliance](https://img.shields.io/badge/Compliance-SOC%202%20%26%20PQC%20Ready-ec4899?style=flat)](COMPLIANCE.md)
@@ -56,10 +56,10 @@ Inspect the 9U 19" chassis, rails, liquid-cooling loop, space DTN antenna, and r
 ┌───────────────┐       ┌───────────────┐       ┌───────────────┐       ┌───────────────┐
 │  OPEN-WEBUI   │       │   GITLAB CE   │       │  OPENPROJECT  │       │   NEXTCLOUD   │
 │  Private AI   │       │  Code & CI/CD │       │  Project Mgmt │       │  Cloud Files  │
-└───────┬───────┘       └───────────────┘       └───────────────┘       └───────────────┘
-        │
-        ├───────────────────────┐
-        ▼                       ▼
+└───────┬───────┘       └───────┬───────┘       └───────┬───────┘       └───────┬───────┘
+        │                       │                       │                       │
+        ├───────────────────────┴───────────────────────┴───────────────────────┤
+        ▼                                                                       ▼
 ┌───────────────┐       ┌───────────────┐       ┌───────────────┐       ┌───────────────┐
 │  OLLAMA (GPU) │       │ QDRANT VECTOR │       │  VAULTWARDEN  │       │    MAILCOW    │
 │  LLM Engine   │       │  Private RAG  │       │ Password Safe │       │ Sovereign Mail│
@@ -97,6 +97,7 @@ sovereign-mini-datacenter/
 │       ├── hal/                 # Hardware Abstraction Layer (GPU, Power, Storage, Thermal)
 │       ├── log.py               # Structured JSON & colored console logging
 │       ├── agents/              # Sentinel, Indexer & Reviewer AI integrations
+│       ├── economy/             # Monetary & Compute Economy (Wallets, Ledger, State Channels, Dynamic Pricing)
 │       ├── mesh/                # Multi-node WireGuard, LoRa & Chaos engineering simulator
 │       ├── security/            # NIST FIPS 203/204 Post-Quantum Cryptography (ML-KEM, ML-DSA)
 │       ├── space/               # Space DTN routing (RFC 9171) & SGP4 orbital propagator
@@ -131,7 +132,7 @@ sovereign-mini-datacenter/
 │   ├── accessories.scad         # 3D printable DIN rails, Jetson mounts, OLED bezels
 │   ├── MANUFACTURING_GUIDE.md   # Laser cut, CNC bend, and assembly instructions
 │   └── render.jpg               # Photorealistic 3D product render
-├── tests/                       # 274+ Automated unit & integration tests (93.4%+ coverage)
+├── tests/                       # 296+ Automated unit & integration tests (93.3%+ coverage)
 ├── docs/                        # Interactive Three.js WebGL CAD & Space Viewer for GitHub Pages
 └── .github/
     └── workflows/
@@ -157,6 +158,15 @@ smdc status
 
 # Launch real-time Web Operations Dashboard & REST API
 smdc dashboard --port 8080
+
+# Inspect or generate node cryptographic wallet (Ed25519 & NIST PQC ML-DSA-87)
+smdc economy wallet
+
+# Query dynamic solar-aware compute & relay price quotes
+smdc economy market --soc 85 --solar 1200
+
+# Transfer compute credits between sovereign nodes
+smdc economy send <recipient_address> 25.0 --memo "LLM_INFERENCE_BATCH"
 
 # Run automated security compliance & CIS benchmark audit
 smdc audit
@@ -214,6 +224,12 @@ smdc deploy --all
 
 ### 5. 🌐 Multi-Node Sovereign Mesh (`software/mesh/`)
 * Inter-datacenter cluster synchronization over WireGuard mesh and BPv7 space bundle relays.
+
+### 6. 💰 Autonomous Monetary & Compute Economy Layer (`src/sovereign_dc/economy/`)
+* **Post-Quantum Cryptographic Wallets:** Deterministic address derivation and signing using Ed25519 and NIST FIPS 204 ML-DSA-87.
+* **Append-Only Compute Credit Ledger:** Monotonically increasing nonces, transaction hashes, and offline bidirectional micro-payment state channels for streaming compute.
+* **Solar-Aware Dynamic Price Oracle:** Dynamic discount engine offering up to 50% discount on GPU inference during solar surplus (>1 kW) and up to 3.0x surge pricing during battery preservation.
+* **Delay-Tolerant Settlement:** Cryptographic Proof-of-Compute and Proof-of-Relay verification reconciled across terrestrial mesh or RFC 9171 DTN satellite contact passes.
 
 ---
 

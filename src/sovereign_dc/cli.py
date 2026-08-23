@@ -700,6 +700,130 @@ def cmd_security_pqc(args):
     print(f"\n{GREEN}✅ Post-Quantum Cryptography engines operating nominally.{RESET}\n")
 
 
+def cmd_economy_wallet(args):
+    """Inspects or generates node cryptographic wallet and balances."""
+    import tempfile
+
+    from sovereign_dc.economy.ledger import Ledger
+    from sovereign_dc.economy.wallet import AddressType, NodeWallet
+
+    wallet_path = getattr(args, "wallet_file", None) or os.path.join(tempfile.gettempdir(), "smdc_default_wallet.json")
+    db_path = getattr(args, "db_path", None) or os.path.join(tempfile.gettempdir(), "smdc_economy_ledger.db")
+    ledger = Ledger(db_path=db_path)
+
+    if getattr(args, "create", False) or not os.path.exists(wallet_path):
+        algo = AddressType.ML_DSA_87 if getattr(args, "pqc", False) else AddressType.ED25519
+        node_id = getattr(args, "node_id", None) or "smdc-node-01"
+        wallet = NodeWallet.create(node_id=node_id, algorithm=algo)
+        wallet.save_to_file(wallet_path)
+        ledger.mint(wallet.address, 100.0, memo="BOOTSTRAP_GENESIS")
+        print(f"\n{GREEN}✅ Created new sovereign node wallet!{RESET}\n")
+    else:
+        wallet = NodeWallet.load_from_file(wallet_path)
+
+    mint_amt = getattr(args, "mint", None)
+    if mint_amt is not None and mint_amt > 0:
+        ledger.mint(wallet.address, mint_amt, memo="MANUAL_MINT")
+        print(f"💰 Minted {GREEN}{mint_amt:.2f} credits{RESET} to wallet {CYAN}{wallet.address}{RESET}")
+
+    balance = ledger.get_balance(wallet.address)
+    nonce = ledger.get_nonce(wallet.address)
+
+    print(f"\n{BOLD}{CYAN}=== Sovereign Node Cryptographic Wallet ==={RESET}\n")
+    print(f"  • Node ID:         {BOLD}{wallet.node_id}{RESET}")
+    print(f"  • Wallet Address:  {CYAN}{wallet.address}{RESET}")
+    print(f"  • Algorithm:       {MAGENTA}{wallet.keypair.algorithm.value}{RESET}")
+    print(f"  • Public Key:      {wallet.keypair.public_key_hex[:32]}... ({len(wallet.keypair.public_key_hex)} chars)")
+    print(f"  • Balance:         {GREEN}{balance:.2f} SMDC-Credits{RESET}")
+    print(f"  • Sequence Nonce:  {nonce}")
+    print(f"  • Storage Path:    {wallet_path}\n")
+
+
+def cmd_economy_send(args):
+    """Transfers compute credits to a peer node with cryptographic signature."""
+    import tempfile
+
+    from sovereign_dc.economy.ledger import Ledger
+    from sovereign_dc.economy.wallet import NodeWallet
+
+    wallet_path = getattr(args, "wallet_file", None) or os.path.join(tempfile.gettempdir(), "smdc_default_wallet.json")
+    db_path = getattr(args, "db_path", None) or os.path.join(tempfile.gettempdir(), "smdc_economy_ledger.db")
+    if not os.path.exists(wallet_path):
+        wallet = NodeWallet.create(node_id="smdc-node-01")
+        wallet.save_to_file(wallet_path)
+        ledger = Ledger(db_path=db_path)
+        ledger.mint(wallet.address, 100.0, memo="BOOTSTRAP_GENESIS")
+    else:
+        wallet = NodeWallet.load_from_file(wallet_path)
+        ledger = Ledger(db_path=db_path)
+
+    recipient = args.recipient
+    amount = float(args.amount)
+    memo = getattr(args, "memo", "") or "M2M_TRANSFER"
+
+    try:
+        tx = ledger.transfer(sender_wallet=wallet, recipient=recipient, amount=amount, memo=memo)
+        print(f"\n{GREEN}✅ Transfer of {amount:.2f} credits completed!{RESET}\n")
+        print(f"  • Transaction ID: {CYAN}{tx.tx_id}{RESET}")
+        print(f"  • Sender:         {tx.sender}")
+        print(f"  • Recipient:      {tx.recipient}")
+        print(f"  • Amount:         {GREEN}{tx.amount:.2f} credits{RESET}")
+        print(f"  • Signature Algo: {tx.signature_algorithm}")
+        print(f"  • Timestamp:      {tx.timestamp}\n")
+    except Exception as e:
+        print(f"\n{RED}❌ Transfer failed: {e}{RESET}\n")
+
+
+def cmd_economy_market(args):
+    """Displays dynamic solar-aware compute & relay marketplace prices."""
+    from sovereign_dc.economy.market import ComputeMarket, ServiceType
+
+    market = ComputeMarket()
+    soc = getattr(args, "soc", 85.0) or 85.0
+    solar = getattr(args, "solar", 850.0) or 850.0
+
+    print(f"\n{BOLD}{CYAN}=== Sovereign Compute & Energy Marketplace ==={RESET}\n")
+    print(f"Simulated Physical Conditions: Battery SoC = {BOLD}{soc:.1f}%{RESET} | Solar = {BOLD}{solar:.0f} W{RESET}")
+    mult, status_desc = market.get_dynamic_multiplier(battery_soc=soc, solar_power_w=solar)
+    print(f"Current Energy Multiplier:    {GREEN if mult <= 1.0 else YELLOW}{mult:.2f}x{RESET} ({status_desc})\n")
+
+    print(f"{BOLD}Service Catalog & Dynamic Rates:{RESET}")
+    for st in ServiceType:
+        quote = market.calculate_quote(st, quantity=1.0, battery_soc=soc, solar_power_w=solar)
+        print(
+            f"  • {BOLD}{st.value:<18}{RESET} Base: {quote.base_unit_price:>6.4f} -> {GREEN}{quote.final_unit_price:>6.4f} credits{RESET} / {quote.unit_name}"
+        )
+    print(f"\n💡 Nodes with excess solar energy automatically offer up to {GREEN}50% discount{RESET} on GPU inference.")
+    print(f"   Low battery nodes apply {YELLOW}up to 3.0x surge pricing{RESET} to protect local power reserves.\n")
+
+
+def cmd_economy_history(args):
+    """Displays recent transactions from the compute ledger."""
+    import tempfile
+
+    from sovereign_dc.economy.ledger import Ledger
+
+    db_path = getattr(args, "db_path", None) or os.path.join(tempfile.gettempdir(), "smdc_economy_ledger.db")
+    ledger = Ledger(db_path=db_path)
+    limit = getattr(args, "limit", 15) or 15
+    txs = ledger.get_history(limit=limit)
+
+    print(f"\n{BOLD}{CYAN}=== Compute Ledger Transaction History ==={RESET}\n")
+    if not txs:
+        print("  No transactions recorded yet in ledger.\n")
+        return
+
+    for tx in txs:
+        arrow = f"{CYAN}{tx.sender[:12]}...{RESET} -> {GREEN}{tx.recipient[:12]}...{RESET}"
+        print(f"  • [{tx.timestamp[:19]}] {arrow} | {BOLD}{tx.amount:6.2f} credits{RESET} | Memo: {tx.memo}")
+    print()
+
+
+def cmd_economy(args):
+    """Main entry point for economy commands."""
+    cmd_economy_wallet(args)
+
+
 def cmd_dashboard(args):
     """Launches real-time Web Operations Dashboard and REST API server."""
     from sovereign_dc.web.dashboard import run_dashboard_server
@@ -953,6 +1077,45 @@ def main():
         "queue", aliases=["dtn-spool"], help="List bundles in DTN store-and-forward spool"
     )
     p_sp_queue.set_defaults(func=cmd_space_queue)
+
+    # Economy & Monetary Subcommand Suite
+    p_econ = subparsers.add_parser(
+        "economy",
+        aliases=["market", "wallet"],
+        help="Sovereign Compute & Energy Monetary Layer (M2M micro-payments & credits)",
+    )
+    econ_subs = p_econ.add_subparsers(dest="economy_command", help="Economy actions")
+
+    p_ec_wallet = econ_subs.add_parser("wallet", help="Inspect or generate node cryptographic wallet and balance")
+    p_ec_wallet.add_argument("--create", action="store_true", help="Create a new cryptographic wallet")
+    p_ec_wallet.add_argument("--pqc", action="store_true", help="Use NIST FIPS 204 ML-DSA-87 post-quantum algorithm")
+    p_ec_wallet.add_argument("--mint", type=float, help="Mint test compute credits to wallet")
+    p_ec_wallet.add_argument("--node-id", type=str, default="smdc-node-01", help="Node identifier")
+    p_ec_wallet.add_argument("--wallet-file", type=str, help="Custom wallet JSON file path")
+    p_ec_wallet.add_argument("--db-path", type=str, help="Custom ledger SQLite database path")
+    p_ec_wallet.set_defaults(func=cmd_economy_wallet)
+
+    p_ec_send = econ_subs.add_parser("send", help="Send signed compute credits to peer node")
+    p_ec_send.add_argument("recipient", help="Recipient wallet address (e.g. sov_...)")
+    p_ec_send.add_argument("amount", type=float, help="Amount of compute credits to transfer")
+    p_ec_send.add_argument("--memo", type=str, default="", help="Transaction memo / compute tag")
+    p_ec_send.add_argument("--wallet-file", type=str, help="Custom wallet JSON file path")
+    p_ec_send.add_argument("--db-path", type=str, help="Custom ledger SQLite database path")
+    p_ec_send.set_defaults(func=cmd_economy_send)
+
+    p_ec_market = econ_subs.add_parser("market", help="Inspect dynamic compute pricing and solar discount rates")
+    p_ec_market.add_argument("--soc", type=float, default=85.0, help="Simulated battery SoC percentage (default: 85%)")
+    p_ec_market.add_argument(
+        "--solar", type=float, default=850.0, help="Simulated solar power in Watts (default: 850W)"
+    )
+    p_ec_market.set_defaults(func=cmd_economy_market)
+
+    p_ec_history = econ_subs.add_parser("history", help="List recent transactions in ledger")
+    p_ec_history.add_argument("--limit", type=int, default=15, help="Maximum transactions to show (default: 15)")
+    p_ec_history.add_argument("--db-path", type=str, help="Custom ledger SQLite database path")
+    p_ec_history.set_defaults(func=cmd_economy_history)
+
+    p_econ.set_defaults(func=cmd_economy_wallet)
 
     # Docs
     p_docs = subparsers.add_parser("docs", help="Show 3D viewer and documentation URLs")

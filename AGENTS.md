@@ -37,6 +37,11 @@ sovereign-mini-datacenter/
 │       │   ├── knowledge_indexer.py  # Semantic chunker & Qdrant RAG vectorizer
 │       │   ├── gitlab_reviewer.py    # Automated git diff AI code reviewer
 │       │   └── technician_notifier.py# Autonomous multi-channel technician dispatch
+│       ├── economy/             # Autonomous Monetary & Compute Economy Layer
+│       │   ├── wallet.py             # Ed25519 & NIST FIPS 204 ML-DSA-87 Node Wallets
+│       │   ├── ledger.py             # Append-only hash-linked ledger & offline state channels
+│       │   ├── market.py             # Solar-aware dynamic price oracle & service catalog
+│       │   └── settlement.py         # Proof-of-Compute/Relay & RFC 9171 DTN bundle settlement
 │       ├── hal/                 # Hardware Abstraction Layer
 │       │   ├── gpu.py                # NVIDIA Jetson / Tegra / Desktop GPU telemetry
 │       │   ├── power.py              # Victron MPPT & SmartShunt BMS readers
@@ -93,7 +98,7 @@ sovereign-mini-datacenter/
 │   └── MANUFACTURING_GUIDE.md   # Laser cut DXF export, CNC sheet metal bending specs
 ├── docs/                        # Interactive Three.js WebGL Digital Twin & GitHub Pages
 │   └── index.html               # 3D WebGL CAD viewer + interactive sizing & TCO calculator
-├── tests/                       # Complete automated Pytest suite (274+ tests, 93.4%+ coverage)
+├── tests/                       # Complete automated Pytest suite (296+ tests, 93.3%+ coverage)
 ├── ARCHITECTURE.md              # Multi-node autonomous network architecture specification
 ├── COMMERCIALIZATION.md         # Investment thesis, TAM/SAM/SOM & 3-year TCO payback model
 ├── BENCHMARKS.md                # Quantified LLM, vector search, load shedding & space metrics
@@ -108,7 +113,7 @@ sovereign-mini-datacenter/
 
 ### A. Centralized Configuration & Event Bus (`src/sovereign_dc/config.py`, `events.py`)
 - **Layered Configuration (`config.py`)**: Hierarchical configuration dataclass (`SovereignConfig`) supporting programmatic defaults $\to$ YAML configuration files $\to$ environment variables (`SMDC_*`).
-- **In-Process Event Bus (`events.py`)**: Thread-safe publish/subscribe event dispatcher (`SovereignEventBus`) with wildcard event routing (`load_shedding.*`, `mesh.*`, `space.*`) and ring-buffered audit logs.
+- **In-Process Event Bus (`events.py`)**: Thread-safe publish/subscribe event dispatcher (`SovereignEventBus`) with wildcard event routing (`load_shedding.*`, `mesh.*`, `space.*`, `economy.*`) and ring-buffered audit logs.
 
 ### B. Hardware Abstraction Layer (HAL) (`src/sovereign_dc/hal/`)
 - **GPU (`gpu.py`)**: Automatic discovery of NVIDIA Tegra (Jetson Orin) via sysfs `/devices/platform/` or desktop GPUs via `pynvml`, parsing power draw, temperature, and utilization.
@@ -122,7 +127,7 @@ sovereign-mini-datacenter/
 
 ### D. Operations Dashboard & REST API (`src/sovereign_dc/web/dashboard.py`)
 - Built-in zero-dependency HTTP server delivering a responsive, dark-mode glassmorphic single-page operations console (`smdc dashboard`).
-- Provides real-time status REST APIs (`/api/status`, `/health`) tracking battery State-of-Charge, solar harvest, thermal loops, Space DTN spools, and mesh peers.
+- Provides real-time status REST APIs (`/api/status`, `/health`) tracking battery State-of-Charge, solar harvest, thermal loops, Space DTN spools, economy wallets, and mesh peers.
 
 ### E. Mesh Chaos Engineering Simulator (`src/sovereign_dc/mesh/chaos.py`)
 - Simulates network partition scenarios, split-brain conditions, terrestrial link dropouts with automatic Space DTN spooling fallback, and deterministic packet loss replication.
@@ -138,6 +143,12 @@ sovereign-mini-datacenter/
 - **Store-and-Forward Router (`dtn/router.py`)**: Persistent NVMe spool for bundles awaiting satellite contact windows.
 - **SGP4 Orbital Propagator (`orbital/propagator.py`)**: Computes AOS/LOS satellite contact passes, azimuth, elevation, and Doppler shifts.
 - **RF Link Budget Simulator (`transceiver/simulated_link.py`)**: Free-Space Path Loss (FSPL) calculations across UHF, S-band, and X-band.
+
+### H. Autonomous Monetary & Compute Economy Layer (`src/sovereign_dc/economy/`)
+- **Node Wallet (`wallet.py`)**: Post-Quantum (ML-DSA-87) and Ed25519 keypair identity, deterministic address derivation (`sov_...` / `sov_pqc_...`), and payload signing.
+- **Immutable Ledger & State Channels (`ledger.py`)**: Append-only transaction ledger with replay protection and bidirectional off-chain micropayment state channels.
+- **Dynamic Solar-Aware Pricing Engine (`market.py`)**: Real-time pricing oracle adjusting service rates based on solar harvest ($>1000\text{ W} \to 50\%$ discount) and battery reserves ($<25\% \to 3.0\times$ surge pricing).
+- **Delay-Tolerant Settlement (`settlement.py`)**: Cryptographic Proof-of-Compute and Proof-of-Relay verification reconciled across terrestrial mesh or RFC 9171 satellite contact passes.
 
 ---
 
@@ -201,6 +212,8 @@ uv run pytest tests/ --cov=src/sovereign_dc --cov-fail-under=85
 .\.venv\Scripts\python -m sovereign_dc --help
 .\.venv\Scripts\python -m sovereign_dc status
 .\.venv\Scripts\python -m sovereign_dc dashboard --port 8080
+.\.venv\Scripts\python -m sovereign_dc economy wallet
+.\.venv\Scripts\python -m sovereign_dc economy market --soc 85 --solar 1200
 .\.venv\Scripts\python -m sovereign_dc mesh chaos --help
 .\.venv\Scripts\python -m sovereign_dc security pqc --help
 .\.venv\Scripts\python -m sovereign_dc benchmark --all
@@ -215,7 +228,7 @@ uv run pytest tests/ --cov=src/sovereign_dc --cov-fail-under=85
 ## 6. Checklist Before Completing Any Agent Task
 
 1. [ ] **Pass All Quality Gates Locally**: Run `scripts/quality_gate.ps1` or `scripts/quality_gate.sh` (Ruff lint/format, Mypy typing, Pytest $\ge 85\%$ coverage).
-2. [ ] **Pass All Unit Tests**: Verify all 274+ unit tests in `tests/` pass with zero failures.
+2. [ ] **Pass All Unit Tests**: Verify all 296+ unit tests in `tests/` pass with zero failures.
 3. [ ] **Preserve Existing Interfaces**: Ensure CLI arguments, Prometheus metric names, and DTN bundle schemas remain backward-compatible.
 4. [ ] **Verify Markdown/Mermaid & Math**: Ensure any new or modified `.md` files strictly comply with GitHub Mermaid and LaTeX math rendering rules.
 5. [ ] **Synchronize Documentation**: Update `AGENTS.md` and `README.md` with any newly added modules, subcommands, or architectural changes.
