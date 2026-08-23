@@ -98,7 +98,7 @@ sovereign-mini-datacenter/
 │   └── MANUFACTURING_GUIDE.md   # Laser cut DXF export, CNC sheet metal bending specs
 ├── docs/                        # Interactive Three.js WebGL Digital Twin & GitHub Pages
 │   └── index.html               # 3D WebGL CAD viewer + interactive sizing & TCO calculator
-├── tests/                       # Complete automated Pytest suite (296+ tests, 93.3%+ coverage)
+├── tests/                       # Complete automated Pytest suite (302+ tests, 93.3%+ coverage)
 ├── ARCHITECTURE.md              # Multi-node autonomous network architecture specification
 ├── COMMERCIALIZATION.md         # Investment thesis, TAM/SAM/SOM & 3-year TCO payback model
 ├── BENCHMARKS.md                # Quantified LLM, vector search, load shedding & space metrics
@@ -125,8 +125,10 @@ sovereign-mini-datacenter/
 - **NIST FIPS 204 (ML-DSA-65 & ML-DSA-87)**: Lattice-based digital signatures for cluster peer identity attestation, firmware verification, and RFC 9172 (BPSec) DTN bundle signing.
 - **NIST FIPS 203 (ML-KEM-768 & ML-KEM-1024)**: Lattice-based Key Encapsulation Mechanism (KEM) establishing quantum-safe symmetric encryption keys across terrestrial and space links.
 
-### D. Operations Dashboard & REST API (`src/sovereign_dc/web/dashboard.py`)
+### D. Operations Dashboard, Live Digital Shadow & REST API (`src/sovereign_dc/web/dashboard.py`)
 - Built-in zero-dependency HTTP server delivering a responsive, dark-mode glassmorphic single-page operations console (`smdc dashboard`).
+- **Live Digital Shadow SSE Stream (`/api/telemetry/stream`)**: Continuous Server-Sent Events stream delivering live telemetry snapshots (fan RPM, coolant temperature, solar harvest, battery SoC) directly to 3D WebGL Digital Twins.
+- **Hardware Control APIs**: Remote control endpoints (`/api/control/rack-door`, `/api/control/pdu-outlet`, `/api/control/dtn-transmit`) enabling physical solenoid door unlock and RFC 9171 bundle spooling from the 3D twin.
 - Provides real-time status REST APIs (`/api/status`, `/health`) tracking battery State-of-Charge, solar harvest, thermal loops, Space DTN spools, economy wallets, and mesh peers.
 
 ### E. Mesh Chaos Engineering Simulator (`src/sovereign_dc/mesh/chaos.py`)

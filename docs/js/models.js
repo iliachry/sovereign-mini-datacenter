@@ -547,8 +547,10 @@ const ModelsBuilder = (function () {
   }
 
   function updateAnimations() {
+    const rpm = (typeof HUDManager !== 'undefined' && HUDManager.getFanRpm) ? HUDManager.getFanRpm() : 2400;
+    const speed = (rpm / 2400) * 0.12;
     fanBlades.forEach((f) => {
-      f.rotation.y += 0.08;
+      f.rotation.y += speed;
     });
   }
 

@@ -41,6 +41,8 @@ class TestDashboardHandler:
     def _make_handler(self, path: str) -> DashboardHandler:
         handler = DashboardHandler.__new__(DashboardHandler)
         handler.path = path
+        handler.headers = {}
+        handler.rfile = io.BytesIO()
         handler.wfile = io.BytesIO()
         handler.send_response = MagicMock()
         handler.send_header = MagicMock()
@@ -78,6 +80,67 @@ class TestDashboardHandler:
     def test_get_404_unknown_route(self):
         handler = self._make_handler("/unknown_endpoint")
         handler.do_GET()
+
+        handler.send_response.assert_called_with(404)
+
+    def test_options_cors_preflight(self):
+        handler = self._make_handler("/api/control/rack-door")
+        handler.do_OPTIONS()
+
+        handler.send_response.assert_called_with(204)
+        handler.send_header.assert_any_call("Access-Control-Allow-Origin", "*")
+
+    def test_get_telemetry_stream_sse(self):
+        handler = self._make_handler("/api/telemetry/stream")
+        handler.do_GET()
+
+        handler.send_response.assert_called_with(200)
+        handler.send_header.assert_any_call("Content-Type", "text/event-stream; charset=utf-8")
+        output = handler.wfile.getvalue().decode("utf-8")
+        assert output.startswith("data: ")
+        assert "power" in output
+
+    def test_post_control_rack_door(self):
+        handler = self._make_handler("/api/control/rack-door")
+        payload = json.dumps({"open": True}).encode("utf-8")
+        handler.rfile = io.BytesIO(payload)
+        handler.headers = {"Content-Length": str(len(payload))}
+        handler.do_POST()
+
+        handler.send_response.assert_called_with(200)
+        output = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        assert output["success"] is True
+        assert output["door_open"] is True
+
+    def test_post_control_pdu_outlet(self):
+        handler = self._make_handler("/api/control/pdu-outlet")
+        payload = json.dumps({"outlet": 2, "state": False}).encode("utf-8")
+        handler.rfile = io.BytesIO(payload)
+        handler.headers = {"Content-Length": str(len(payload))}
+        handler.do_POST()
+
+        handler.send_response.assert_called_with(200)
+        output = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        assert output["success"] is True
+        assert output["pdu_outlets"][2] is False
+
+    def test_post_control_dtn_transmit(self):
+        handler = self._make_handler("/api/control/dtn-transmit")
+        payload = json.dumps({"destination": "dtn://station/test", "payload": "HELLO"}).encode("utf-8")
+        handler.rfile = io.BytesIO(payload)
+        handler.headers = {"Content-Length": str(len(payload))}
+        handler.do_POST()
+
+        handler.send_response.assert_called_with(200)
+        output = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        assert output["success"] is True
+        assert "bundle_id" in output
+
+    def test_post_unknown_route_returns_404(self):
+        handler = self._make_handler("/api/control/unknown")
+        handler.rfile = io.BytesIO(b"{}")
+        handler.headers = {"Content-Length": "2"}
+        handler.do_POST()
 
         handler.send_response.assert_called_with(404)
 

@@ -96,8 +96,7 @@ const App = (function () {
 
     // Quick Action Buttons
     document.getElementById('btn-door')?.addEventListener('click', () => {
-      const open = ModelsBuilder.toggleDoor();
-      HUDManager.showToast(open ? '🚪 Rack Door Opened' : '🔒 Rack Door Closed');
+      HUDManager.triggerRemoteDoorToggle();
     });
 
     document.getElementById('btn-night')?.addEventListener('click', () => {
@@ -114,8 +113,7 @@ const App = (function () {
     });
 
     document.getElementById('btn-tx-space')?.addEventListener('click', () => {
-      SpaceManager.triggerSpaceTransmission();
-      HUDManager.showToast('🚀 Transmitting RFC 9171 Space Bundle to LEO Satellite...');
+      HUDManager.triggerRemoteDTNTransmit();
     });
 
     // Modal Triggers

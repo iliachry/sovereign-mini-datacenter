@@ -298,6 +298,15 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 """
 
 
+# Global Digital Shadow Hardware State (Synchronized across all connected 3D Twins)
+_HARDWARE_STATE: dict[str, Any] = {
+    "door_open": False,
+    "pdu_outlets": [True, True, True, True, True, True, True, True],
+    "fan_rpm": 2400,
+    "last_bundle_tx": 0,
+}
+
+
 def get_system_status_payload() -> dict[str, Any]:
     """Assembles unified live system status JSON for REST API and dashboard."""
     import os
@@ -311,6 +320,12 @@ def get_system_status_payload() -> dict[str, Any]:
     power = read_power()
     thermal = read_thermal()
     storage = detect_storage()
+
+    # Dynamic Fan RPM calculation based on thermal state and system load
+    base_rpm = 1800
+    temp_factor = max(0.0, (thermal.coolant_celsius - 25.0) * 80.0)
+    load_factor = (power.system_load_watts / 600.0) * 800.0
+    _HARDWARE_STATE["fan_rpm"] = int(min(4800, base_rpm + temp_factor + load_factor))
 
     # Space satellite calculation
     satellites = get_active_satellites()
@@ -366,6 +381,12 @@ def get_system_status_payload() -> dict[str, Any]:
             "free_gb": storage.free_gb,
             "usage_percent": round(storage.usage_percent, 1),
         },
+        "hardware": {
+            "door_open": _HARDWARE_STATE["door_open"],
+            "pdu_outlets": _HARDWARE_STATE["pdu_outlets"],
+            "fan_rpm": _HARDWARE_STATE["fan_rpm"],
+            "last_bundle_tx": _HARDWARE_STATE["last_bundle_tx"],
+        },
         "space": {
             "next_satellite": satellites[0].name if satellites else "N/A",
             "next_pass_seconds": next_sec,
@@ -395,11 +416,22 @@ def get_system_status_payload() -> dict[str, Any]:
 class DashboardHandler(BaseHTTPRequestHandler):
     """HTTP Request Handler for Sovereign Operations Dashboard & REST APIs."""
 
+    def _send_cors_headers(self) -> None:
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
+    def do_OPTIONS(self) -> None:
+        self.send_response(204)
+        self._send_cors_headers()
+        self.end_headers()
+
     def do_GET(self) -> None:
         if self.path in ("/", "/index.html"):
             payload = DASHBOARD_HTML.encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
+            self._send_cors_headers()
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
             self.wfile.write(payload)
@@ -407,16 +439,136 @@ class DashboardHandler(BaseHTTPRequestHandler):
             payload = json.dumps(get_system_status_payload()).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
+            self._send_cors_headers()
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
             self.wfile.write(payload)
+        elif self.path == "/api/telemetry/stream":
+            # Server-Sent Events (SSE) Live Telemetry Stream
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Connection", "keep-alive")
+            self._send_cors_headers()
+            self.end_headers()
+
+            # Transmit snapshot event
+            status_data = get_system_status_payload()
+            event_payload = f"data: {json.dumps(status_data)}\n\n".encode()
+            try:
+                self.wfile.write(event_payload)
+                self.wfile.flush()
+            except Exception:
+                pass
         elif self.path in ("/health", "/healthz"):
             self.send_response(200)
             self.send_header("Content-Type", "text/plain")
+            self._send_cors_headers()
             self.end_headers()
             self.wfile.write(b"OK\n")
         else:
             self.send_response(404)
+            self._send_cors_headers()
+            self.end_headers()
+
+    def do_POST(self) -> None:
+        content_length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(content_length).decode("utf-8") if content_length > 0 else "{}"
+        try:
+            req_data = json.loads(body) if body else {}
+        except Exception:
+            req_data = {}
+
+        if self.path == "/api/control/rack-door":
+            # Toggle or explicitly set rack door state
+            from sovereign_dc.events import Event
+
+            target_state = req_data.get("open", not _HARDWARE_STATE["door_open"])
+            _HARDWARE_STATE["door_open"] = bool(target_state)
+            get_event_bus().publish(
+                Event(
+                    event_type="hardware.door.changed",
+                    source="dashboard",
+                    payload={"open": _HARDWARE_STATE["door_open"]},
+                )
+            )
+
+            res = {"success": True, "door_open": _HARDWARE_STATE["door_open"]}
+            payload = json.dumps(res).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self._send_cors_headers()
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        elif self.path == "/api/control/pdu-outlet":
+            from sovereign_dc.events import Event
+
+            outlet_idx = int(req_data.get("outlet", 0))
+            if 0 <= outlet_idx < len(_HARDWARE_STATE["pdu_outlets"]):
+                new_state = req_data.get("state", not _HARDWARE_STATE["pdu_outlets"][outlet_idx])
+                _HARDWARE_STATE["pdu_outlets"][outlet_idx] = bool(new_state)
+                get_event_bus().publish(
+                    Event(
+                        event_type="hardware.pdu.outlet_changed",
+                        source="dashboard",
+                        payload={"outlet": outlet_idx, "state": _HARDWARE_STATE["pdu_outlets"][outlet_idx]},
+                    )
+                )
+
+            res = {"success": True, "pdu_outlets": _HARDWARE_STATE["pdu_outlets"]}
+            payload = json.dumps(res).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self._send_cors_headers()
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        elif self.path == "/api/control/dtn-transmit":
+            # Spool and dispatch an RFC 9171 Space Bundle
+            from sovereign_dc.events import Event
+            from sovereign_dc.space.dtn.bundle import Bundle, BundlePriority
+
+            cfg = get_config()
+            router = DTNRouter(db_path=cfg.dtn_db_path)
+            bundle_payload = req_data.get("payload", f"STATUS_TELEMETRY_{int(time.time())}").encode("utf-8")
+            priority_val = int(req_data.get("priority", 2))
+            bundle_prio = BundlePriority.EXPEDITED if priority_val >= 2 else BundlePriority.NORMAL
+
+            bundle = Bundle(
+                source_eid=cfg.node_id,
+                destination_eid=req_data.get("destination", "dtn://ground-station-alpha.earth/telemetry"),
+                payload=bundle_payload,
+                priority=bundle_prio,
+            )
+            router.queue_bundle(bundle)
+            _HARDWARE_STATE["last_bundle_tx"] = time.time()
+            get_event_bus().publish(
+                Event(
+                    event_type="space.dtn.bundle_queued",
+                    source="dashboard",
+                    payload={"bundle_id": bundle.bundle_id},
+                )
+            )
+
+            res = {
+                "success": True,
+                "bundle_id": bundle.bundle_id,
+                "queued_bundles": router.get_queue_stats().get("queued_bundle_count", 1),
+            }
+            payload = json.dumps(res).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self._send_cors_headers()
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        else:
+            self.send_response(404)
+            self._send_cors_headers()
             self.end_headers()
 
     def log_message(self, format: str, *args: Any) -> None:

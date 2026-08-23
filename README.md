@@ -366,7 +366,7 @@ helm upgrade --install sovereign-stack ./kubernetes/helm/sovereign-stack \
 ---
 
 ## 🛡️ Quality Gates & Automated Tests
-The project enforces strict automated Quality Gates covering Ruff linting, Ruff formatting, Mypy static typing, Docker Compose multi-stack integrity, and Pytest coverage with 274+ automated tests ($\ge 85\%$ strict threshold):
+The project enforces strict automated Quality Gates covering Ruff linting, Ruff formatting, Mypy static typing, Docker Compose multi-stack integrity, and Pytest coverage with 302+ automated tests ($\ge 85\%$ strict threshold):
 
 ```bash
 # Run all quality gates locally
