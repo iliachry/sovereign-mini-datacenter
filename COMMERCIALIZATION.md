@@ -193,7 +193,8 @@ Slide 12: The Ask ──────────── $2.5M Seed Round to scale
 
 ## 9. Contact & Investment Inquiries
 
-- **Primary Contact**: Ilias Chrysostomidis, Founder & Lead Architect
+- **Primary Contact**: Ilias Chrysovergis, Founder & Lead Architect
+- **Website / Portfolio**: [iliachry.gr](https://iliachry.gr)
 - **Studio**: Metatopia Studio (`https://metatopia.gr`)
 - **Email**: `ilias@metatopia.gr`
 - **Repository**: [github.com/iliachry/sovereign-mini-datacenter](https://github.com/iliachry/sovereign-mini-datacenter)

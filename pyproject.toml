@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
 authors = [
-    { name = "Ilias Chrysostomidis", email = "ilias@metatopia.gr" },
+    { name = "Ilias Chrysovergis", email = "ilias@metatopia.gr" },
 ]
 keywords = [
     "datacenter",
