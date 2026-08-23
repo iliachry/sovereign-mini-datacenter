@@ -3,2089 +3,307 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
-  <meta http-equiv="Pragma" content="no-cache">
-  <meta http-equiv="Expires" content="0">
-  <title>Sovereign Mini Datacenter — 3D Infrastructure Digital Twin (v1.3.0 Master Edition)</title>
+  <title>Sovereign Mini Datacenter — 3D Infrastructure Digital Twin & NOC Console</title>
+  <meta name="description" content="Open-source, self-powered, solar-backed, liquid-cooled micro-datacenter stack with on-premise AI, space DTN satellite routing, and post-quantum zero-trust mesh.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,300;0,400;0,600;0,700;1,400&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <style>
-    :root {
-      --bg: #040711;
-      --panel-bg: rgba(8, 14, 28, 0.92);
-      --panel-border: #1e293b;
-      --accent: #10b981;
-      --accent-rgb: 16, 185, 129;
-      --accent-blue: #38bdf8;
-      --accent-orange: #f59e0b;
-      --accent-purple: #c084fc;
-      --accent-purple-glow: #a855f7;
-      --text: #f8fafc;
-      --text-muted: #94a3b8;
-    }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      background-color: var(--bg);
-      color: var(--text);
-      font-family: 'Space Grotesk', sans-serif;
-      overflow: hidden;
-      width: 100vw;
-      height: 100vh;
-      user-select: none;
-    }
-    #canvas-container {
-      width: 100%;
-      height: 100%;
-      position: absolute;
-      top: 0;
-      left: 0;
-      z-index: 1;
-    }
-
-    /* Overlays */
-    .overlay {
-      position: absolute;
-      z-index: 10;
-      pointer-events: none;
-    }
-    .interactive { pointer-events: auto; }
-
-    /* Header */
-    .header {
-      top: 20px;
-      left: 24px;
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-    }
-    .header-title-row {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      flex-wrap: wrap;
-    }
-    .header h1 {
-      font-size: 20px;
-      font-weight: 700;
-      letter-spacing: -0.5px;
-      color: #fff;
-    }
-    .badge {
-      background: rgba(16, 185, 129, 0.15);
-      color: var(--accent);
-      border: 1px solid var(--accent);
-      font-size: 10px;
-      font-family: 'JetBrains Mono', monospace;
-      padding: 2px 8px;
-      border-radius: 4px;
-      text-transform: uppercase;
-      font-weight: 600;
-    }
-    .badge-space {
-      background: rgba(168, 85, 247, 0.2);
-      color: #d8b4fe;
-      border: 1px solid var(--accent-purple-glow);
-      font-size: 10px;
-      font-family: 'JetBrains Mono', monospace;
-      padding: 2px 8px;
-      border-radius: 4px;
-      text-transform: uppercase;
-      font-weight: 700;
-      box-shadow: 0 0 10px rgba(168, 85, 247, 0.3);
-      animation: spacePulse 2.5s infinite;
-    }
-    @keyframes spacePulse {
-      0%, 100% { box-shadow: 0 0 8px rgba(168, 85, 247, 0.2); }
-      50% { box-shadow: 0 0 16px rgba(168, 85, 247, 0.6); }
-    }
-    .subtitle {
-      color: var(--text-muted);
-      font-size: 12px;
-      font-family: 'JetBrains Mono', monospace;
-    }
-
-    /* HUD Bar (Top Center) */
-    .hud-bar {
-      top: 20px;
-      left: 50%;
-      transform: translateX(-50%);
-      background: var(--panel-bg);
-      backdrop-filter: blur(14px);
-      border: 1px solid var(--panel-border);
-      border-radius: 30px;
-      padding: 7px 22px;
-      display: flex;
-      gap: 16px;
-      align-items: center;
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 11px;
-      box-shadow: 0 12px 35px rgba(0,0,0,0.6);
-    }
-    .hud-stat {
-      display: flex;
-      align-items: center;
-      gap: 7px;
-    }
-    .hud-dot {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      background: var(--accent);
-      box-shadow: 0 0 8px var(--accent);
-      animation: pulse 2s infinite;
-    }
-    .hud-dot-purple {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      background: var(--accent-purple-glow);
-      box-shadow: 0 0 10px var(--accent-purple-glow);
-      animation: pulse 1.2s infinite;
-    }
-    @keyframes pulse {
-      0%, 100% { opacity: 1; transform: scale(1); }
-      50% { opacity: 0.45; transform: scale(0.85); }
-    }
-    .hud-val { color: var(--accent); font-weight: 700; }
-    .hud-val-purple { color: #d8b4fe; font-weight: 700; }
-
-    /* Controls Panel (Right) */
-    .panel-right {
-      top: 20px;
-      right: 24px;
-      width: 350px;
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-      max-height: calc(100vh - 40px);
-      overflow-y: auto;
-    }
-    .card {
-      background: var(--panel-bg);
-      backdrop-filter: blur(16px);
-      border: 1px solid var(--panel-border);
-      border-radius: 12px;
-      padding: 15px;
-      box-shadow: 0 15px 35px rgba(0,0,0,0.6);
-    }
-    .card-title {
-      font-size: 13px;
-      font-weight: 600;
-      margin-bottom: 10px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      color: #fff;
-    }
-
-    /* Subsystem Tabs */
-    .tab-group {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 6px;
-      margin-bottom: 10px;
-    }
-    .tab-btn {
-      background: #0f172a;
-      color: var(--text-muted);
-      border: 1px solid #1e293b;
-      padding: 7px 8px;
-      border-radius: 6px;
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 10px;
-      cursor: pointer;
-      transition: all 0.2s ease;
-      text-align: center;
-    }
-    .tab-btn:hover {
-      background: #1e293b;
-      color: #fff;
-      border-color: var(--accent);
-    }
-    .tab-btn.active {
-      background: rgba(16, 185, 129, 0.15);
-      color: var(--accent);
-      border-color: var(--accent);
-      font-weight: 700;
-    }
-    .tab-btn.active-purple {
-      background: rgba(168, 85, 247, 0.25);
-      color: #e9d5ff;
-      border-color: var(--accent-purple-glow);
-      font-weight: 700;
-      box-shadow: 0 0 10px rgba(168, 85, 247, 0.3);
-    }
-
-    /* Sliders */
-    .slider-row {
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-      margin-bottom: 8px;
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 11px;
-    }
-    .slider-row-header {
-      display: flex;
-      justify-content: space-between;
-      color: var(--text-muted);
-    }
-    input[type="range"] {
-      width: 100%;
-      accent-color: var(--accent);
-      cursor: pointer;
-    }
-
-    /* Sizing Calculator Modal */
-    #calculator-modal {
-      display: none;
-      border-color: var(--accent-blue);
-    }
-    #investor-modal {
-      display: none;
-      border-color: var(--accent);
-      box-shadow: 0 10px 30px rgba(16, 185, 129, 0.15);
-    }
-    .calc-stat-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 8px;
-      margin: 10px 0;
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 11px;
-    }
-    .calc-stat-box {
-      background: rgba(0,0,0,0.4);
-      padding: 6px 8px;
-      border-radius: 6px;
-      border-left: 2px solid var(--accent-blue);
-    }
-    .roi-stat-box {
-      background: rgba(0,0,0,0.5);
-      padding: 8px 10px;
-      border-radius: 6px;
-      border-left: 3px solid var(--accent);
-    }
-    .roi-bar-container {
-      background: rgba(255,255,255,0.05);
-      border-radius: 6px;
-      height: 12px;
-      overflow: hidden;
-      display: flex;
-      margin: 8px 0 4px 0;
-      border: 1px solid var(--panel-border);
-    }
-    .roi-bar-smdc {
-      background: var(--accent);
-      height: 100%;
-      transition: width 0.3s ease;
-    }
-    .roi-bar-cloud {
-      background: #ef4444;
-      height: 100%;
-      transition: width 0.3s ease;
-    }
-
-    /* Interactive Cyber Terminal */
-    #terminal-modal {
-      position: absolute;
-      bottom: 70px;
-      left: 24px;
-      width: 520px;
-      height: 280px;
-      background: rgba(4, 7, 17, 0.95);
-      border: 1px solid var(--accent);
-      border-radius: 8px;
-      display: none;
-      flex-direction: column;
-      box-shadow: 0 20px 50px rgba(0,0,0,0.8), 0 0 15px rgba(16,185,129,0.2);
-      font-family: 'JetBrains Mono', monospace;
-      z-index: 50;
-      overflow: hidden;
-    }
-    .term-header {
-      background: #090f1f;
-      padding: 6px 12px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      border-bottom: 1px solid #1e293b;
-      font-size: 11px;
-      color: var(--accent);
-    }
-    .term-body {
-      flex: 1;
-      padding: 10px;
-      font-size: 11px;
-      color: #10b981;
-      overflow-y: auto;
-      white-space: pre-wrap;
-      line-height: 1.4;
-    }
-    .term-input-row {
-      display: flex;
-      padding: 6px 10px;
-      background: #090f1f;
-      border-top: 1px solid #1e293b;
-      align-items: center;
-      gap: 8px;
-    }
-    .term-input {
-      flex: 1;
-      background: transparent;
-      border: none;
-      color: #fff;
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 11px;
-      outline: none;
-    }
-
-    /* Component Details Modal */
-    #component-details {
-      display: none;
-      border-color: var(--accent);
-    }
-    .spec-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 8px;
-      margin-top: 10px;
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 11px;
-    }
-    .spec-box {
-      background: rgba(0,0,0,0.3);
-      padding: 6px 8px;
-      border-radius: 4px;
-      border-left: 2px solid var(--accent);
-    }
-    .spec-box .label { color: var(--text-muted); font-size: 9px; }
-    .spec-box .val { color: #fff; font-weight: 600; font-size: 11px; }
-
-    /* Footer Navigation */
-    .footer-left {
-      bottom: 20px;
-      left: 24px;
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 11px;
-      color: var(--text-muted);
-    }
-    .footer-left a {
-      color: var(--accent);
-      text-decoration: none;
-    }
-    .cam-presets {
-      bottom: 20px;
-      left: 50%;
-      transform: translateX(-50%);
-      display: flex;
-      gap: 8px;
-      background: var(--panel-bg);
-      backdrop-filter: blur(12px);
-      border: 1px solid var(--panel-border);
-      border-radius: 20px;
-      padding: 6px 12px;
-    }
-    .cam-btn {
-      background: transparent;
-      border: none;
-      color: var(--text-muted);
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 10px;
-      padding: 4px 8px;
-      border-radius: 12px;
-      cursor: pointer;
-      transition: all 0.2s;
-    }
-    .cam-btn:hover, .cam-btn.active {
-      background: #1e293b;
-      color: var(--accent);
-    }
-    .cam-btn.active-space {
-      background: rgba(168, 85, 247, 0.3);
-      color: #e9d5ff;
-      font-weight: 700;
-    }
-  </style>
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/components.css">
 </head>
 <body>
 
+  <!-- Loading Screen -->
+  <div id="loading-screen">
+    <div class="spinner"></div>
+    <div style="font-family: var(--font-mono); font-size: 13px; color: var(--accent-emerald); font-weight: 700; letter-spacing: 1px;">
+      INITIALIZING DIGITAL TWIN (v1.3.0)...
+    </div>
+  </div>
+
+  <!-- Three.js Viewport -->
   <div id="canvas-container"></div>
 
-  <!-- Header -->
-  <div class="overlay header">
-    <div class="header-title-row">
-      <h1>Sovereign Mini Datacenter</h1>
-      <span class="badge">9U 19" EIA-310-D</span>
-      <span class="badge-space">🛰️ Space & Satellite DTN</span>
+  <!-- Top Glassmorphic Navigation Bar -->
+  <header class="overlay top-navbar glass-panel interactive">
+    <div class="brand-section">
+      <div class="brand-icon">
+        <svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+      </div>
+      <div class="brand-title">
+        <h1>Sovereign Mini Datacenter</h1>
+        <span>9U 19" EIA-310-D · SPACE DTN & SOLAR MICRO-GRID</span>
+      </div>
     </div>
-    <p class="subtitle">Autonomous AI Compute, Orbital Satcom & Solar Micro-Grid Digital Twin</p>
+
+    <!-- Live Telemetry Ribbon -->
+    <div class="telemetry-ribbon">
+      <div class="telem-pill">
+        <div class="telem-dot"></div>
+        <span class="telem-label">SOLAR:</span>
+        <span class="telem-val" id="hud-solar" style="color:var(--accent-emerald);">1,330 W</span>
+      </div>
+      <div class="telem-pill">
+        <div class="telem-dot amber"></div>
+        <span class="telem-label">BATTERY:</span>
+        <span class="telem-val" id="hud-battery">88.5% (52.8V)</span>
+      </div>
+      <div class="telem-pill">
+        <div class="telem-dot sky"></div>
+        <span class="telem-label">COOLANT:</span>
+        <span class="telem-val" id="hud-coolant" style="color:var(--accent-sky);">31.2°C</span>
+      </div>
+      <div class="telem-pill">
+        <div class="telem-dot purple"></div>
+        <span class="telem-label">SPACE LINK:</span>
+        <span class="telem-val" style="color:var(--accent-purple);">IN CONTACT</span>
+      </div>
+      <div class="telem-pill">
+        <div class="telem-dot"></div>
+        <span class="telem-label">SENTINEL:</span>
+        <span class="telem-val" style="color:var(--accent-emerald);">L0 NOMINAL</span>
+      </div>
+    </div>
+
+    <!-- Actions & Modals Triggers -->
+    <div class="nav-actions">
+      <button class="icon-btn" id="btn-calc">🧮 Sizing</button>
+      <button class="icon-btn" id="btn-investor" style="color:var(--accent-emerald); border-color:rgba(16,185,129,0.4);">💰 ROI Model</button>
+      <button class="icon-btn" id="btn-terminal">💻 Terminal</button>
+      <button class="icon-btn" id="btn-night">🌙 Day/Night</button>
+      <button class="icon-btn" id="btn-thermal" id="btn-thermal">🌡️ Thermal</button>
+      <button class="icon-btn" id="btn-door">🚪 Door</button>
+      <button class="icon-btn" id="btn-tx-space" style="color:var(--accent-purple); border-color:rgba(192,132,252,0.4);">🚀 TX Bundle</button>
+    </div>
+  </header>
+
+  <!-- Left Subsystem Isolation & Controls Panel -->
+  <aside class="overlay layers-panel glass-panel interactive">
+    <div class="panel-header">
+      <span>Subsystem Focus</span>
+      <span class="badge" style="color:var(--accent-sky);">LAYERS</span>
+    </div>
+
+    <div class="layer-buttons">
+      <button class="layer-btn active" data-layer="all">
+        <span>🌐 Full Infrastructure</span>
+        <span class="badge">ALL</span>
+      </button>
+      <button class="layer-btn" data-layer="space">
+        <span>🛰️ Space & Satellite DTN</span>
+        <span class="badge" style="color:var(--accent-purple);">BPv7</span>
+      </button>
+      <button class="layer-btn" data-layer="compute">
+        <span>🤖 AI Compute & Host</span>
+        <span class="badge" style="color:var(--accent-sky);">DGX</span>
+      </button>
+      <button class="layer-btn" data-layer="power">
+        <span>⚡ Power & LiFePO4</span>
+        <span class="badge" style="color:var(--accent-amber);">48V</span>
+      </button>
+      <button class="layer-btn" data-layer="cooling">
+        <span>💧 Liquid Cooling Loop</span>
+        <span class="badge" style="color:var(--accent-sky);">360mm</span>
+      </button>
+      <button class="layer-btn" data-layer="solar">
+        <span>☀️ Bifacial Solar Array</span>
+        <span class="badge" style="color:var(--accent-emerald);">1.6kW</span>
+      </button>
+    </div>
+
+    <!-- Exploded Assembly Slider -->
+    <div class="control-slider-group" style="margin-top: 6px;">
+      <div class="slider-label-row">
+        <span>Exploded Assembly</span>
+        <span id="val-explode">0%</span>
+      </div>
+      <input type="range" id="slider-explode" min="0" max="100" value="0">
+    </div>
+
+    <!-- Sun Elevation Slider -->
+    <div class="control-slider-group">
+      <div class="slider-label-row">
+        <span>☀️ Sun Elevation</span>
+        <span id="val-sun" style="color:var(--accent-emerald);">65° (1,486W)</span>
+      </div>
+      <input type="range" id="slider-sun" min="0" max="90" value="65">
+    </div>
+  </aside>
+
+  <!-- Right Component Inspector Panel -->
+  <aside class="overlay inspector-panel glass-panel interactive">
+    <div class="panel-header">
+      <span>Hardware Inspector</span>
+      <span class="badge" style="color:var(--accent-emerald);">LIVE</span>
+    </div>
+
+    <div class="inspector-card" id="inspector-card">
+      <div class="comp-header">
+        <span class="comp-title" id="comp-name">NVIDIA Jetson Orin AGX AI Core 1</span>
+        <span class="comp-badge" id="comp-badge">AI COMPUTE</span>
+      </div>
+      <p class="comp-desc" id="comp-desc">
+        Primary edge accelerator delivering 275 TOPS INT8 AI compute with 64GB unified memory, hosting local Ollama LLMs and Qdrant semantic vector embeddings.
+      </p>
+      <div class="spec-table" id="comp-specs">
+        <!-- Dynamically Populated by HUDManager -->
+      </div>
+    </div>
+
+    <!-- Architecture Overview Card -->
+    <div class="inspector-card">
+      <div class="comp-header">
+        <span class="comp-title">Architecture Summary</span>
+        <span class="comp-badge" style="color:var(--accent-emerald); border-color:var(--accent-emerald);">BOM ~$10.6K</span>
+      </div>
+      <div class="spec-table">
+        <div class="spec-row"><span class="spec-key">AI Compute</span><span class="spec-val" style="color:var(--accent-emerald);">2x DGX (550 TOPS)</span></div>
+        <div class="spec-row"><span class="spec-key">Space Link</span><span class="spec-val" style="color:var(--accent-purple);">BPv7 DTN Array</span></div>
+        <div class="spec-row"><span class="spec-key">Storage</span><span class="spec-val">8 TB NVMe RAID-1</span></div>
+        <div class="spec-row"><span class="spec-key">Battery Bank</span><span class="spec-val" style="color:var(--accent-amber);">10.24 kWh LiFePO4</span></div>
+        <div class="spec-row"><span class="spec-key">Solar PV</span><span class="spec-val" style="color:var(--accent-emerald);">1,640W Monocrystalline</span></div>
+        <div class="spec-row"><span class="spec-key">Cooling</span><span class="spec-val" style="color:var(--accent-sky);">Dual 360mm Rads</span></div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Bottom Camera Presets Dock -->
+  <nav class="overlay camera-dock glass-panel interactive">
+    <button class="cam-pill active" data-preset="iso">Overview</button>
+    <button class="cam-pill" data-preset="space" style="color:var(--accent-purple);">🛰️ Space Orbit</button>
+    <button class="cam-pill" data-preset="antenna">📡 Phased Array</button>
+    <button class="cam-pill" data-preset="front">Front Rack</button>
+    <button class="cam-pill" data-preset="power">Power Wall</button>
+    <button class="cam-pill" data-preset="solar">Solar Array</button>
+  </nav>
+
+  <!-- Footer Attribution -->
+  <div class="overlay footer-info interactive">
+    Developed by <a href="https://metatopia.gr" target="_blank">Metatopia Studio</a> (Author: <a href="https://iliachry.gr" target="_blank">Ilias Chrysovergis</a>) · Open Source under MIT License · <a href="https://github.com/iliachry/sovereign-mini-datacenter" target="_blank">GitHub</a>
   </div>
 
-  <!-- Live Telemetry HUD -->
-  <div class="overlay hud-bar interactive">
-    <div class="hud-stat">
-      <div class="hud-dot"></div>
-      <span>SOLAR:</span>
-      <span class="hud-val" id="hud-solar">1,240 W</span>
-    </div>
-    <div class="hud-stat">
-      <span>BATTERY:</span>
-      <span class="hud-val" id="hud-soc">88.4% (52.8V)</span>
-    </div>
-    <div class="hud-stat">
-      <div class="hud-dot-purple"></div>
-      <span>SPACE LINK:</span>
-      <span class="hud-val-purple" id="hud-space">IN CONTACT (48.5° El)</span>
-    </div>
-    <div class="hud-stat">
-      <span>DTN SPOOL:</span>
-      <span class="hud-val-purple" id="hud-spool">3 Bundles (Active TX)</span>
-    </div>
-    <div class="hud-stat">
-      <span>COOLANT:</span>
-      <span class="hud-val" id="hud-coolant">31.2°C</span>
-    </div>
-    <div class="hud-stat">
-      <span>SENTINEL:</span>
-      <span class="hud-val" id="hud-sentinel" style="color:var(--accent);">NORMAL</span>
-    </div>
-    <div class="hud-stat">
-      <span>AI MODEL:</span>
-      <span class="hud-val" id="hud-model" style="color:var(--accent-blue);">nomic-embed-text</span>
+  <!-- ================= MODALS ================= -->
+
+  <!-- 1. Off-Grid Sizing Configurator Modal -->
+  <div class="modal-overlay" id="modal-sizing">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div class="modal-title">
+          <span>🧮 Off-Grid Sizing & Cost Configurator</span>
+        </div>
+        <button class="close-btn modal-close">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="control-slider-group">
+          <div class="slider-label-row"><span>Compute Nodes (DGX):</span><span id="calc-val-nodes">2 Nodes (550 TOPS)</span></div>
+          <input type="range" id="calc-nodes" min="1" max="4" value="2" oninput="CalculatorManager.updateSizingCalculator()">
+        </div>
+        <div class="control-slider-group">
+          <div class="slider-label-row"><span>Daily GPU Load:</span><span id="calc-val-hours">12 hrs/day</span></div>
+          <input type="range" id="calc-hours" min="2" max="24" step="2" value="12" oninput="CalculatorManager.updateSizingCalculator()">
+        </div>
+        <div class="control-slider-group">
+          <div class="slider-label-row"><span>LiFePO4 Battery Bank:</span><span id="calc-val-battery" style="color:var(--accent-amber);">10.24 kWh (2x 48V)</span></div>
+          <input type="range" id="calc-battery" min="1" max="4" value="2" oninput="CalculatorManager.updateSizingCalculator()">
+        </div>
+        <div class="control-slider-group">
+          <div class="slider-label-row"><span>Solar PV Array:</span><span id="calc-val-solar" style="color:var(--accent-emerald);">1,640W (4x 410W)</span></div>
+          <input type="range" id="calc-solar" min="2" max="8" step="2" value="4" oninput="CalculatorManager.updateSizingCalculator()">
+        </div>
+
+        <div class="metric-grid-4">
+          <div class="metric-box"><div class="metric-box-label">DAILY DRAW</div><div class="metric-box-val" id="calc-res-draw">7.2 kWh</div></div>
+          <div class="metric-box"><div class="metric-box-label">DAILY SOLAR YIELD</div><div class="metric-box-val" id="calc-res-yield" style="color:var(--accent-emerald);">8.5 kWh</div></div>
+          <div class="metric-box"><div class="metric-box-label">ZERO-SUN AUTONOMY</div><div class="metric-box-val" id="calc-res-autonomy" style="color:var(--accent-amber);">28.8 hrs</div></div>
+          <div class="metric-box"><div class="metric-box-label">ESTIMATED BOM</div><div class="metric-box-val" id="calc-res-cost" style="color:var(--accent-sky);">$10,600</div></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary modal-close">Close</button>
+        <button class="btn-primary" onclick="CalculatorManager.exportBOMCSV()">📥 Export BOM CSV</button>
+      </div>
     </div>
   </div>
 
-  <!-- Right Controls Panel -->
-  <div class="overlay panel-right interactive">
-    
-    <!-- Subsystem Isolation Card -->
-    <div class="card">
-      <div class="card-title">
-        <span>Subsystem Focus</span>
-        <span style="font-size: 10px; color: var(--text-muted);">Layers</span>
-      </div>
-      <div class="tab-group">
-        <button class="tab-btn active" onclick="setSubsystem('all', event)">🌐 Full Infra</button>
-        <button class="tab-btn" onclick="setSubsystem('space', event)" style="color:#d8b4fe; border-color: rgba(168,85,247,0.4);">🛰️ Space & Satellite</button>
-        <button class="tab-btn" onclick="setSubsystem('compute', event)">🤖 AI & Compute</button>
-        <button class="tab-btn" onclick="setSubsystem('power', event)">⚡ Power & Battery</button>
-        <button class="tab-btn" onclick="setSubsystem('cooling', event)">💧 Liquid Cooling</button>
-        <button class="tab-btn" onclick="setSubsystem('solar', event)">☀️ Solar Array</button>
-      </div>
-
-      <!-- Explode & Sun Elevation Sliders -->
-      <div class="slider-row">
-        <div class="slider-row-header">
-          <span>Exploded Assembly</span>
-          <span id="val-explode">0%</span>
+  <!-- 2. Investor ROI & TCO Model Modal -->
+  <div class="modal-overlay" id="modal-investor">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div class="modal-title">
+          <span>💰 Investor ROI & 3-Year TCO Simulator</span>
         </div>
-        <input type="range" id="slider-explode" min="0" max="100" value="0" oninput="onExplodeChange(this.value)">
+        <button class="close-btn modal-close">✕</button>
       </div>
-
-      <div class="slider-row">
-        <div class="slider-row-header">
-          <span>☀️ Sun Elevation</span>
-          <span id="val-sun-el" style="color:var(--accent); font-weight:bold;">65° (1,486W)</span>
+      <div class="modal-body">
+        <div class="control-slider-group">
+          <div class="slider-label-row"><span>Cloud GPU / AI Spend:</span><span id="roi-val-cloud">$2,500 / mo</span></div>
+          <input type="range" id="roi-cloud-spend" min="500" max="15000" step="250" value="2500" oninput="CalculatorManager.updateInvestorCalculator()">
         </div>
-        <input type="range" id="slider-sun-el" min="0" max="90" value="65" oninput="onSunElevationChange(this.value)">
-      </div>
+        <div class="control-slider-group">
+          <div class="slider-label-row"><span>Grid / Diesel Electricity Rate:</span><span id="roi-val-grid" style="color:var(--accent-amber);">$0.35 / kWh</span></div>
+          <input type="range" id="roi-grid-rate" min="0.15" max="0.85" step="0.05" value="0.35" oninput="CalculatorManager.updateInvestorCalculator()">
+        </div>
+        <div class="control-slider-group">
+          <div class="slider-label-row"><span>Deployed Nodes in Swarm:</span><span id="roi-val-nodes" style="color:var(--accent-sky);">1 Node (Turnkey)</span></div>
+          <input type="range" id="roi-nodes" min="1" max="25" step="1" value="1" oninput="CalculatorManager.updateInvestorCalculator()">
+        </div>
 
-      <div class="tab-group" style="margin-top: 8px;">
-        <button class="tab-btn" id="btn-day-night" onclick="toggleDayNight()">🌙 Night Mode</button>
-        <button class="tab-btn" id="btn-audio" onclick="toggleAudioEngine()">🔊 Audio: ON</button>
-        <button class="tab-btn" id="btn-thermal" onclick="toggleThermalMode()">🌡️ Thermal Heatmap</button>
-        <button class="tab-btn" id="btn-calc" onclick="toggleCalculator()" style="color:var(--accent-blue); border-color:rgba(56,189,248,0.4);">🧮 Sizing Calc</button>
-        <button class="tab-btn" id="btn-investor" onclick="toggleInvestorModal()" style="color:var(--accent); border-color:rgba(16,185,129,0.6); font-weight:bold; background:rgba(16,185,129,0.1);">💰 Investor TCO/ROI</button>
-        <button class="tab-btn" id="btn-terminal" onclick="toggleTerminal()" style="color:var(--accent); border-color:rgba(16,185,129,0.4);">💻 Terminal</button>
-        <button class="tab-btn" id="btn-tx-space" onclick="triggerSpaceTransmission()" style="color:#d8b4fe; border-color:rgba(168,85,247,0.5);">🚀 TX Space Bundle</button>
-        <button class="tab-btn" id="btn-door" onclick="toggleDoor()">🚪 Open Door</button>
+        <div class="metric-grid-4">
+          <div class="metric-box"><div class="metric-box-label">PAYBACK PERIOD</div><div class="metric-box-val" id="roi-res-payback" style="color:var(--accent-emerald);">5.1 Months</div></div>
+          <div class="metric-box"><div class="metric-box-label">3-YEAR NET SAVINGS</div><div class="metric-box-val" id="roi-res-savings" style="color:var(--accent-sky);">$88,336</div></div>
+          <div class="metric-box"><div class="metric-box-label">3-YEAR ROI</div><div class="metric-box-val" id="roi-res-roi" style="color:var(--accent-amber);">278.9%</div></div>
+          <div class="metric-box"><div class="metric-box-label">CO₂ AVOIDED / YEAR</div><div class="metric-box-val" id="roi-res-co2" style="color:var(--accent-purple);">14.2 Tons</div></div>
+        </div>
+
+        <div class="cost-comparison-container">
+          <div style="display:flex; justify-content:space-between; font-family:var(--font-mono); font-size:11px; margin-bottom:4px;">
+            <span style="color:var(--accent-emerald);">🟢 SMDC 3-Yr: <b id="roi-bar-val-smdc">$31.7k</b></span>
+            <span style="color:var(--accent-rose);">🔴 Cloud 3-Yr: <b id="roi-bar-val-cloud">$120.0k</b></span>
+          </div>
+          <div class="cost-bar-track">
+            <div class="cost-bar-smdc" id="roi-bar-smdc" style="width: 26%;">SMDC</div>
+            <div class="cost-bar-cloud" id="roi-bar-cloud" style="width: 74%;">CLOUD</div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary modal-close">Close</button>
+        <button class="btn-primary" onclick="CalculatorManager.exportInvestorTCOCSV()">📊 Export TCO CSV</button>
       </div>
     </div>
-
-    <!-- Sizing & Energy Calculator Card -->
-    <div class="card" id="calculator-modal">
-      <div class="card-title">
-        <span>🧮 Off-Grid Sizing & Cost Configurator</span>
-        <span class="badge" style="color:var(--accent-blue); border-color:var(--accent-blue); background:rgba(56,189,248,0.15);">SIMULATOR</span>
-      </div>
-      
-      <div class="slider-row">
-        <div class="slider-row-header"><span>Compute Nodes (DGX):</span><span id="calc-val-nodes" style="color:#fff; font-weight:bold;">2 Nodes (550 TOPS)</span></div>
-        <input type="range" id="calc-nodes" min="1" max="4" value="2" oninput="updateCalculator()">
-      </div>
-
-      <div class="slider-row">
-        <div class="slider-row-header"><span>Daily GPU Load:</span><span id="calc-val-hours" style="color:#fff; font-weight:bold;">12 hrs/day</span></div>
-        <input type="range" id="calc-hours" min="2" max="24" step="2" value="12" oninput="updateCalculator()">
-      </div>
-
-      <div class="slider-row">
-        <div class="slider-row-header"><span>LiFePO4 Battery Bank:</span><span id="calc-val-battery" style="color:var(--accent-orange); font-weight:bold;">10.24 kWh (2x 48V)</span></div>
-        <input type="range" id="calc-battery" min="1" max="4" value="2" oninput="updateCalculator()">
-      </div>
-
-      <div class="slider-row">
-        <div class="slider-row-header"><span>Solar PV Array:</span><span id="calc-val-solar" style="color:var(--accent); font-weight:bold;">1,640W (4x 410W)</span></div>
-        <input type="range" id="calc-solar" min="2" max="8" step="2" value="4" oninput="updateCalculator()">
-      </div>
-
-      <div class="calc-stat-grid">
-        <div class="calc-stat-box"><div style="color:var(--text-muted); font-size:9px;">DAILY DRAW</div><div id="calc-res-draw" style="color:#fff; font-weight:bold; font-size:12px;">7.2 kWh</div></div>
-        <div class="calc-stat-box"><div style="color:var(--text-muted); font-size:9px;">DAILY SOLAR YIELD</div><div id="calc-res-yield" style="color:var(--accent); font-weight:bold; font-size:12px;">8.5 kWh</div></div>
-        <div class="calc-stat-box"><div style="color:var(--text-muted); font-size:9px;">ZERO-SUN AUTONOMY</div><div id="calc-res-autonomy" style="color:var(--accent-orange); font-weight:bold; font-size:12px;">28.8 hrs</div></div>
-        <div class="calc-stat-box"><div style="color:var(--text-muted); font-size:9px;">ESTIMATED BOM</div><div id="calc-res-cost" style="color:var(--accent-blue); font-weight:bold; font-size:12px;">$10,600</div></div>
-      </div>
-
-      <button class="tab-btn" onclick="exportBOMCSV()" style="width:100%; padding:8px; background:rgba(56,189,248,0.2); color:#fff; border-color:var(--accent-blue); font-weight:bold;">📥 Export BOM to CSV</button>
-    </div>
-
-    <!-- Investor ROI & TCO Simulator Card -->
-    <div class="card" id="investor-modal">
-      <div class="card-title">
-        <span>💰 Investor ROI & 3-Year TCO Simulator</span>
-        <span class="badge" style="color:var(--accent); border-color:var(--accent); background:rgba(16,185,129,0.15);">INVESTOR MODEL</span>
-      </div>
-      
-      <div class="slider-row">
-        <div class="slider-row-header"><span>Cloud GPU / AI Spend:</span><span id="roi-val-cloud" style="color:#fff; font-weight:bold;">$2,500 / mo</span></div>
-        <input type="range" id="roi-cloud-spend" min="500" max="15000" step="250" value="2500" oninput="updateInvestorCalculator()">
-      </div>
-
-      <div class="slider-row">
-        <div class="slider-row-header"><span>Grid / Diesel Electricity Rate:</span><span id="roi-val-grid" style="color:var(--accent-orange); font-weight:bold;">$0.35 / kWh</span></div>
-        <input type="range" id="roi-grid-rate" min="0.15" max="0.85" step="0.05" value="0.35" oninput="updateInvestorCalculator()">
-      </div>
-
-      <div class="slider-row">
-        <div class="slider-row-header"><span>Deployed Nodes in Swarm:</span><span id="roi-val-nodes" style="color:var(--accent-blue); font-weight:bold;">1 Node (Turnkey)</span></div>
-        <input type="range" id="roi-nodes" min="1" max="25" step="1" value="1" oninput="updateInvestorCalculator()">
-      </div>
-
-      <!-- Financial Metrics Summary -->
-      <div class="calc-stat-grid" style="margin: 12px 0 6px 0;">
-        <div class="roi-stat-box">
-          <div style="color:var(--text-muted); font-size:9px;">PAYBACK PERIOD</div>
-          <div id="roi-res-payback" style="color:var(--accent); font-weight:bold; font-size:15px;">5.1 Months</div>
-        </div>
-        <div class="roi-stat-box">
-          <div style="color:var(--text-muted); font-size:9px;">3-YEAR NET SAVINGS</div>
-          <div id="roi-res-savings" style="color:#38bdf8; font-weight:bold; font-size:15px;">$88,336</div>
-        </div>
-        <div class="roi-stat-box">
-          <div style="color:var(--text-muted); font-size:9px;">3-YEAR ROI</div>
-          <div id="roi-res-roi" style="color:var(--accent-orange); font-weight:bold; font-size:15px;">278.9%</div>
-        </div>
-        <div class="roi-stat-box">
-          <div style="color:var(--text-muted); font-size:9px;">CO₂ AVOIDED / YEAR</div>
-          <div id="roi-res-co2" style="color:#d8b4fe; font-weight:bold; font-size:15px;">14.2 Tons</div>
-        </div>
-      </div>
-
-      <!-- Visual Cost Comparison -->
-      <div style="margin: 8px 0; font-family:'JetBrains Mono', monospace; font-size:10px;">
-        <div style="display:flex; justify-content:space-between; margin-bottom:2px;">
-          <span style="color:var(--accent);">🟢 SMDC 3-Yr: <b id="roi-bar-val-smdc">$31.7k</b></span>
-          <span style="color:#ef4444;">🔴 Cloud 3-Yr: <b id="roi-bar-val-cloud">$120.0k</b></span>
-        </div>
-        <div class="roi-bar-container">
-          <div class="roi-bar-smdc" id="roi-bar-smdc" style="width: 26%;"></div>
-          <div class="roi-bar-cloud" id="roi-bar-cloud" style="width: 74%;"></div>
-        </div>
-      </div>
-
-      <div style="display:flex; gap:6px; margin-top:8px;">
-        <button class="tab-btn" onclick="exportInvestorSummaryJSON()" style="flex:1; padding:7px; background:rgba(16,185,129,0.2); color:#fff; border-color:var(--accent); font-weight:bold; font-size:10px;">📥 Export JSON Summary</button>
-        <button class="tab-btn" onclick="exportInvestorTCOCSV()" style="flex:1; padding:7px; background:rgba(56,189,248,0.2); color:#fff; border-color:var(--accent-blue); font-weight:bold; font-size:10px;">📊 Export TCO CSV</button>
-      </div>
-    </div>
-
-    <!-- Active Component Inspector Card -->
-    <div class="card" id="component-details">
-      <div class="card-title">
-        <span id="comp-name">Motorized Phased Array Space Antenna</span>
-        <span class="badge" id="comp-badge">SPACE COMM</span>
-      </div>
-      <p id="comp-desc" style="font-size: 11px; color: var(--text-muted); line-height: 1.4;"></p>
-      
-      <div class="spec-grid" id="comp-specs">
-        <!-- Injected dynamically -->
-      </div>
-    </div>
-
-    <!-- System Specs Overview -->
-    <div class="card">
-      <div class="card-title">
-        <span>Hardware Architecture</span>
-        <span style="font-size: 10px; color: var(--accent);">BOM ~$10.6K</span>
-      </div>
-      <div style="font-family: 'JetBrains Mono', monospace; font-size: 11px; display: flex; flex-direction: column; gap: 5px;">
-        <div style="display:flex; justify-content:space-between;"><span style="color:var(--text-muted);">AI Compute</span><span style="color:var(--accent);">2x DGX Spark (550 TOPS)</span></div>
-        <div style="display:flex; justify-content:space-between;"><span style="color:var(--text-muted);">Space Link</span><span style="color:var(--accent-purple);">BPv7 DTN Phased Array</span></div>
-        <div style="display:flex; justify-content:space-between;"><span style="color:var(--text-muted);">Storage</span><span>8 TB NVMe RAID-1</span></div>
-        <div style="display:flex; justify-content:space-between;"><span style="color:var(--text-muted);">Network</span><span>MikroTik 10GbE SFP+</span></div>
-        <div style="display:flex; justify-content:space-between;"><span style="color:var(--text-muted);">Battery Bank</span><span style="color:var(--accent-orange);">10.24 kWh LiFePO4 (48V)</span></div>
-        <div style="display:flex; justify-content:space-between;"><span style="color:var(--text-muted);">Solar PV</span><span style="color:var(--accent);">1,640W Monocrystalline</span></div>
-        <div style="display:flex; justify-content:space-between;"><span style="color:var(--text-muted);">Cooling Loop</span><span style="color:var(--accent-blue);">Dual 360mm + D5 Pump</span></div>
-      </div>
-    </div>
-
   </div>
 
-  <!-- Interactive Cyber Terminal -->
-  <div id="terminal-modal" class="interactive">
-    <div class="term-header">
-      <span>💻 Sovereign CLI Terminal (smdc v1.3.0)</span>
-      <span style="cursor:pointer; color:#94a3b8;" onclick="toggleTerminal()">✕</span>
-    </div>
-    <div class="term-body" id="term-output">Sovereign Mini Datacenter Interactive Terminal.
-Type 'help', 'smdc status', 'smdc space passes', 'smdc space send', 'smdc audit', or 'smdc mesh'.
+  <!-- 3. Interactive Cyber Terminal Modal -->
+  <div class="modal-overlay" id="modal-terminal">
+    <div class="terminal-card">
+      <div class="modal-header">
+        <div class="modal-title">
+          <span>💻 Sovereign CLI Terminal (smdc v1.3.0)</span>
+        </div>
+        <button class="close-btn modal-close">✕</button>
+      </div>
+      <div class="term-screen" id="term-output">Sovereign Mini Datacenter Interactive Terminal.
+Type '<span class="term-line-cyan">help</span>', '<span class="term-line-cyan">smdc status</span>', '<span class="term-line-cyan">smdc economy wallet</span>', '<span class="term-line-cyan">smdc economy market</span>', '<span class="term-line-cyan">smdc space passes</span>', or '<span class="term-line-cyan">smdc audit</span>'.
 </div>
-    <div class="term-input-row">
-      <span style="color:var(--accent); font-weight:bold;">smdc$</span>
-      <input type="text" id="term-cmd-input" class="term-input" placeholder="Type a command and press Enter..." onkeydown="handleTerminalInput(event)">
+      <div class="term-input-row">
+        <span class="term-prompt">smdc$</span>
+        <input type="text" id="term-cmd-input" class="term-input-field" placeholder="Type command and press Enter..." onkeydown="CalculatorManager.handleTerminalInput(event)">
+      </div>
     </div>
   </div>
 
-  <!-- Camera Presets -->
-  <div class="overlay cam-presets interactive">
-    <button class="cam-btn active" onclick="setCamera('iso', event)">Overview</button>
-    <button class="cam-btn" onclick="setCamera('space', event)" style="color:#d8b4fe;">🛰️ Space Orbit</button>
-    <button class="cam-btn" onclick="setCamera('antenna', event)">📡 Phased Array</button>
-    <button class="cam-btn" onclick="setCamera('front', event)">Front Rack</button>
-    <button class="cam-btn" onclick="setCamera('power', event)">Power Wall</button>
-    <button class="cam-btn" onclick="setCamera('solar', event)">Solar Array</button>
-  </div>
-
-  <!-- Footer -->
-  <div class="overlay footer-left interactive">
-    Developed by <a href="https://metatopia.gr" target="_blank">Metatopia Studio</a> · Open Source under MIT License · <a href="https://github.com/iliachry/sovereign-mini-datacenter" target="_blank">GitHub</a>
-  </div>
-
-  <!-- Three.js + OrbitControls + TWEEN from CDN -->
+  <!-- CDN Dependencies -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/tween.js/18.6.4/tween.umd.js"></script>
 
-  <script>
-    let scene, camera, renderer, controls;
-    let mainGroup, rackGroup, computeGroup, powerGroup, coolingGroup, solarGroup, spaceGroup;
-    let phasedArrayMount, phasedArrayAperture, satelliteMesh, spaceBeamMesh, orbitRingMesh;
-    let dataPulses = [];
-    let doorMesh, doorOpen = false;
-    let isThermal = false, isWireframe = false;
-    let activeSubsystem = 'all';
-    let explodeVal = 0;
-    let interactiveObjects = [];
-    let raycaster, mouse;
-    let fanBlades = [];
-    let materialsMap = new Map();
-    let satAngle = 0.8;
-    let pulseSpeed = 0.006;
-    let sunLight, ambientLight, cyanFill, purpleGlow, starsParticles;
-    let isNightMode = false;
-    let audioMuted = false;
-    let audioCtx = null;
-
-    const COMPONENT_DATA = {
-      'space_antenna': {
-        name: 'Motorized Phased Array Space Terminal',
-        badge: 'SPACE / DTN',
-        desc: 'Roof/mast mounted dual-axis electronically steerable beamforming phased array antenna. Executes RFC 9171 Delay-Tolerant Networking (BPv7) bundle sync with passing LEO/MEO satellite constellations in real time.',
-        specs: { 'Protocol': 'RFC 9171 BPv7', 'Frequency': 'S-Band / Ku-Band', 'Uplink / Downlink': '5 Mbps / 25 Mbps', 'Tracking': 'SGP4 Auto-Track', 'EIRP': '42.5 dBW' }
-      },
-      'satellite_relay': {
-        name: 'Sovereign LEO Satellite Relay (550km)',
-        badge: 'ORBITAL RELAY',
-        desc: 'Low Earth Orbit autonomous data relay satellite equipped with S-Band inter-node crosslinks, high-efficiency GaAs solar arrays, and on-board DTN store-and-forward routing payload.',
-        specs: { 'Altitude': '550 km LEO', 'Inclination': '53.2°', 'Orbital Period': '95.6 min', 'Max Pass Time': '8m 45s', 'Link Margin': '6.8 dB' }
-      },
-      'dgx1': {
-        name: 'NVIDIA DGX Spark Node 1',
-        badge: 'COMPUTE / AI',
-        desc: 'Primary AI acceleration module with 275 TOPS INT8 compute, 64GB unified LPDDR5X memory, and EK full-cover liquid block.',
-        specs: { 'Compute': '275 TOPS', 'Memory': '64GB Unified', 'Power': '180W TDP', 'Cooling': 'EK Vector Block', 'Thermal': '44.2°C' }
-      },
-      'dgx2': {
-        name: 'NVIDIA DGX Spark Node 2',
-        badge: 'COMPUTE / AI',
-        desc: 'Secondary compute node coupled via high-speed NVLink interconnect for distributed 70B parameter LLM inference.',
-        specs: { 'Compute': '275 TOPS', 'Memory': '64GB Unified', 'Power': '180W TDP', 'Cooling': 'EK Vector Block', 'Thermal': '45.1°C' }
-      },
-      'battery1': {
-        name: 'LiFePO4 Battery Pack 1',
-        badge: 'ENERGY / 48V',
-        desc: '48V 100Ah (5.12 kWh) rackmount lithium iron phosphate battery module with integrated smart BMS and cell balancing.',
-        specs: { 'Capacity': '5.12 kWh', 'Voltage': '51.2V Nom.', 'Max Discharge': '100A', 'Cycles': '6,000+ @ 80%', 'State': '92% SoC' }
-      },
-      'battery2': {
-        name: 'LiFePO4 Battery Pack 2',
-        badge: 'ENERGY / 48V',
-        desc: 'Secondary 5.12 kWh battery pack connected in parallel to the 48V DC busbar, giving 10.24 kWh total reserve.',
-        specs: { 'Capacity': '5.12 kWh', 'Voltage': '51.2V Nom.', 'Max Discharge': '100A', 'Cycles': '6,000+ @ 80%', 'State': '92% SoC' }
-      },
-      'switch': {
-        name: 'MikroTik CRS309-1G-8S+IN',
-        badge: 'NETWORKING',
-        desc: 'High-speed 10-Gigabit core switch with 8x SFP+ cages, hardware L2/L3 routing offload, and redundant power inputs.',
-        specs: { 'Ports': '8x 10GbE SFP+', 'Throughput': '162 Gbps', 'OS': 'RouterOS / SwOS', 'Power': '18W', 'Latency': '< 1.2 µs' }
-      },
-      'server': {
-        name: 'Mini-ITX System Host',
-        badge: 'CORE HOST',
-        desc: 'Xeon/EPYC system coordinator with 64GB ECC DDR5, dual Samsung 990 PRO 4TB NVMe SSDs in RAID-1, and host controller.',
-        specs: { 'CPU': 'AMD EPYC 4004', 'RAM': '64GB ECC DDR5', 'NVMe': '8TB Total PCIe 4', 'OS': 'Ubuntu 24.04', 'Temp': '38.5°C' }
-      },
-      'pdu': {
-        name: 'APC Metered Rack PDU',
-        badge: 'POWER DISTRIB',
-        desc: '1U intelligent power distribution unit with per-port telemetry, remote power cycling, and digital current monitoring.',
-        specs: { 'Outlets': '8x IEC C13', 'Voltage': '230V AC', 'Max Current': '16A', 'Telemetry': 'Prometheus/SNMP', 'Draw': '340W' }
-      },
-      'inverter': {
-        name: 'Victron MultiPlus-II 48/3000',
-        badge: 'HYBRID INVERTER',
-        desc: '3,000VA pure sine wave hybrid inverter/charger with seamless 20ms UPS grid transfer and DC-AC power management.',
-        specs: { 'Output': '3,000VA (2.4kW)', 'DC Input': '48V (38-66V)', 'Efficiency': '95%', 'Transfer': '< 20ms', 'Mode': 'Off-Grid Inverting' }
-      },
-      'mppt': {
-        name: 'Victron SmartSolar MPPT 150/70',
-        badge: 'SOLAR CHARGE',
-        desc: 'Ultra-fast Maximum Power Point Tracker maximizing energy harvest from the 1.64kW solar PV array with 98% efficiency.',
-        specs: { 'Max PV Voc': '150V', 'Max Current': '70A', 'Peak Efficiency': '98%', 'Tracking': 'Ultra-Fast MPPT', 'Harvest': '1,240W' }
-      },
-      'solar': {
-        name: 'Monocrystalline Solar PV Array',
-        badge: 'SOLAR ENERGY',
-        desc: '4x 410W high-efficiency PERC solar panels configured in 2S2P (~80V DC, 20A) generating up to 1,640W peak.',
-        specs: { 'Panels': '4x 410W PERC', 'Peak Power': '1,640 Watts', 'Config': '2S2P (~80V DC)', 'Area': '7.8 m²', 'Daily Yield': '8.2 kWh' }
-      },
-      'cooling': {
-        name: 'Dual 360mm Liquid Loop & D5 Pump',
-        badge: 'THERMAL LOOP',
-        desc: 'Closed-loop copper radiators with 6x Noctua industrialPPC 3000 RPM fans and Alphacool D5 pump handling 600W+ heat dissipation.',
-        specs: { 'Radiators': '2x 360mm Copper', 'Fans': '6x 3,000 RPM', 'Flow Rate': '350 L/h', 'Coolant': 'EK CryoFuel', 'Coolant Temp': '31.2°C' }
-      }
-    };
-
-    function init() {
-      const container = document.getElementById('canvas-container');
-
-      scene = new THREE.Scene();
-      scene.background = new THREE.Color(0x040711);
-      scene.fog = new THREE.FogExp2(0x040711, 0.00025);
-
-      camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 1, 12000);
-      camera.position.set(1350, 750, 1600);
-
-      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-      renderer.setPixelRatio(window.devicePixelRatio);
-      renderer.setSize(window.innerWidth, window.innerHeight);
-      renderer.shadowMap.enabled = true;
-      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-      renderer.toneMapping = THREE.ACESFilmicToneMapping;
-      renderer.toneMappingExposure = 1.2;
-      container.appendChild(renderer.domElement);
-
-      controls = new THREE.OrbitControls(camera, renderer.domElement);
-      controls.enableDamping = true;
-      controls.dampingFactor = 0.05;
-      controls.autoRotate = true;
-      controls.autoRotateSpeed = 0.6;
-      controls.maxPolarAngle = Math.PI / 2 - 0.01;
-      controls.minDistance = 250;
-      controls.maxDistance = 5000;
-      controls.target.set(0, 150, 0);
-
-      raycaster = new THREE.Raycaster();
-      mouse = new THREE.Vector2();
-
-      setupLighting();
-      buildFloorAndEnvironment();
-      buildFullInfrastructure();
-
-      window.addEventListener('resize', onWindowResize, false);
-      window.addEventListener('pointerdown', onPointerDown, false);
-
-      setInterval(updateTelemetryHUD, 2000);
-      animate();
-    }
-
-    function setupLighting() {
-      ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
-      scene.add(ambientLight);
-
-      sunLight = new THREE.DirectionalLight(0xffffff, 1.3);
-      sunLight.position.set(900, 1400, 800);
-      sunLight.castShadow = true;
-      sunLight.shadow.mapSize.width = 2048;
-      sunLight.shadow.mapSize.height = 2048;
-      sunLight.shadow.camera.near = 100;
-      sunLight.shadow.camera.far = 4500;
-      const d = 1400;
-      sunLight.shadow.camera.left = -d;
-      sunLight.shadow.camera.right = d;
-      sunLight.shadow.camera.top = d;
-      sunLight.shadow.camera.bottom = -d;
-      sunLight.shadow.bias = -0.0005;
-      scene.add(sunLight);
-
-      cyanFill = new THREE.PointLight(0x38bdf8, 0.9, 2000);
-      cyanFill.position.set(-700, 500, -600);
-      scene.add(cyanFill);
-
-      purpleGlow = new THREE.PointLight(0xa855f7, 1.4, 2500);
-      purpleGlow.position.set(200, 800, 300);
-      scene.add(purpleGlow);
-    }
-
-    function buildFloorAndEnvironment() {
-      const grid = new THREE.GridHelper(4000, 80, 0x1e293b, 0x090f1f);
-      grid.position.y = -220;
-      scene.add(grid);
-
-      const padGeom = new THREE.BoxGeometry(1600, 8, 1200);
-      const padMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.8, metalness: 0.2 });
-      const pad = new THREE.Mesh(padGeom, padMat);
-      pad.position.set(0, -224, 0);
-      pad.receiveShadow = true;
-      scene.add(pad);
-
-      // Starfield Particle System for Night / Orbit view
-      const starGeom = new THREE.BufferGeometry();
-      const starCount = 1200;
-      const starPos = new Float32Array(starCount * 3);
-      for (let i = 0; i < starCount * 3; i += 3) {
-        starPos[i] = (Math.random() - 0.5) * 8000;
-        starPos[i + 1] = Math.random() * 4000 + 100;
-        starPos[i + 2] = (Math.random() - 0.5) * 8000;
-      }
-      starGeom.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
-      const starMat = new THREE.PointsMaterial({ color: 0xffffff, size: 4, transparent: true, opacity: 0.35 });
-      starsParticles = new THREE.Points(starGeom, starMat);
-      scene.add(starsParticles);
-    }
-
-    function registerInteractive(mesh, compKey) {
-      mesh.userData.componentKey = compKey;
-      interactiveObjects.push(mesh);
-    }
-
-    function buildFullInfrastructure() {
-      mainGroup = new THREE.Group();
-      scene.add(mainGroup);
-
-      rackGroup = new THREE.Group();
-      computeGroup = new THREE.Group();
-      powerGroup = new THREE.Group();
-      coolingGroup = new THREE.Group();
-      solarGroup = new THREE.Group();
-      spaceGroup = new THREE.Group();
-
-      mainGroup.add(rackGroup);
-      mainGroup.add(computeGroup);
-      mainGroup.add(powerGroup);
-      mainGroup.add(coolingGroup);
-      mainGroup.add(solarGroup);
-      mainGroup.add(spaceGroup);
-
-      buildRackEnclosure();
-      buildRackMountComponents();
-      buildCoolingLoop();
-      buildPowerWall();
-      buildSolarArray();
-      buildSpaceCommunicationsSubsystem();
-    }
-
-    function buildRackEnclosure() {
-      const W = 540, D = 550, H = 400.05, t = 2.5;
-      const alumMat = new THREE.MeshStandardMaterial({ color: 0x64748b, metalness: 0.85, roughness: 0.3 });
-      const steelRailMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, metalness: 0.9, roughness: 0.2 });
-
-      const colGeom = new THREE.BoxGeometry(24, H, 24);
-      const colPositions = [
-        [-W/2 + 12, 0, -D/2 + 12],
-        [ W/2 - 12, 0, -D/2 + 12],
-        [-W/2 + 12, 0,  D/2 - 12],
-        [ W/2 - 12, 0,  D/2 - 12]
-      ];
-      colPositions.forEach(p => {
-        const col = new THREE.Mesh(colGeom, alumMat);
-        col.position.set(...p);
-        col.castShadow = true;
-        rackGroup.add(col);
-      });
-
-      const plateGeom = new THREE.BoxGeometry(W, t, D);
-      const topPlate = new THREE.Mesh(plateGeom, alumMat);
-      topPlate.position.set(0, H/2, 0);
-      rackGroup.add(topPlate);
-
-      const botPlate = new THREE.Mesh(plateGeom, alumMat);
-      botPlate.position.set(0, -H/2, 0);
-      botPlate.receiveShadow = true;
-      rackGroup.add(botPlate);
-
-      const railGeom = new THREE.BoxGeometry(16, H - 10, 16);
-      const railPositions = [
-        [-241.3 + 8, 0, -D/2 + 35],
-        [ 241.3 - 8, 0, -D/2 + 35],
-        [-241.3 + 8, 0,  D/2 - 45],
-        [ 241.3 - 8, 0,  D/2 - 45]
-      ];
-      railPositions.forEach(p => {
-        const rail = new THREE.Mesh(railGeom, steelRailMat);
-        rail.position.set(...p);
-        rail.castShadow = true;
-        rackGroup.add(rail);
-      });
-
-      const sideGeom = new THREE.BoxGeometry(t, H - 20, D - 40);
-      const leftSide = new THREE.Mesh(sideGeom, alumMat);
-      leftSide.position.set(-W/2, 0, 0);
-      rackGroup.add(leftSide);
-
-      const rightSide = new THREE.Mesh(sideGeom, alumMat);
-      rightSide.position.set(W/2, 0, 0);
-      rackGroup.add(rightSide);
-
-      const doorGeom = new THREE.BoxGeometry(W - 10, H - 10, t);
-      const glassMat = new THREE.MeshPhysicalMaterial({
-        color: 0x38bdf8,
-        metalness: 0.1,
-        roughness: 0.1,
-        transparent: true,
-        opacity: 0.45,
-        transmission: 0.65
-      });
-      doorMesh = new THREE.Mesh(doorGeom, glassMat);
-      doorMesh.position.set(0, 0, D/2 + 2);
-
-      const handle = new THREE.Mesh(new THREE.BoxGeometry(12, 60, 16), new THREE.MeshStandardMaterial({ color: 0xe2e8f0, metalness: 0.95 }));
-      handle.position.set(W/2 - 35, 0, 8);
-      doorMesh.add(handle);
-
-      rackGroup.add(doorMesh);
-    }
-
-    function buildRackMountComponents() {
-      const U = 44.45;
-      const startY = -400.05 / 2 + U / 2;
-
-      const bat2 = createBatteryPackMesh('battery2');
-      bat2.position.set(0, startY + U * 0.5, 0);
-      powerGroup.add(bat2);
-
-      const bat1 = createBatteryPackMesh('battery1');
-      bat1.position.set(0, startY + U * 2.5, 0);
-      powerGroup.add(bat1);
-
-      const dgx2 = createDGXNodeMesh('dgx2');
-      dgx2.position.set(0, startY + U * 4, 0);
-      computeGroup.add(dgx2);
-
-      const dgx1 = createDGXNodeMesh('dgx1');
-      dgx1.position.set(0, startY + U * 5, 0);
-      computeGroup.add(dgx1);
-
-      const srv = createHostServerMesh('server');
-      srv.position.set(0, startY + U * 6, 0);
-      computeGroup.add(srv);
-
-      const sw = createSwitchMesh('switch');
-      sw.position.set(0, startY + U * 7, 0);
-      computeGroup.add(sw);
-
-      const pdu = createPDUMesh('pdu');
-      pdu.position.set(0, startY + U * 8, 0);
-      powerGroup.add(pdu);
-    }
-
-    function createBatteryPackMesh(key) {
-      const group = new THREE.Group();
-      const w = 440, h = 44.45 * 2 - 4, d = 460;
-      const bodyMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, metalness: 0.8, roughness: 0.3 });
-      const bezelMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, metalness: 0.9, roughness: 0.2 });
-
-      const body = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), bodyMat);
-      body.castShadow = true;
-      group.add(body);
-
-      const face = new THREE.Mesh(new THREE.BoxGeometry(482.6, h, 6), bezelMat);
-      face.position.set(0, 0, d/2 + 3);
-      group.add(face);
-
-      const oled = new THREE.Mesh(new THREE.BoxGeometry(80, 24, 2), new THREE.MeshBasicMaterial({ color: 0x10b981 }));
-      oled.position.set(-60, 0, d/2 + 7);
-      group.add(oled);
-
-      const breaker = new THREE.Mesh(new THREE.BoxGeometry(20, 30, 8), new THREE.MeshStandardMaterial({ color: 0xf59e0b }));
-      breaker.position.set(120, 0, d/2 + 8);
-      group.add(breaker);
-
-      [-190, 190].forEach(x => {
-        const handle = new THREE.Mesh(new THREE.CylinderGeometry(4, 4, 40), new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.9 }));
-        handle.position.set(x, 0, d/2 + 15);
-        group.add(handle);
-      });
-
-      registerInteractive(body, key);
-      return group;
-    }
-
-    function createDGXNodeMesh(key) {
-      const group = new THREE.Group();
-      const w = 440, h = 40, d = 460;
-      const chassisMat = new THREE.MeshStandardMaterial({ color: 0x090d16, metalness: 0.9, roughness: 0.2 });
-
-      const body = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), chassisMat);
-      body.castShadow = true;
-      group.add(body);
-
-      const face = new THREE.Mesh(new THREE.BoxGeometry(482.6, h, 4), chassisMat);
-      face.position.set(0, 0, d/2 + 2);
-      group.add(face);
-
-      const windowMesh = new THREE.Mesh(new THREE.BoxGeometry(140, 20, 2), new THREE.MeshBasicMaterial({ color: 0x10b981 }));
-      windowMesh.position.set(0, 0, d/2 + 4);
-      group.add(windowMesh);
-
-      for (let i = 0; i < 4; i++) {
-        const led = new THREE.Mesh(new THREE.CylinderGeometry(2, 2, 2), new THREE.MeshBasicMaterial({ color: 0x10b981 }));
-        led.rotation.x = Math.PI / 2;
-        led.position.set(160 + i * 10, 0, d/2 + 4);
-        group.add(led);
-      }
-
-      registerInteractive(body, key);
-      return group;
-    }
-
-    function createHostServerMesh(key) {
-      const group = new THREE.Group();
-      const w = 440, h = 40, d = 460;
-
-      const body = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), new THREE.MeshStandardMaterial({ color: 0x1e293b, metalness: 0.8 }));
-      body.castShadow = true;
-      group.add(body);
-
-      const face = new THREE.Mesh(new THREE.BoxGeometry(482.6, h, 4), new THREE.MeshStandardMaterial({ color: 0x0f172a }));
-      face.position.set(0, 0, d/2 + 2);
-      group.add(face);
-
-      for (let i = 0; i < 4; i++) {
-        const drive = new THREE.Mesh(new THREE.BoxGeometry(40, 26, 6), new THREE.MeshStandardMaterial({ color: 0x334155, metalness: 0.9 }));
-        drive.position.set(-140 + i * 50, 0, d/2 + 4);
-        group.add(drive);
-
-        const driveLed = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.5, 2), new THREE.MeshBasicMaterial({ color: 0x38bdf8 }));
-        driveLed.rotation.x = Math.PI / 2;
-        driveLed.position.set(-140 + i * 50 + 12, 8, d/2 + 8);
-        group.add(driveLed);
-      }
-
-      registerInteractive(body, key);
-      return group;
-    }
-
-    function createSwitchMesh(key) {
-      const group = new THREE.Group();
-      const w = 440, h = 40, d = 260;
-
-      const body = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), new THREE.MeshStandardMaterial({ color: 0x1e293b, metalness: 0.85 }));
-      body.castShadow = true;
-      group.add(body);
-
-      const face = new THREE.Mesh(new THREE.BoxGeometry(482.6, h, 4), new THREE.MeshStandardMaterial({ color: 0x0f172a, metalness: 0.9 }));
-      face.position.set(0, 0, d/2 + 2);
-      group.add(face);
-
-      for (let i = 0; i < 8; i++) {
-        const sfp = new THREE.Mesh(new THREE.BoxGeometry(18, 14, 10), new THREE.MeshStandardMaterial({ color: 0xe2e8f0, metalness: 0.95 }));
-        sfp.position.set(-120 + i * 26, 0, d/2 + 4);
-        group.add(sfp);
-
-        const led = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.5, 2), new THREE.MeshBasicMaterial({ color: (i % 2 === 0 ? 0x10b981 : 0xf59e0b) }));
-        led.rotation.x = Math.PI / 2;
-        led.position.set(-120 + i * 26, 10, d/2 + 6);
-        group.add(led);
-      }
-
-      registerInteractive(body, key);
-      return group;
-    }
-
-    function createPDUMesh(key) {
-      const group = new THREE.Group();
-      const w = 440, h = 40, d = 160;
-
-      const body = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), new THREE.MeshStandardMaterial({ color: 0x090d16, metalness: 0.9 }));
-      group.add(body);
-
-      const face = new THREE.Mesh(new THREE.BoxGeometry(482.6, h, 4), new THREE.MeshStandardMaterial({ color: 0x18181b }));
-      face.position.set(0, 0, d/2 + 2);
-      group.add(face);
-
-      const disp = new THREE.Mesh(new THREE.BoxGeometry(50, 16, 2), new THREE.MeshBasicMaterial({ color: 0xef4444 }));
-      disp.position.set(-130, 0, d/2 + 4);
-      group.add(disp);
-
-      for (let i = 0; i < 8; i++) {
-        const socket = new THREE.Mesh(new THREE.BoxGeometry(16, 18, 4), new THREE.MeshStandardMaterial({ color: 0x000 }));
-        socket.position.set(-30 + i * 22, 0, d/2 + 4);
-        group.add(socket);
-      }
-
-      registerInteractive(body, key);
-      return group;
-    }
-
-    function buildCoolingLoop() {
-      const radMat = new THREE.MeshStandardMaterial({ color: 0x18181b, metalness: 0.9, roughness: 0.4 });
-      const fanBladeMat = new THREE.MeshStandardMaterial({ color: 0x475569, roughness: 0.6 });
-
-      for (let r = 0; r < 2; r++) {
-        const radY = -80 + r * 160;
-        const radMesh = new THREE.Mesh(new THREE.BoxGeometry(130, 130, 30), radMat);
-        radMesh.position.set(0, radY, -275);
-        radMesh.castShadow = true;
-        coolingGroup.add(radMesh);
-
-        const fanGeom = new THREE.CylinderGeometry(55, 55, 6, 8);
-        const fan = new THREE.Mesh(fanGeom, fanBladeMat);
-        fan.rotation.x = Math.PI / 2;
-        fan.position.set(0, radY, -288);
-        fanBlades.push(fan);
-        coolingGroup.add(fan);
-
-        registerInteractive(radMesh, 'cooling');
-      }
-
-      const resGroup = new THREE.Group();
-      resGroup.position.set(160, 20, 50);
-
-      const glassCyl = new THREE.Mesh(
-        new THREE.CylinderGeometry(25, 25, 120, 24),
-        new THREE.MeshPhysicalMaterial({ color: 0x10b981, transparent: true, opacity: 0.65, roughness: 0.1, transmission: 0.8 })
-      );
-      resGroup.add(glassCyl);
-
-      const d5PumpBase = new THREE.Mesh(
-        new THREE.CylinderGeometry(32, 32, 40, 24),
-        new THREE.MeshStandardMaterial({ color: 0x090d16, metalness: 0.9 })
-      );
-      d5PumpBase.position.y = -70;
-      resGroup.add(d5PumpBase);
-
-      coolingGroup.add(resGroup);
-      registerInteractive(glassCyl, 'cooling');
-
-      const tubeMat = new THREE.MeshStandardMaterial({ color: 0x10b981, roughness: 0.3, metalness: 0.2 });
-      const curve1 = new THREE.CatmullRomCurve3([
-        new THREE.Vector3(160, -40, 50),
-        new THREE.Vector3(160, 40, -100),
-        new THREE.Vector3(0, 50, -260)
-      ]);
-      const tube1 = new THREE.Mesh(new THREE.TubeGeometry(curve1, 20, 6, 8, false), tubeMat);
-      coolingGroup.add(tube1);
-    }
-
-    function buildPowerWall() {
-      const wallGroup = new THREE.Group();
-      wallGroup.position.set(450, 0, 0);
-
-      const plate = new THREE.Mesh(
-        new THREE.BoxGeometry(10, 480, 400),
-        new THREE.MeshStandardMaterial({ color: 0x334155, metalness: 0.7, roughness: 0.4 })
-      );
-      plate.position.set(0, 0, 0);
-      plate.receiveShadow = true;
-      wallGroup.add(plate);
-
-      const victronBlueMat = new THREE.MeshStandardMaterial({ color: 0x0284c7, metalness: 0.4, roughness: 0.3 });
-      const invBody = new THREE.Mesh(new THREE.BoxGeometry(80, 240, 160), victronBlueMat);
-      invBody.position.set(45, 60, -60);
-      invBody.castShadow = true;
-      wallGroup.add(invBody);
-      registerInteractive(invBody, 'inverter');
-
-      const mpptBody = new THREE.Mesh(new THREE.BoxGeometry(60, 160, 110), victronBlueMat);
-      mpptBody.position.set(35, 80, 110);
-      mpptBody.castShadow = true;
-      wallGroup.add(mpptBody);
-      registerInteractive(mpptBody, 'mppt');
-
-      const lynx = new THREE.Mesh(
-        new THREE.BoxGeometry(50, 50, 240),
-        new THREE.MeshStandardMaterial({ color: 0x0f172a, metalness: 0.8 })
-      );
-      lynx.position.set(30, -140, 20);
-      wallGroup.add(lynx);
-
-      const dcCableRed = new THREE.Mesh(
-        new THREE.CylinderGeometry(6, 6, 200),
-        new THREE.MeshStandardMaterial({ color: 0xef4444, roughness: 0.6 })
-      );
-      dcCableRed.position.set(30, -40, -40);
-      wallGroup.add(dcCableRed);
-
-      powerGroup.add(wallGroup);
-    }
-
-    function buildSolarArray() {
-      const arrayGroup = new THREE.Group();
-      arrayGroup.position.set(-650, -50, 0);
-      arrayGroup.rotation.z = 0.25;
-
-      const panelFrameMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, metalness: 0.9, roughness: 0.2 });
-      const solarCellMat = new THREE.MeshStandardMaterial({ color: 0x1e3a8a, metalness: 0.8, roughness: 0.15 });
-
-      for (let row = 0; row < 2; row++) {
-        for (let col = 0; col < 2; col++) {
-          const pGroup = new THREE.Group();
-          pGroup.position.set(col * 220 - 110, 0, row * 340 - 170);
-
-          const frame = new THREE.Mesh(new THREE.BoxGeometry(210, 8, 330), panelFrameMat);
-          frame.castShadow = true;
-          pGroup.add(frame);
-
-          const cells = new THREE.Mesh(new THREE.BoxGeometry(202, 2, 322), solarCellMat);
-          cells.position.y = 4;
-          pGroup.add(cells);
-
-          arrayGroup.add(pGroup);
-          registerInteractive(cells, 'solar');
-        }
-      }
-
-      const legGeom = new THREE.CylinderGeometry(8, 8, 300);
-      const legMat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.9 });
-      [-180, 180].forEach(z => {
-        const leg = new THREE.Mesh(legGeom, legMat);
-        leg.position.set(-100, -150, z);
-        arrayGroup.add(leg);
-      });
-
-      solarGroup.add(arrayGroup);
-    }
-
-    function buildSpaceCommunicationsSubsystem() {
-      phasedArrayMount = new THREE.Group();
-      phasedArrayMount.position.set(0, 200.05, 0);
-
-      const mastMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, metalness: 0.85, roughness: 0.3 });
-
-      const mastBase = new THREE.Mesh(new THREE.CylinderGeometry(40, 50, 16, 24), mastMat);
-      mastBase.position.y = 8;
-      phasedArrayMount.add(mastBase);
-
-      const mastColumn = new THREE.Mesh(new THREE.CylinderGeometry(18, 22, 90, 24), mastMat);
-      mastColumn.position.y = 55;
-      mastColumn.castShadow = true;
-      phasedArrayMount.add(mastColumn);
-
-      const gimbal = new THREE.Mesh(new THREE.SphereGeometry(26, 24, 24), new THREE.MeshStandardMaterial({ color: 0x334155, metalness: 0.9 }));
-      gimbal.position.y = 105;
-      phasedArrayMount.add(gimbal);
-
-      phasedArrayAperture = new THREE.Group();
-      phasedArrayAperture.position.set(0, 115, 0);
-
-      const panelFrame = new THREE.Mesh(
-        new THREE.BoxGeometry(260, 16, 190),
-        new THREE.MeshStandardMaterial({ color: 0x090d16, metalness: 0.95, roughness: 0.2 })
-      );
-      panelFrame.castShadow = true;
-      phasedArrayAperture.add(panelFrame);
-
-      const arrayFace = new THREE.Mesh(
-        new THREE.BoxGeometry(244, 4, 174),
-        new THREE.MeshStandardMaterial({ color: 0xa855f7, metalness: 0.5, roughness: 0.2, emissive: 0x581c87, emissiveIntensity: 0.4 })
-      );
-      arrayFace.position.y = 8;
-      panelFrame.add(arrayFace);
-
-      const screen = new THREE.Mesh(
-        new THREE.BoxGeometry(40, 8, 2),
-        new THREE.MeshBasicMaterial({ color: 0x38bdf8 })
-      );
-      screen.position.set(0, 0, 96);
-      panelFrame.add(screen);
-
-      phasedArrayMount.add(phasedArrayAperture);
-      registerInteractive(arrayFace, 'space_antenna');
-      spaceGroup.add(phasedArrayMount);
-
-      // Glowing Orbital Ring
-      const orbitRadiusX = 1400;
-      const orbitRadiusZ = 1200;
-      const orbitY = 950;
-
-      const orbitCurve = new THREE.EllipseCurve(0, 0, orbitRadiusX, orbitRadiusZ, 0, 2 * Math.PI, false, 0);
-      const orbitPoints = orbitCurve.getPoints(100).map(p => new THREE.Vector3(p.x, orbitY, p.y));
-      const orbitGeom = new THREE.BufferGeometry().setFromPoints(orbitPoints);
-      const orbitMat = new THREE.LineDashedMaterial({
-        color: 0xc084fc,
-        dashSize: 30,
-        gapSize: 20,
-        linewidth: 2,
-        transparent: true,
-        opacity: 0.6
-      });
-      orbitRingMesh = new THREE.Line(orbitGeom, orbitMat);
-      orbitRingMesh.computeLineDistances();
-      spaceGroup.add(orbitRingMesh);
-
-      // High-Fidelity Orbiting Satellite Relay
-      const satGroup = new THREE.Group();
-
-      const satBody = new THREE.Mesh(
-        new THREE.BoxGeometry(70, 45, 45),
-        new THREE.MeshStandardMaterial({ color: 0xd97706, metalness: 0.95, roughness: 0.15 })
-      );
-      satGroup.add(satBody);
-
-      const satDish = new THREE.Mesh(
-        new THREE.ConeGeometry(24, 12, 24, 1, true),
-        new THREE.MeshStandardMaterial({ color: 0xe2e8f0, metalness: 0.9, side: THREE.DoubleSide })
-      );
-      satDish.position.set(0, -26, 0);
-      satDish.rotation.x = Math.PI;
-      satGroup.add(satDish);
-
-      const wingMat = new THREE.MeshStandardMaterial({ color: 0x1d4ed8, metalness: 0.85, roughness: 0.15 });
-      const leftWing = new THREE.Mesh(new THREE.BoxGeometry(160, 3, 55), wingMat);
-      leftWing.position.set(-125, 0, 0);
-      satGroup.add(leftWing);
-
-      const rightWing = new THREE.Mesh(new THREE.BoxGeometry(160, 3, 55), wingMat);
-      rightWing.position.set(125, 0, 0);
-      satGroup.add(rightWing);
-
-      const beaconLeft = new THREE.Mesh(new THREE.SphereGeometry(3, 8, 8), new THREE.MeshBasicMaterial({ color: 0xef4444 }));
-      beaconLeft.position.set(-205, 0, 0);
-      satGroup.add(beaconLeft);
-
-      const beaconRight = new THREE.Mesh(new THREE.SphereGeometry(3, 8, 8), new THREE.MeshBasicMaterial({ color: 0x10b981 }));
-      beaconRight.position.set(205, 0, 0);
-      satGroup.add(beaconRight);
-
-      satelliteMesh = satGroup;
-      satelliteMesh.position.set(800, orbitY, 600);
-      registerInteractive(satBody, 'satellite_relay');
-      spaceGroup.add(satelliteMesh);
-
-      // Volumetric Glowing RF Space Beam
-      const beamGeom = new THREE.CylinderGeometry(16, 4, 1, 16, 1, true);
-      const beamMat = new THREE.MeshBasicMaterial({
-        color: 0xc084fc,
-        transparent: true,
-        opacity: 0.45,
-        side: THREE.DoubleSide
-      });
-      spaceBeamMesh = new THREE.Mesh(beamGeom, beamMat);
-      spaceGroup.add(spaceBeamMesh);
-
-      for (let i = 0; i < 4; i++) {
-        const pulse = new THREE.Mesh(
-          new THREE.RingGeometry(8, 14, 16),
-          new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.85, side: THREE.DoubleSide })
-        );
-        pulse.userData.offset = i * 0.25;
-        dataPulses.push(pulse);
-        spaceGroup.add(pulse);
-      }
-    }
-
-    function updateSpaceBeam() {
-      if (!spaceBeamMesh || !phasedArrayAperture || !satelliteMesh) return;
-
-      const groundTargetPos = new THREE.Vector3();
-      phasedArrayAperture.getWorldPosition(groundTargetPos);
-
-      const satPos = new THREE.Vector3();
-      satelliteMesh.getWorldPosition(satPos);
-
-      phasedArrayAperture.lookAt(satPos.x, satPos.y, satPos.z);
-      phasedArrayAperture.rotateX(Math.PI / 2);
-
-      const distance = groundTargetPos.distanceTo(satPos);
-      const midPoint = new THREE.Vector3().addVectors(groundTargetPos, satPos).multiplyScalar(0.5);
-
-      spaceBeamMesh.position.copy(midPoint);
-      spaceBeamMesh.scale.set(1, distance, 1);
-
-      const orientation = new THREE.Matrix4();
-      orientation.lookAt(groundTargetPos, satPos, new THREE.Vector3(0, 1, 0));
-      orientation.multiply(new THREE.Matrix4().makeRotationX(Math.PI / 2));
-      spaceBeamMesh.quaternion.setFromRotationMatrix(orientation);
-
-      dataPulses.forEach(pulse => {
-        pulse.userData.offset = (pulse.userData.offset + pulseSpeed) % 1.0;
-        const pulsePos = new THREE.Vector3().lerpVectors(groundTargetPos, satPos, pulse.userData.offset);
-        pulse.position.copy(pulsePos);
-        pulse.quaternion.copy(spaceBeamMesh.quaternion);
-        pulse.scale.set(1 + pulse.userData.offset * 1.5, 1 + pulse.userData.offset * 1.5, 1);
-      });
-    }
-
-    function toggleCalculator() {
-      const modal = document.getElementById('calculator-modal');
-      const isOpen = (modal.style.display === 'block');
-      modal.style.display = isOpen ? 'none' : 'block';
-      if (!isOpen) updateCalculator();
-    }
-
-    function updateCalculator() {
-      const nodes = parseInt(document.getElementById('calc-nodes').value);
-      const hours = parseInt(document.getElementById('calc-hours').value);
-      const batPacks = parseInt(document.getElementById('calc-battery').value);
-      const panels = parseInt(document.getElementById('calc-solar').value);
-
-      document.getElementById('calc-val-nodes').textContent = `${nodes} Node${nodes > 1 ? 's' : ''} (${nodes * 275} TOPS)`;
-      document.getElementById('calc-val-hours').textContent = `${hours} hrs/day`;
-      document.getElementById('calc-val-battery').textContent = `${(batPacks * 5.12).toFixed(2)} kWh (${batPacks}x 48V)`;
-      document.getElementById('calc-val-solar').textContent = `${panels * 410}W (${panels}x 410W)`;
-
-      const baseWatts = 180;
-      const nodeWatts = 160;
-      const avgWatts = baseWatts + (nodes * nodeWatts * (hours / 24.0));
-      const dailyKwh = (avgWatts * 24.0) / 1000.0;
-      const solarKwh = (panels * 0.410 * 5.2);
-      const batKwh = batPacks * 5.12 * 0.85;
-      const autonomyHours = (batKwh * 1000.0) / avgWatts;
-
-      const baseCost = 4500;
-      const nodeCost = nodes * 1500;
-      const batCost = batPacks * 1200;
-      const solarCost = panels * 180;
-      const totalCost = baseCost + nodeCost + batCost + solarCost;
-
-      document.getElementById('calc-res-draw').textContent = `${dailyKwh.toFixed(1)} kWh/day`;
-      document.getElementById('calc-res-yield').textContent = `${solarKwh.toFixed(1)} kWh/day`;
-      document.getElementById('calc-res-autonomy').textContent = `${autonomyHours.toFixed(1)} hrs`;
-      document.getElementById('calc-res-cost').textContent = `$${totalCost.toLocaleString()}`;
-    }
-
-    function exportBOMCSV() {
-      const nodes = document.getElementById('calc-nodes').value;
-      const batPacks = document.getElementById('calc-battery').value;
-      const panels = document.getElementById('calc-solar').value;
-
-      let csv = "Component,Quantity,Unit Cost,Category\n";
-      csv += `"NVIDIA DGX Spark Compute Node",${nodes},"$1,500","Compute"\n`;
-      csv += `"LiFePO4 48V 100Ah Battery",${batPacks},"$1,200","Energy"\n`;
-      csv += `"410W PERC Solar Panels",${panels},"$180","Energy"\n`;
-      csv += `"Victron MultiPlus-II 48/3000 Inverter",1,"$1,100","Power"\n`;
-      csv += `"Victron SmartSolar MPPT 150/70",1,"$540","Power"\n`;
-      csv += `"MikroTik CRS309 10GbE Switch",1,"$270","Networking"\n`;
-      csv += `"9U 19 Inch Aluminum Enclosure",1,"$450","Chassis"\n`;
-      csv += `"Dual 360mm Liquid Loop & D5 Pump",1,"$420","Thermal"\n`;
-      csv += `"Motorized Phased Array Space Terminal",1,"$850","Space Comm"\n`;
-
-      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-      const link = document.createElement('a');
-      link.href = URL.createObjectURL(blob);
-      link.download = `sovereign_datacenter_bom_${nodes}nodes_${batPacks}bat_${panels}pv.csv`;
-      link.click();
-    }
-
-    // ──────────────────────────────────────────────────────────────────────────
-    // INVESTOR ROI & TCO CALCULATOR
-    // ──────────────────────────────────────────────────────────────────────────
-    function toggleInvestorModal() {
-      const modal = document.getElementById('investor-modal');
-      const isOpen = (modal.style.display === 'block');
-      modal.style.display = isOpen ? 'none' : 'block';
-      if (!isOpen) updateInvestorCalculator();
-    }
-
-    function updateInvestorCalculator() {
-      const cloudMonthly = parseFloat(document.getElementById('roi-cloud-spend').value);
-      const gridRate = parseFloat(document.getElementById('roi-grid-rate').value);
-      const nodes = parseInt(document.getElementById('roi-nodes').value);
-
-      document.getElementById('roi-val-cloud').textContent = `$${cloudMonthly.toLocaleString()} / mo`;
-      document.getElementById('roi-val-grid').textContent = `$${gridRate.toFixed(2)} / kWh`;
-      document.getElementById('roi-val-nodes').textContent = `${nodes} Node${nodes > 1 ? 's' : ''} (${nodes * 550} TOPS)`;
-
-      const capexPerNode = 24500;
-      const totalCapEx = capexPerNode * nodes;
-      const smdcMonthlyOpex = 199 * nodes;
-      const smdc3YrTotal = totalCapEx + (smdcMonthlyOpex * 36);
-
-      // Cloud 3-Year equivalent (GPU instances + Data egress + Electricity/cooling tariffs)
-      const cloudGpu3Yr = cloudMonthly * 36 * nodes;
-      const cloudEgress3Yr = 400 * 36 * nodes;
-      const cloudPower3Yr = (0.350 * 24 * 365 * 3 * gridRate) * nodes;
-      const cloud3YrTotal = cloudGpu3Yr + cloudEgress3Yr + cloudPower3Yr;
-
-      const netSavings3Yr = Math.max(0, cloud3YrTotal - smdc3YrTotal);
-      const monthlyCloudOpEx = (cloud3YrTotal / 36);
-      const monthlySavings = monthlyCloudOpEx - smdcMonthlyOpex;
-      const paybackMonths = monthlySavings > 0 ? (totalCapEx / monthlySavings) : 0;
-      const roiPercent = (netSavings3Yr / totalCapEx) * 100;
-      const co2TonsPerYear = (3.07 * 0.475 * 10) * nodes; // 100% solar vs grid diesel offset
-
-      document.getElementById('roi-res-payback').textContent = paybackMonths > 0 ? `${paybackMonths.toFixed(1)} Months` : 'N/A';
-      document.getElementById('roi-res-savings').textContent = `$${Math.round(netSavings3Yr).toLocaleString()}`;
-      document.getElementById('roi-res-roi').textContent = `${roiPercent.toFixed(1)}%`;
-      document.getElementById('roi-res-co2').textContent = `${co2TonsPerYear.toFixed(1)} Tons`;
-
-      // Update comparison bar chart
-      const maxSpend = Math.max(cloud3YrTotal, smdc3YrTotal);
-      const smdcPercent = Math.round((smdc3YrTotal / (smdc3YrTotal + cloud3YrTotal)) * 100);
-      const cloudPercent = 100 - smdcPercent;
-
-      document.getElementById('roi-bar-val-smdc').textContent = `$${(smdc3YrTotal / 1000).toFixed(1)}k`;
-      document.getElementById('roi-bar-val-cloud').textContent = `$${(cloud3YrTotal / 1000).toFixed(1)}k`;
-      document.getElementById('roi-bar-smdc').style.width = `${smdcPercent}%`;
-      document.getElementById('roi-bar-cloud').style.width = `${cloudPercent}%`;
-    }
-
-    function exportInvestorSummaryJSON() {
-      const cloudMonthly = parseFloat(document.getElementById('roi-cloud-spend').value);
-      const gridRate = parseFloat(document.getElementById('roi-grid-rate').value);
-      const nodes = parseInt(document.getElementById('roi-nodes').value);
-
-      const capexPerNode = 24500;
-      const totalCapEx = capexPerNode * nodes;
-      const smdc3YrTotal = totalCapEx + (199 * nodes * 36);
-      const cloud3YrTotal = (cloudMonthly * 36 + 14400 + (0.350 * 24 * 365 * 3 * gridRate)) * nodes;
-      const netSavings = cloud3YrTotal - smdc3YrTotal;
-
-      const summary = {
-        title: "Sovereign Mini Datacenter - Executive Financial & TCO Summary",
-        generated_at: new Date().toISOString(),
-        configuration: {
-          deployed_nodes: nodes,
-          aggregate_ai_compute_tops: nodes * 550,
-          cloud_gpu_spend_monthly_usd: cloudMonthly,
-          grid_electricity_rate_usd_kwh: gridRate,
-        },
-        financial_metrics: {
-          smdc_turnkey_capex_usd: totalCapEx,
-          smdc_3year_tco_usd: smdc3YrTotal,
-          hyperscaler_cloud_3year_tco_usd: Math.round(cloud3YrTotal),
-          net_3year_savings_usd: Math.round(netSavings),
-          savings_percentage: ((netSavings / cloud3YrTotal) * 100).toFixed(1) + "%",
-          payback_period_months: (totalCapEx / ((cloud3YrTotal - smdc3YrTotal) / 36)).toFixed(1),
-          annual_co2_offset_metric_tons: (14.2 * nodes).toFixed(1)
-        },
-        monetization_model: {
-          hardware_unit_price_usd: 24500,
-          hardware_gross_margin: "42.0%",
-          recurring_saas_node_monthly_usd: 199,
-          saas_gross_margin: "88.0%"
-        }
-      };
-
-      const blob = new Blob([JSON.stringify(summary, null, 2)], { type: 'application/json' });
-      const link = document.createElement('a');
-      link.href = URL.createObjectURL(blob);
-      link.download = `smdc_investor_tco_summary_${nodes}nodes.json`;
-      link.click();
-    }
-
-    function exportInvestorTCOCSV() {
-      const cloudMonthly = parseFloat(document.getElementById('roi-cloud-spend').value);
-      const gridRate = parseFloat(document.getElementById('roi-grid-rate').value);
-      const nodes = parseInt(document.getElementById('roi-nodes').value);
-
-      let csv = "Year,Category,Sovereign Mini Datacenter (USD),Hyperscaler Cloud AWS (USD),Net Annual Savings (USD)\n";
-      const capex = 24500 * nodes;
-      const smdcOpexYear = 199 * 12 * nodes;
-      const cloudYear = (cloudMonthly * 12 + 4800 + (0.350 * 24 * 365 * gridRate)) * nodes;
-
-      csv += `0,Initial Hardware CapEx,$${capex.toLocaleString()},$12,000,-$${(capex - 12000).toLocaleString()}\n`;
-      csv += `1,Year 1 Operating Spend,$${smdcOpexYear.toLocaleString()},$${Math.round(cloudYear).toLocaleString()},$${Math.round(cloudYear - smdcOpexYear).toLocaleString()}\n`;
-      csv += `2,Year 2 Operating Spend,$${smdcOpexYear.toLocaleString()},$${Math.round(cloudYear).toLocaleString()},$${Math.round(cloudYear - smdcOpexYear).toLocaleString()}\n`;
-      csv += `3,Year 3 Operating Spend,$${smdcOpexYear.toLocaleString()},$${Math.round(cloudYear).toLocaleString()},$${Math.round(cloudYear - smdcOpexYear).toLocaleString()}\n`;
-
-      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-      const link = document.createElement('a');
-      link.href = URL.createObjectURL(blob);
-      link.download = `smdc_tco_comparison_3year_${nodes}nodes.csv`;
-      link.click();
-    }
-
-    // ──────────────────────────────────────────────────────────────────────────
-    // INTERACTIVE CYBER TERMINAL
-    // ──────────────────────────────────────────────────────────────────────────
-    function toggleTerminal() {
-      const term = document.getElementById('terminal-modal');
-      const isOpen = (term.style.display === 'flex');
-      term.style.display = isOpen ? 'none' : 'flex';
-      if (!isOpen) {
-        document.getElementById('term-cmd-input').focus();
-      }
-    }
-
-    function triggerSpaceTransmission() {
-      playSpacePing();
-      const term = document.getElementById('terminal-modal');
-      if (term.style.display !== 'flex') toggleTerminal();
-      executeSimulatedCommand('smdc space send');
-    }
-
-    function handleTerminalInput(e) {
-      if (e.key === 'Enter') {
-        const input = document.getElementById('term-cmd-input');
-        const cmd = input.value.trim();
-        if (cmd) {
-          executeSimulatedCommand(cmd);
-          input.value = '';
-        }
-      }
-    }
-
-    function executeSimulatedCommand(cmd) {
-      const out = document.getElementById('term-output');
-      out.textContent += `\nsmdc$ ${cmd}\n`;
-
-      const parts = cmd.toLowerCase().trim().split(' ');
-      const mainCmd = parts[0] === 'smdc' ? parts[1] : parts[0];
-      const subCmd = parts[0] === 'smdc' ? parts[2] : parts[1];
-
-      if (mainCmd === 'status') {
-        out.textContent += `=== Sovereign Mini Datacenter Status ===
-● All 11 Services Healthy (Traefik, Ollama, Qdrant, GitLab, Nextcloud)
-• Battery: 88.4% (52.8V) | Solar: 1,240W | Temp: 31.2°C
-• Space Link: ONLINE (IN CONTACT, 48.5° Elevation)
-• DTN Spool: 3 bundles waiting | LoRa Mesh: 4 field radios\n`;
-      } else if (mainCmd === 'agent' && (subCmd === 'status' || !subCmd)) {
-        out.textContent += `=== Sovereign Autonomous AI Subsystems ===
-● Ollama LLM Engine: ONLINE (qwen2.5-coder:7b, nomic-embed-text)
-● Qdrant Vector DB:  ONLINE (sovereign_knowledge - 1,482 vectors)
-● GitLab Reviewer:   ARMED (Listening on MR webhooks)
-● Sentinel Copilot:  ACTIVE (Solar Yield: 1,240W -> Full GPU unlocked)\n`;
-      } else if (mainCmd === 'agent' && subCmd === 'ask') {
-        const query = cmd.substring(cmd.indexOf('ask') + 3).trim();
-        out.textContent += `🤖 Sovereign AI (qwen2.5-coder:7b):
-Evaluating prompt '${query || "system architecture"}' locally on Jetson/DGX GPU...
-• Response: Sovereign Mini Datacenter operates 100% off-grid with 10.24 kWh LiFePO4 batteries, local semantic RAG, and automated DTN space packet routing.\n`;
-      } else if (mainCmd === 'lora' || (mainCmd === 'mesh' && subCmd === 'lora')) {
-        out.textContent += `📻 LoRa Meshtastic Field Telemetry Log (868/915 MHz):
-[RX 10:24:12] Node 'alpine-field-01' -> RSSI: -92dBm | Battery: 94% | Temp: 14.2°C
-[RX 10:24:35] Node 'island-sensor-03' -> RSSI: -88dBm | Solar: 380W | BMS: OK
-[TX 10:25:01] Gateway smdc-gw-01 -> Mesh broadcast ACK (Hop limit: 3)\n`;
-      } else if (mainCmd === 'space' && subCmd === 'passes') {
-        out.textContent += `🛰️ Next Satellite Passes (Athens Ground Station):
-Starlink-LEO-Alpha : AOS 14m 22s | Max El: 72.4° | Duration: 8m 10s
-Iridium-NEXT-42    : AOS 48m 10s | Max El: 41.2° | Duration: 6m 30s
-Swarm-LoRa-Relay-1 : AOS 1h 12m  | Max El: 63.4° | Duration: 7m 30s\n`;
-      } else if (mainCmd === 'space' && subCmd === 'send') {
-        pulseSpeed = 0.025; // Accelerate space beam pulse animation!
-        setTimeout(() => { pulseSpeed = 0.006; }, 4500);
-        out.textContent += `🚀 [BPv7] Bundle dtn://smdc-node-01.space/7f9a2e enqueued!
-• Target: Starlink-LEO-Alpha (Az: 210.4°, El: 48.5°, Dist: 582km)
-• Mod: QPSK Carrier @ 2.4 GHz | Data Rate: 2.0 Mbps
-• Transmitting active orbital laser/RF tracking pulse...
-✅ Transmission confirmed! Next satellite hop acknowledged.\n`;
-      } else if (mainCmd === 'audit') {
-        out.textContent += `=== Security Compliance Audit ===
-[ PASS ] ASLR Level 2 Active & Kernel Hardening
-[ PASS ] TCP SYN Flood Protection & Fail2ban
-[ PASS ] AES-256 Encrypted Volumes (Restic/Vaultwarden)
-[ PASS ] WireGuard Mesh Zero-Trust Network Overlay
-[ PASS ] CrowdSec Intrusion Prevention Engine
-✅ All 14 security benchmarks satisfied.\n`;
-      } else if (mainCmd === 'mesh') {
-        out.textContent += `🌐 Sovereign Global Mesh Topology:
-• smdc-node-01 (Athens Core)    : 100.64.0.1 [ONLINE - 550 TOPS]
-• smdc-node-02 (Alpine Off-Grid): 100.64.0.2 [ONLINE - 275 TOPS]
-• smdc-node-03 (Aegean Island)  : 100.64.0.3 [STANDBY / DTN ARMED]\n`;
-      } else if (mainCmd === 'help') {
-        out.textContent += `Available commands:
-  smdc status        - Show system, power, and space telemetry
-  smdc agent status  - Check Ollama LLM and Qdrant RAG state
-  smdc agent ask     - Query local AI copilot
-  smdc lora log      - Show 868MHz LoRa mesh packet log
-  smdc space passes  - Predict upcoming satellite contact passes
-  smdc space send    - Enqueue encrypted DTN bundle to space relay
-  smdc audit         - Run security compliance audit
-  smdc mesh          - Inspect multi-node cluster topology
-  clear              - Clear terminal\n`;
-      } else if (mainCmd === 'clear') {
-        out.textContent = '';
-      } else {
-        out.textContent += `smdc: command not found: '${cmd}'. Type 'help' for commands.\n`;
-      }
-      out.scrollTop = out.scrollHeight;
-    }
-
-    function onPointerDown(event) {
-      mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
-      mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
-
-      raycaster.setFromCamera(mouse, camera);
-      const intersects = raycaster.intersectObjects(interactiveObjects, true);
-
-      if (intersects.length > 0) {
-        let obj = intersects[0].object;
-        while (obj && !obj.userData.componentKey && obj.parent) {
-          obj = obj.parent;
-        }
-        if (obj && obj.userData.componentKey) {
-          showComponentModal(obj.userData.componentKey);
-        }
-      }
-    }
-
-    function showComponentModal(key) {
-      const data = COMPONENT_DATA[key];
-      if (!data) return;
-
-      document.getElementById('component-details').style.display = 'block';
-      document.getElementById('comp-name').textContent = data.name;
-      document.getElementById('comp-badge').textContent = data.badge;
-      document.getElementById('comp-desc').textContent = data.desc;
-
-      const specsContainer = document.getElementById('comp-specs');
-      specsContainer.innerHTML = '';
-      for (const [k, v] of Object.entries(data.specs)) {
-        const box = document.createElement('div');
-        box.className = 'spec-box';
-        if (key === 'space_antenna' || key === 'satellite_relay') {
-          box.style.borderLeftColor = 'var(--accent-purple)';
-        }
-        box.innerHTML = `<div class="label">${k}</div><div class="val">${v}</div>`;
-        specsContainer.appendChild(box);
-      }
-    }
-
-    function setSubsystem(sub, evt) {
-      activeSubsystem = sub;
-      document.querySelectorAll('.tab-group button').forEach(b => {
-        b.classList.remove('active');
-        b.classList.remove('active-purple');
-      });
-      if (evt && evt.target) {
-        if (sub === 'space') {
-          evt.target.classList.add('active-purple');
-        } else {
-          evt.target.classList.add('active');
-        }
-      }
-
-      const setVisible = (grp, vis) => {
-        grp.traverse(child => {
-          if (child.isMesh || child.isLine) {
-            child.visible = vis;
-          }
-        });
-      };
-
-      if (sub === 'all') {
-        setVisible(rackGroup, true);
-        setVisible(computeGroup, true);
-        setVisible(powerGroup, true);
-        setVisible(coolingGroup, true);
-        setVisible(solarGroup, true);
-        setVisible(spaceGroup, true);
-      } else if (sub === 'space') {
-        setVisible(rackGroup, true);
-        setVisible(computeGroup, false);
-        setVisible(powerGroup, false);
-        setVisible(coolingGroup, false);
-        setVisible(solarGroup, false);
-        setVisible(spaceGroup, true);
-      } else if (sub === 'compute') {
-        setVisible(rackGroup, true);
-        setVisible(computeGroup, true);
-        setVisible(powerGroup, false);
-        setVisible(coolingGroup, false);
-        setVisible(solarGroup, false);
-        setVisible(spaceGroup, false);
-      } else if (sub === 'power') {
-        setVisible(rackGroup, false);
-        setVisible(computeGroup, false);
-        setVisible(powerGroup, true);
-        setVisible(coolingGroup, false);
-        setVisible(solarGroup, true);
-        setVisible(spaceGroup, false);
-      } else if (sub === 'cooling') {
-        setVisible(rackGroup, true);
-        setVisible(computeGroup, true);
-        setVisible(powerGroup, false);
-        setVisible(coolingGroup, true);
-        setVisible(solarGroup, false);
-        setVisible(spaceGroup, false);
-      } else if (sub === 'solar') {
-        setVisible(rackGroup, false);
-        setVisible(computeGroup, false);
-        setVisible(powerGroup, false);
-        setVisible(coolingGroup, false);
-        setVisible(solarGroup, true);
-        setVisible(spaceGroup, false);
-      }
-    }
-
-    function onExplodeChange(val) {
-      explodeVal = val / 100.0;
-      document.getElementById('val-explode').textContent = `${val}%`;
-
-      computeGroup.children.forEach((c, i) => {
-        c.position.z = explodeVal * (60 + i * 40);
-      });
-      powerGroup.children.forEach((c, i) => {
-        c.position.z = explodeVal * (50 + i * 30);
-      });
-      coolingGroup.position.z = -explodeVal * 120;
-      phasedArrayMount.position.y = 200.05 + explodeVal * 100;
-    }
-
-    // ──────────────────────────────────────────────────────────────────────────
-    // DAY / NIGHT & SOLAR TRAJECTORY DYNAMICS
-    // ──────────────────────────────────────────────────────────────────────────
-    function onSunElevationChange(val) {
-      const elDeg = parseFloat(val);
-      const rad = THREE.MathUtils.degToRad(elDeg);
-      const pvWatts = Math.round(1640 * Math.sin(rad));
-
-      document.getElementById('val-sun-el').textContent = `${elDeg}° (${pvWatts}W)`;
-      document.getElementById('hud-solar').textContent = `${pvWatts} W`;
-
-      if (sunLight) {
-        sunLight.position.x = Math.cos(rad) * 1400;
-        sunLight.position.y = Math.sin(rad) * 1400 + 50;
-        sunLight.intensity = Math.max(0.05, Math.sin(rad) * 1.5);
-      }
-    }
-
-    function toggleDayNight() {
-      isNightMode = !isNightMode;
-      playRelayClick();
-      const btn = document.getElementById('btn-day-night');
-      btn.textContent = isNightMode ? "☀️ Day Mode" : "🌙 Night Mode";
-      btn.classList.toggle('active', isNightMode);
-
-      const targetBg = isNightMode ? new THREE.Color(0x010309) : new THREE.Color(0x040711);
-      const targetAmbient = isNightMode ? 0.25 : 0.6;
-      const targetSun = isNightMode ? 0.1 : 1.3;
-
-      new TWEEN.Tween(scene.background)
-        .to({ r: targetBg.r, g: targetBg.g, b: targetBg.b }, 1000)
-        .start();
-
-      if (ambientLight) {
-        new TWEEN.Tween(ambientLight)
-          .to({ intensity: targetAmbient }, 1000)
-          .start();
-      }
-      if (sunLight) {
-        new TWEEN.Tween(sunLight)
-          .to({ intensity: targetSun }, 1000)
-          .start();
-      }
-      if (starsParticles) {
-        starsParticles.material.opacity = isNightMode ? 0.85 : 0.35;
-      }
-    }
-
-    // ──────────────────────────────────────────────────────────────────────────
-    // PROCEDURAL WEB AUDIO API SOUND ENGINE
-    // ──────────────────────────────────────────────────────────────────────────
-    function initAudioContext() {
-      if (!audioCtx) {
-        const AudioContext = window.AudioContext || window.webkitAudioContext;
-        if (AudioContext) audioCtx = new AudioContext();
-      }
-      if (audioCtx && audioCtx.state === 'suspended') {
-        audioCtx.resume();
-      }
-    }
-
-    function toggleAudioEngine() {
-      audioMuted = !audioMuted;
-      const btn = document.getElementById('btn-audio');
-      btn.textContent = audioMuted ? "🔇 Audio: OFF" : "🔊 Audio: ON";
-      btn.classList.toggle('active', !audioMuted);
-      if (!audioMuted) {
-        initAudioContext();
-        playSpacePing();
-      }
-    }
-
-    function playSpacePing() {
-      if (audioMuted) return;
-      initAudioContext();
-      if (!audioCtx) return;
-
-      const osc = audioCtx.createOscillator();
-      const gain = audioCtx.createGain();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(880, audioCtx.currentTime);
-      osc.frequency.exponentialRampToValueAtTime(1760, audioCtx.currentTime + 0.3);
-
-      gain.gain.setValueAtTime(0.12, audioCtx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.5);
-
-      osc.connect(gain);
-      gain.connect(audioCtx.destination);
-      osc.start();
-      osc.stop(audioCtx.currentTime + 0.5);
-    }
-
-    function playRelayClick() {
-      if (audioMuted) return;
-      initAudioContext();
-      if (!audioCtx) return;
-
-      const osc = audioCtx.createOscillator();
-      const gain = audioCtx.createGain();
-      osc.type = 'triangle';
-      osc.frequency.setValueAtTime(220, audioCtx.currentTime);
-      osc.frequency.exponentialRampToValueAtTime(60, audioCtx.currentTime + 0.08);
-
-      gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.08);
-
-      osc.connect(gain);
-      gain.connect(audioCtx.destination);
-      osc.start();
-      osc.stop(audioCtx.currentTime + 0.08);
-    }
-
-    function toggleDoor() {
-      doorOpen = !doorOpen;
-      playRelayClick();
-      const targetRot = doorOpen ? -Math.PI / 1.7 : 0;
-      new TWEEN.Tween(doorMesh.rotation)
-        .to({ y: targetRot }, 800)
-        .easing(TWEEN.Easing.Cubic.Out)
-        .start();
-      document.getElementById('btn-door').classList.toggle('active', doorOpen);
-    }
-
-    function toggleAutoRotate() {
-      controls.autoRotate = !controls.autoRotate;
-      document.getElementById('btn-autorotate').classList.toggle('active', controls.autoRotate);
-    }
-
-    function toggleThermalMode() {
-      isThermal = !isThermal;
-      document.getElementById('btn-thermal').classList.toggle('active', isThermal);
-
-      scene.traverse(c => {
-        if (c.isMesh && c.material) {
-          if (isThermal) {
-            if (!materialsMap.has(c)) materialsMap.set(c, c.material);
-            let color = 0x38bdf8;
-            if (c.userData.componentKey === 'dgx1' || c.userData.componentKey === 'dgx2') color = 0xef4444;
-            if (c.userData.componentKey === 'cooling') color = 0xf59e0b;
-            if (c.userData.componentKey === 'inverter') color = 0xf97316;
-            if (c.userData.componentKey === 'space_antenna' || c.userData.componentKey === 'satellite_relay') color = 0xa855f7;
-            c.material = new THREE.MeshBasicMaterial({ color: color });
-          } else {
-            if (materialsMap.has(c)) {
-              c.material = materialsMap.get(c);
-            }
-          }
-        }
-      });
-    }
-
-    function setCamera(preset, evt) {
-      document.querySelectorAll('.cam-presets button').forEach(b => {
-        b.classList.remove('active');
-        b.classList.remove('active-space');
-      });
-      if (evt && evt.target) {
-        if (preset === 'space') {
-          evt.target.classList.add('active-space');
-        } else {
-          evt.target.classList.add('active');
-        }
-      }
-
-      let targetPos, targetLookAt = new THREE.Vector3(0, 150, 0);
-
-      switch(preset) {
-        case 'space':
-          targetPos = new THREE.Vector3(1400, 1100, 1500);
-          targetLookAt = new THREE.Vector3(200, 500, 100);
-          break;
-        case 'antenna':
-          targetPos = new THREE.Vector3(300, 480, 450);
-          targetLookAt = new THREE.Vector3(0, 300, 0);
-          break;
-        case 'front':
-          targetPos = new THREE.Vector3(0, 50, 1150);
-          targetLookAt = new THREE.Vector3(0, 0, 0);
-          break;
-        case 'power':
-          targetPos = new THREE.Vector3(850, 100, 200);
-          targetLookAt = new THREE.Vector3(450, 0, 0);
-          break;
-        case 'solar':
-          targetPos = new THREE.Vector3(-1050, 300, 150);
-          targetLookAt = new THREE.Vector3(-650, -50, 0);
-          break;
-        case 'iso':
-        default:
-          targetPos = new THREE.Vector3(1350, 750, 1600);
-          targetLookAt = new THREE.Vector3(0, 150, 0);
-          break;
-      }
-
-      new TWEEN.Tween(camera.position)
-        .to(targetPos, 1200)
-        .easing(TWEEN.Easing.Cubic.Out)
-        .start();
-
-      new TWEEN.Tween(controls.target)
-        .to(targetLookAt, 1200)
-        .easing(TWEEN.Easing.Cubic.Out)
-        .start();
-    }
-
-    function updateTelemetryHUD() {
-      const solar = Math.round(1150 + Math.random() * 180);
-      const soc = (88.0 + Math.random() * 0.8).toFixed(1);
-      const temp = (30.8 + Math.random() * 0.9).toFixed(1);
-      const el = (45.0 + Math.sin(Date.now() / 2000) * 12.0).toFixed(1);
-
-      document.getElementById('hud-solar').textContent = `${solar.toLocaleString()} W`;
-      document.getElementById('hud-soc').textContent = `${soc}% (52.8V)`;
-      document.getElementById('hud-space').textContent = `IN CONTACT (${el}° El)`;
-      document.getElementById('hud-coolant').textContent = `${temp}°C`;
-    }
-
-    function onWindowResize() {
-      camera.aspect = window.innerWidth / window.innerHeight;
-      camera.updateProjectionMatrix();
-      renderer.setSize(window.innerWidth, window.innerHeight);
-    }
-
-    function animate(time) {
-      requestAnimationFrame(animate);
-      TWEEN.update();
-      controls.update();
-
-      fanBlades.forEach(f => {
-        f.rotation.z += 0.12;
-      });
-
-      satAngle += 0.003;
-      if (satelliteMesh) {
-        const orbitRx = 1400;
-        const orbitRz = 1200;
-        const orbitY = 950;
-
-        satelliteMesh.position.x = Math.cos(satAngle) * orbitRx;
-        satelliteMesh.position.z = Math.sin(satAngle) * orbitRz;
-        satelliteMesh.position.y = orbitY + Math.sin(satAngle * 3) * 120;
-        satelliteMesh.lookAt(0, 300, 0);
-
-        updateSpaceBeam();
-      }
-
-      renderer.render(scene, camera);
-    }
-
-    window.onload = init;
-  </script>
+  <!-- Modular Application Scripts -->
+  <script src="js/materials.js"></script>
+  <script src="js/scene.js"></script>
+  <script src="js/models.js"></script>
+  <script src="js/space.js"></script>
+  <script src="js/hud.js"></script>
+  <script src="js/calculator.js"></script>
+  <script src="js/app.js"></script>
 </body>
 </html>
