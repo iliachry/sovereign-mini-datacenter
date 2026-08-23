@@ -359,6 +359,19 @@ class BootstrapProvisioner:
             details=summary,
         )
 
+        try:
+            from sovereign_dc.events import Event, EventType, get_event_bus
+
+            get_event_bus().publish(
+                Event(
+                    event_type=EventType.NODE_ONLINE if self.state.is_nominal else EventType.NODE_DEGRADED,
+                    source=self.node_id,
+                    payload=summary,
+                )
+            )
+        except Exception as e:
+            logger.debug("Event bus publication notice: %s", e)
+
         return summary
 
     def run_all_phases(self) -> BootstrapState:

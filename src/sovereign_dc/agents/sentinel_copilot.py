@@ -30,7 +30,7 @@ def get_telemetry() -> dict[str, float]:
                         metrics[parts[0]] = float(parts[1])
             return metrics
     except Exception as e:
-        logging.warning(f"Could not reach power exporter: {e}")
+        logging.warning("Could not reach power exporter: %s", e)
         return {}
 
 
@@ -48,12 +48,25 @@ def get_solar_forecast() -> float:
 
 
 def set_mode(mode: str) -> None:
-    """Writes the current mode to a shared state file for other agents to consume."""
+    """Writes the current mode to a shared state file and dispatches event."""
+    try:
+        from sovereign_dc.events import Event, EventType, get_event_bus
+
+        get_event_bus().publish(
+            Event(
+                event_type=EventType.LOAD_SHEDDING_CHANGED,
+                source="sentinel_copilot",
+                payload={"mode": mode},
+            )
+        )
+    except Exception as e:
+        logging.debug("Event bus notification notice: %s", e)
+
     try:
         with open("/tmp/sovereign_mode", "w") as f:
             f.write(mode)
     except Exception as e:
-        logging.warning(f"Failed to write mode state: {e}")
+        logging.warning("Failed to write mode state: %s", e)
 
 
 def run_copilot() -> None:
@@ -83,20 +96,22 @@ def run_copilot() -> None:
                     else f"Predictive (SoC {soc:.1f}%, Forecast {forecast:.0f}W)"
                 )
                 logging.warning(
-                    f"⚡ Sentinel Trigger: {reason}. Throttling non-essential AI batch jobs to conserve power!"
+                    "⚡ Sentinel Trigger: %s. Throttling non-essential AI batch jobs to conserve power!", reason
                 )
         elif solar > 1000.0 and soc > 75.0:
             if current_mode != "SOLAR_SURPLUS_COMPUTE":
                 current_mode = "SOLAR_SURPLUS_COMPUTE"
                 set_mode(current_mode)
                 logging.info(
-                    f"☀️ Solar Surplus ({solar:.0f}W, {soc:.1f}% SoC): Unlocking full GPU compute capacity for model training & batch vectorization."
+                    "☀️ Solar Surplus (%.0fW, %.1f%% SoC): Unlocking full GPU compute capacity for model training & batch vectorization.",
+                    solar,
+                    soc,
                 )
         else:
             if current_mode != "NORMAL":
                 current_mode = "NORMAL"
                 set_mode(current_mode)
-                logging.info(f"Nominal operating conditions ({solar:.0f}W, {soc:.1f}% SoC, Forecast {forecast:.0f}W).")
+                logging.info("Nominal operating conditions (%.0fW, %.1f%% SoC, Forecast %.0fW).", solar, soc, forecast)
 
         time.sleep(30)
 
