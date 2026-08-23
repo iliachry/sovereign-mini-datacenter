@@ -8,15 +8,15 @@ const MaterialsRegistry = (function () {
   function init() {
     // 1. Structural Anodized Aluminum (Rack frame, extruded profiles)
     materials.aluminum = new THREE.MeshStandardMaterial({
-      color: 0x64748b,
-      metalness: 0.85,
-      roughness: 0.25,
-      envMapIntensity: 1.0,
+      color: 0x78889b,
+      metalness: 0.88,
+      roughness: 0.22,
+      envMapIntensity: 1.2,
     });
 
     // 2. EIA-310-D Powder-Coated Steel (Internal vertical rails, 1U-9U markings)
     materials.steelRail = new THREE.MeshStandardMaterial({
-      color: 0x0f172a,
+      color: 0x182234,
       metalness: 0.92,
       roughness: 0.18,
     });
@@ -24,31 +24,33 @@ const MaterialsRegistry = (function () {
     // 3. Matte Chassis Dark Steel (Server enclosures, PDU, switch bodies)
     materials.chassisBody = new THREE.MeshStandardMaterial({
       color: 0x1e293b,
-      metalness: 0.8,
-      roughness: 0.35,
+      metalness: 0.82,
+      roughness: 0.28,
     });
 
     // 4. Tinted Acrylic / Tempered Glass Door
     materials.glassDoor = new THREE.MeshPhysicalMaterial({
-      color: 0x090f1d,
+      color: 0x0f172a,
       metalness: 0.1,
       roughness: 0.05,
       transmission: 0.85,
       transparent: true,
-      opacity: 0.7,
+      opacity: 0.65,
       ior: 1.5,
     });
 
     // 5. NVIDIA Jetson Gold Heatsink
     materials.goldHeatsink = new THREE.MeshStandardMaterial({
-      color: 0xd97706,
-      metalness: 0.95,
-      roughness: 0.2,
+      color: 0xf59e0b,
+      metalness: 0.96,
+      roughness: 0.15,
+      emissive: 0x78350f,
+      emissiveIntensity: 0.15,
     });
 
     // 6. Liquid Cooling Acrylic & Copper Blocks
     materials.copperBlock = new THREE.MeshStandardMaterial({
-      color: 0xb45309,
+      color: 0xd97706,
       metalness: 0.95,
       roughness: 0.15,
     });
@@ -56,63 +58,95 @@ const MaterialsRegistry = (function () {
     materials.coolantTube = new THREE.MeshPhysicalMaterial({
       color: 0x38bdf8,
       metalness: 0.1,
-      roughness: 0.1,
-      transmission: 0.9,
+      roughness: 0.05,
+      transmission: 0.92,
       transparent: true,
-      opacity: 0.85,
+      opacity: 0.88,
       emissive: 0x0284c7,
-      emissiveIntensity: 0.3,
+      emissiveIntensity: 0.65,
     });
 
     // 7. Victron Energy Signature Marine Blue
     materials.victronBlue = new THREE.MeshStandardMaterial({
       color: 0x0284c7,
-      metalness: 0.45,
-      roughness: 0.3,
+      metalness: 0.5,
+      roughness: 0.25,
     });
 
     // 8. Solar Photovoltaic Monocrystalline Cells
     materials.solarCells = new THREE.MeshStandardMaterial({
-      color: 0x172554,
-      metalness: 0.85,
-      roughness: 0.12,
+      color: 0x1d4ed8,
+      metalness: 0.88,
+      roughness: 0.1,
+      emissive: 0x172554,
+      emissiveIntensity: 0.25,
     });
 
     materials.solarFrame = new THREE.MeshStandardMaterial({
-      color: 0x334155,
+      color: 0x475569,
       metalness: 0.9,
-      roughness: 0.25,
+      roughness: 0.2,
     });
 
-    // 9. Space Phased Array Aerodynamic Composite Face
+    // 9. Space Satellite High-Fidelity Materials
+    materials.satelliteGoldFoil = new THREE.MeshStandardMaterial({
+      color: 0xfbbf24,
+      metalness: 0.98,
+      roughness: 0.12,
+      emissive: 0xb45309,
+      emissiveIntensity: 0.35,
+    });
+
+    materials.satelliteSolarCells = new THREE.MeshStandardMaterial({
+      color: 0x2563eb,
+      metalness: 0.92,
+      roughness: 0.08,
+      emissive: 0x1d4ed8,
+      emissiveIntensity: 0.45,
+    });
+
+    materials.ionPlume = new THREE.MeshBasicMaterial({
+      color: 0x38bdf8,
+      transparent: true,
+      opacity: 0.85,
+    });
+
+    // 10. Space Phased Array Aerodynamic Composite Face
     materials.spaceTerminalBody = new THREE.MeshStandardMaterial({
-      color: 0x0f172a,
+      color: 0x1e293b,
       metalness: 0.9,
       roughness: 0.2,
     });
 
     materials.phasedArrayAperture = new THREE.MeshStandardMaterial({
-      color: 0x1e1b4b,
-      metalness: 0.7,
-      roughness: 0.3,
-      emissive: 0x4c1d95,
-      emissiveIntensity: 0.3,
+      color: 0x312e81,
+      metalness: 0.75,
+      roughness: 0.25,
+      emissive: 0x6366f1,
+      emissiveIntensity: 0.5,
     });
 
-    // 10. Status LEDs & Emissives
+    // 11. Status LEDs & Emissives
     materials.ledGreen = new THREE.MeshBasicMaterial({ color: 0x10b981 });
     materials.ledBlue = new THREE.MeshBasicMaterial({ color: 0x38bdf8 });
     materials.ledPurple = new THREE.MeshBasicMaterial({ color: 0xc084fc });
     materials.ledAmber = new THREE.MeshBasicMaterial({ color: 0xf59e0b });
     materials.ledRed = new THREE.MeshBasicMaterial({ color: 0xf43f5e });
 
-    // 11. Thermal Heatmap Material Generator
+    // 12. Foundation Pad Perimeter Neon Glow
+    materials.padGlow = new THREE.MeshBasicMaterial({
+      color: 0x10b981,
+      transparent: true,
+      opacity: 0.7,
+    });
+
+    // 13. Thermal Heatmap Material Generator
     materials.thermalShader = new THREE.MeshStandardMaterial({
       color: 0xef4444,
       roughness: 0.5,
       metalness: 0.1,
       emissive: 0x7f1d1d,
-      emissiveIntensity: 0.4,
+      emissiveIntensity: 0.5,
     });
   }
 
