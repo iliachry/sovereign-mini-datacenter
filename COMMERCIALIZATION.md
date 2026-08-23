@@ -2,7 +2,7 @@
 
 > **Document Type**: Executive Whitepaper, Commercialization Strategy & Financial Model  
 > **Target Audience**: Institutional Venture Capital, DeepTech / Dual-Use Funds (NATO DIANA / EIC), Sovereign Wealth & CleanTech Investors  
-> **Developed by**: [Metatopia Studio](https://metatopia.gr) · License: MIT · © 2026
+> **Author & Lead Architect**: [Ilias Chrysovergis](https://iliachry.gr) · [Metatopia Studio](https://metatopia.gr) · License: MIT · © 2026
 
 ---
 
@@ -103,8 +103,8 @@ xychart-beta
     title "3-Year Cumulative Cost ($USD): Sovereign Mini Datacenter vs. AWS Cloud + Grid"
     x-axis ["Year 0 (CapEx)", "Year 1", "Year 2", "Year 3"]
     y-axis "Cumulative Spend ($k)" 0 --> 120
-    bar ["SMDC (Turnkey)", "SMDC Year 1", "SMDC Year 2", "SMDC Year 3"] [24.5, 26.8, 29.2, 31.6]
-    line ["AWS + Diesel", "AWS Year 1", "AWS Year 2", "AWS Year 3"] [12.0, 48.0, 84.0, 120.0]
+    bar [24.5, 26.8, 29.2, 31.6]
+    line [12.0, 48.0, 84.0, 120.0]
 ```
 
 ### 3-Year Financial Breakdown Table
@@ -118,7 +118,9 @@ xychart-beta
 | **Maintenance & Mesh SaaS (3 Years)** | \$7,164 *(\$199/mo control plane)* | \$14,800 *(Cloud security & support)* | **+\$7,636** |
 | **TOTAL 3-YEAR SPEND** | **\$31,664** | **\$120,000** | **+\$88,336 (73.6% Savings)** |
 
-$$\text{Payback Period} = \frac{\text{Initial Net CapEx}}{\text{Monthly OpEx Savings}} = \frac{\$12,500}{\$2,453/\text{month}} = \mathbf{5.1 \text{ Months}}$$
+$$
+\text{Payback Period} = \frac{\text{Initial Net CapEx}}{\text{Monthly OpEx Savings}} = \frac{\$12,500}{\$2,453/\text{month}} = \mathbf{5.1\text{ Months}}
+$$
 
 > [!TIP]
 > **Key Investor Metric**: The customer breaks even on hardware investment in **just 5.1 months**, saving **\$88,336 (73.6%)** over a 3-year operating lifecycle while gaining 100% data sovereignty and zero blackout vulnerability.
@@ -182,7 +184,7 @@ Slide 04: Product Demo ─────── Live 3D WebGL Digital Twin & Physic
 Slide 05: Market Size ──────── $60.4B TAM / $6.4B SAM (Dual-Use Defense, Remote Industry)
 Slide 06: Unit Economics ───── 73.6% 3-Year TCO Savings ($88.3k saved per node, 5.1 mo ROI)
 Slide 07: Business Model ───── Turnkey Hardware ($24.5k) + Sovereign SaaS ($199/node/mo)
-Slide 08: Traction & Code ──── 92 Automated Tests, 96.5% Coverage, Ready-to-Deploy Stacks
+Slide 08: Traction & Code ──── 274+ Automated Tests, 93.4%+ Coverage, Ready-to-Deploy Stacks
 Slide 09: Technology Moat ──── Space DTN (RFC 9171), Energy Load-Shedder, PQC Zero-Trust
 Slide 10: Financials ───────── $1.46M Y1 -> $19.61M Y3 -> $131.85M Y5 (37.8% EBITDA)
 Slide 11: Team & Advisory ──── Metatopia Studio: DeepTech Systems, AI & Embedded Engineers

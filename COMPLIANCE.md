@@ -2,7 +2,7 @@
 
 > **Document Type**: Institutional Compliance Matrix, Security Architecture & PQC Attestation  
 > **Target Audience**: Chief Information Security Officers (CISOs), Compliance Auditors, Defense Security Officers & Enterprise Architects  
-> **Developed by**: [Metatopia Studio](https://metatopia.gr) · License: MIT · © 2026
+> **Author & Lead Architect**: [Ilias Chrysovergis](https://iliachry.gr) · [Metatopia Studio](https://metatopia.gr) · License: MIT · © 2026
 
 ---
 
@@ -62,7 +62,7 @@ flowchart LR
         PEP3["Space DTN Router<br/>(Bundle Cryptography)"]
     end
 
-    ControlPlane -->|Attestation & Keys| DataPlane
+    ControlPlane -->|"Attestation & Keys"| DataPlane
 ```
 
 ### NIST 800-53 Control Crosswalk
@@ -119,7 +119,7 @@ flowchart TD
 
 ## 7. EU Data Sovereignty, GDPR & Air-Gap Compliance
 
-- **GDPR Article 32 (Security of Processing)**: Complete technical measures including end-to-end encryption, regular automated testing (92 unit tests, 96.5% coverage), and high resilience against power outages.
+- **GDPR Article 32 (Security of Processing)**: Complete technical measures including end-to-end encryption, regular automated testing (274+ unit tests, 93.4%+ coverage), and high resilience against power outages.
 - **100% European & Sovereign Residency**: No outbound data leaves the local physical boundary. Unlike cloud services, prompt tokens and vector embeddings never transit US or third-country infrastructure, completely satisfying **Schrems II** data residency mandates.
 - **Physical Air-Gap Attestation**: When disconnected from terrestrial fiber and Starlink, the system continues full autonomous AI inference, local document indexing, and internal collaboration without degradation.
 

@@ -67,8 +67,8 @@
 
 ## 📋 First-Boot Commissioning Smoke Test Checklist
 
-- [ ] **DC Polarity Verification:** Multimeter reads $+51.2\text{V}$ to $+53.5\text{V}$ DC on inverter input terminals with zero reverse polarity.
-- [ ] **BMS Communication:** RS485 communication established; all 32 LiFePO4 cells balanced within $\pm 15\text{mV}$.
-- [ ] **Coolant Flow:** D5 pump tachometer reports $>300\text{ L/h}$ flow rate; coolant temperature stabilizes below $35^\circ\text{C}$ at full 550 TOPS GPU load.
-- [ ] **Ground-to-Space RF Tracking:** Motorized phased-array passes self-calibration slew test across full $0^\circ\text{--}90^\circ$ elevation arc.
+- [ ] **DC Polarity Verification:** Multimeter reads $+51.2\text{ V}$ to $+53.5\text{ V}$ DC on inverter input terminals with zero reverse polarity.
+- [ ] **BMS Communication:** RS485 communication established; all 32 LiFePO4 cells balanced within $\pm 15\text{ mV}$.
+- [ ] **Coolant Flow:** D5 pump tachometer reports $> 300\text{ L/h}$ flow rate; coolant temperature stabilizes below $35^\circ\text{C}$ at full 550 TOPS GPU load.
+- [ ] **Ground-to-Space RF Tracking:** Motorized phased-array passes self-calibration slew test across full $0^\circ \text{ to } 90^\circ$ elevation arc.
 - [ ] **Load-Shedder Verification:** Simulated low SoC trigger gracefully throttles background AI jobs without interrupting core networking.

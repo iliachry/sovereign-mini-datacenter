@@ -2,7 +2,7 @@
 
 > **Document Type**: Empirical Hardware, AI Inference & Networking Benchmark Report  
 > **Target Audience**: System Engineers, Hardware Architects, Enterprise Evaluators & Investors  
-> **Developed by**: [Metatopia Studio](https://metatopia.gr) · License: MIT · © 2026
+> **Author & Lead Architect**: [Ilias Chrysovergis](https://iliachry.gr) · [Metatopia Studio](https://metatopia.gr) · License: MIT · © 2026
 
 ---
 
@@ -31,7 +31,7 @@ xychart-beta
     title "LLM Generation Throughput (Tokens/sec) & Time-To-First-Token (ms)"
     x-axis ["Llama-3.2-3B", "Qwen-2.5-Coder-7B", "DeepSeek-R1-8B", "CodeLlama-13B"]
     y-axis "Tokens / Second" 0 --> 90
-    bar ["Llama-3.2-3B", "Qwen-2.5-Coder-7B", "DeepSeek-R1-8B", "CodeLlama-13B"] [82.4, 46.8, 38.2, 22.5]
+    bar [82.4, 46.8, 38.2, 22.5]
 ```
 
 ### LLM Benchmark Results Table
@@ -51,14 +51,14 @@ xychart-beta
 
 ## 3. Benchmark Suite 2: Qdrant Semantic Vector Search Latency
 
-Semantic retrieval speed was benchmarked using Qdrant v1.9 with an HNSW index configured with $M=16$ and $\text{ef\_search}=100$, querying 768-dimensional dense document embeddings:
+Semantic retrieval speed was benchmarked using Qdrant v1.9 with an HNSW index configured with $M=16$ and $\mathrm{ef\_search} = 100$, querying 768-dimensional dense document embeddings:
 
 ```mermaid
 xychart-beta
     title "Vector Search Latency (p95 ms) vs. Collection Size"
     x-axis ["10,000 Vectors", "100,000 Vectors", "500,000 Vectors", "1,000,000 Vectors"]
     y-axis "Search Latency p95 (ms)" 0 --> 12
-    bar ["10k Vectors", "100k Vectors", "500k Vectors", "1M Vectors"] [1.2, 2.4, 4.8, 8.6]
+    bar [1.2, 2.4, 4.8, 8.6]
 ```
 
 ### Vector Search Results Table
@@ -82,16 +82,18 @@ Telemetry Scraping ──► State Evaluator ──► Cgroup / GPU Throttle ─
      [~12.4 ms]            [~4.2 ms]            [~28.1 ms]                 [~65.0 ms]
 ```
 
-$$\text{Total End-to-End Reaction Time } T_{\mathrm{shed}} = 12.4 + 4.2 + 28.1 + 65.0 = \mathbf{109.7 \text{ ms}}$$
+$$
+\text{Total End-to-End Reaction Time } T_{\mathrm{shed}} = 12.4 + 4.2 + 28.1 + 65.0 = \mathbf{109.7\text{ ms}}
+$$
 
 ### Load-Shedding Transition Benchmarks
 
 | Trigger Event | Initial State | Target State | System Power Reduction | Transition Latency | Action Executed |
 | :--- | :---: | :---: | :---: | :---: | :--- |
-| **Battery SoC $<50\%$** | $L_0$ (Nominal) | $L_1$ (Mild Throttling) | $320\text{W} \to 210\text{W}$ (-34%) | **44.7 ms** | GPU power capped to 50W |
-| **Battery SoC $<30\%$** | $L_1$ | $L_2$ (Heavy Shedding) | $210\text{W} \to 120\text{W}$ (-43%) | **109.7 ms** | Secondary node isolated via relay |
-| **Battery SoC $<20\%$** | $L_2$ | $L_3$ (Preservation) | $120\text{W} \to 42\text{W}$ (-65%) | **115.2 ms** | Primary AI suspended; LoRa heartbeats only |
-| **Solar Surplus ($>1\text{kW}$)** | $L_1 / L_2$ | $L_0$ (Nominal) | $120\text{W} \to 340\text{W}$ (+183%) | **32.0 ms** | Background AI batch queue resumed |
+| **Battery SoC < 50%** | $L_0$ (Nominal) | $L_1$ (Mild Throttling) | $320\text{W} \to 210\text{W}$ (-34%) | **44.7 ms** | GPU power capped to 50W |
+| **Battery SoC < 30%** | $L_1$ | $L_2$ (Heavy Shedding) | $210\text{W} \to 120\text{W}$ (-43%) | **109.7 ms** | Secondary node isolated via relay |
+| **Battery SoC < 20%** | $L_2$ | $L_3$ (Preservation) | $120\text{W} \to 42\text{W}$ (-65%) | **115.2 ms** | Primary AI suspended; LoRa heartbeats only |
+| **Solar Surplus (> 1 kW)** | $L_1 / L_2$ | $L_0$ (Nominal) | $120\text{W} \to 340\text{W}$ (+183%) | **32.0 ms** | Background AI batch queue resumed |
 
 ---
 
@@ -104,7 +106,7 @@ xychart-beta
     title "RF Link Budget SNR (dB) vs. Satellite Contact Elevation Angle"
     x-axis ["5° (AOS)", "15°", "30°", "45°", "60°", "75°", "90° (Zenith)"]
     y-axis "Link SNR (dB)" 0 --> 25
-    line ["UHF 437 MHz", "S-Band 2.4 GHz", "X-Band 10.4 GHz"] [4.2, 8.6, 13.8, 17.4, 19.8, 21.2, 22.0]
+    line [4.2, 8.6, 13.8, 17.4, 19.8, 21.2, 22.0]
 ```
 
 ### Space DTN Performance Metrics

@@ -2,7 +2,7 @@
 
 > **Sovereign Mesh & Autonomous Micro-Datacenter Network Architecture**  
 > Complete design specification for decentralized, off-grid, energy-aware, self-healing compute clusters.  
-> Developed by **[Metatopia Studio](https://metatopia.gr)** · License: MIT · © 2026
+> **Author & Lead Architect**: [Ilias Chrysovergis](https://iliachry.gr) · [Metatopia Studio](https://metatopia.gr) · License: MIT · © 2026
 
 ---
 

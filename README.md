@@ -4,10 +4,10 @@
 
 **Sovereign Mini Datacenter** is a self-powered, solar-backed, liquid-cooled micro-datacenter stack designed for **complete data and computational sovereignty**. Run your own private AI with semantic RAG, Git hosting, project management, encrypted file cloud, email server, password vault, and zero-trust mesh VPN — fully off-grid capable.
 
-Developed by **[Metatopia Studio](https://metatopia.gr)** · License: MIT · © 2026
+Developed by **[Metatopia Studio](https://metatopia.gr)** · Author & Lead Architect: **[Ilias Chrysovergis](https://iliachry.gr)** · License: MIT · © 2026
 
 [![CI & Quality Gates](https://github.com/iliachry/sovereign-mini-datacenter/actions/workflows/ci.yml/badge.svg)](https://github.com/iliachry/sovereign-mini-datacenter/actions/workflows/ci.yml)
-[![Quality Gate](https://img.shields.io/badge/Quality%20Gate-Strict%20Enforcement%20(96.5%25%20Cov)-10b981?style=flat&logo=githubactions)](https://github.com/iliachry/sovereign-mini-datacenter/actions/workflows/ci.yml)
+[![Quality Gate](https://img.shields.io/badge/Quality%20Gate-Strict%20Enforcement%20(93.4%25%20Cov)-10b981?style=flat&logo=githubactions)](https://github.com/iliachry/sovereign-mini-datacenter/actions/workflows/ci.yml)
 [![Commercialization](https://img.shields.io/badge/Commercialization-Investment%20Thesis-f59e0b?style=flat)](COMMERCIALIZATION.md)
 [![Benchmarks](https://img.shields.io/badge/Benchmarks-Empirical%20AI%20%26%20Power-06b6d4?style=flat)](BENCHMARKS.md)
 [![Compliance](https://img.shields.io/badge/Compliance-SOC%202%20%26%20PQC%20Ready-ec4899?style=flat)](COMPLIANCE.md)
@@ -22,7 +22,7 @@ Developed by **[Metatopia Studio](https://metatopia.gr)** · License: MIT · © 
 | Resource | Scope & Key Takeaways | Link |
 | :--- | :--- | :---: |
 | **📈 Commercial Strategy & TCO Model** | Market Sizing (\$60.4B TAM), Unit Economics, 5-Year Financials, **5.1 Mo Payback & 73.6% TCO Savings** vs. AWS | [**`COMMERCIALIZATION.md`**](COMMERCIALIZATION.md) |
-| **⚡ Empirical Performance Benchmarks** | Quantified local LLM token throughput (82.4 t/s), Qdrant retrieval latency ($<5\text{ms}$), load shedding ($<110\text{ms}$) | [**`BENCHMARKS.md`**](BENCHMARKS.md) |
+| **⚡ Empirical Performance Benchmarks** | Quantified local LLM token throughput (82.4 t/s), Qdrant retrieval latency (< 5 ms), load shedding (< 110 ms) | [**`BENCHMARKS.md`**](BENCHMARKS.md) |
 | **🛡️ Enterprise Compliance & PQC Security** | SOC 2 Type II, ISO 27001, NIST 800-207 Zero Trust, Post-Quantum Cryptography (ML-KEM/Kyber-1024), TPM 2.0 | [**`COMPLIANCE.md`**](COMPLIANCE.md) |
 | **🌐 Interactive Digital Twin & ROI Simulator** | 3D WebGL CAD visualizer, live subsystem explorer, and **interactive investor TCO calculator** | [**Live 3D WebGL Viewer**](https://iliachry.gr/sovereign-mini-datacenter/) |
 | **🏛️ Autonomous Sovereign Mesh Architecture** | 7-Layer protocol stacks, multi-spectral communication fabric, delay-tolerant space networking (RFC 9171) | [**`ARCHITECTURE.md`**](ARCHITECTURE.md) |
@@ -92,12 +92,19 @@ sovereign-mini-datacenter/
 │   └── sovereign_dc/            # Python CLI & Core Engine (`smdc`)
 │       ├── cli.py               # Unified management CLI entry point
 │       ├── __main__.py          # `python -m sovereign_dc` execution support
+│       ├── config.py            # Layered configuration management (Defaults -> YAML -> Env)
+│       ├── events.py            # Thread-safe in-process publish/subscribe event bus
+│       ├── hal/                 # Hardware Abstraction Layer (GPU, Power, Storage, Thermal)
+│       ├── log.py               # Structured JSON & colored console logging
 │       ├── agents/              # Sentinel, Indexer & Reviewer AI integrations
-│       ├── mesh/                # Multi-node WireGuard & LoRa bridge logic
-│       ├── space/               # Space DTN routing & orbital propagator
-│       └── telemetry/           # Power & thermal telemetry collector
+│       ├── mesh/                # Multi-node WireGuard, LoRa & Chaos engineering simulator
+│       ├── security/            # NIST FIPS 203/204 Post-Quantum Cryptography (ML-KEM, ML-DSA)
+│       ├── space/               # Space DTN routing (RFC 9171) & SGP4 orbital propagator
+│       ├── telemetry/           # Power, BMS & thermal telemetry collector
+│       └── web/                 # Real-time Web Operations Dashboard & REST API
 ├── software/
 │   ├── docker-compose.yml       # Sovereign Core 11-service production stack
+│   ├── Dockerfile.smdc          # Multi-arch container image (linux/amd64, linux/arm64)
 │   ├── setup.sh                 # Modular deployment CLI (--all, --with-vpn, etc.)
 │   ├── env.example              # Environment configuration template
 │   ├── prometheus.yml           # Prometheus scrape configuration (Node, Space, ESP32, LoRa)
@@ -124,12 +131,12 @@ sovereign-mini-datacenter/
 │   ├── accessories.scad         # 3D printable DIN rails, Jetson mounts, OLED bezels
 │   ├── MANUFACTURING_GUIDE.md   # Laser cut, CNC bend, and assembly instructions
 │   └── render.jpg               # Photorealistic 3D product render
-├── tests/                       # 92 Automated unit & integration tests (94% coverage)
+├── tests/                       # 274+ Automated unit & integration tests (93.4%+ coverage)
 ├── docs/                        # Interactive Three.js WebGL CAD & Space Viewer for GitHub Pages
 └── .github/
     └── workflows/
         ├── ci.yml               # Complete CI pipeline + Pytest + GitHub Pages deploy
-        └── publish.yml          # Automated PyPI package & GHCR multi-arch release pipeline
+        └── release.yml          # Automated PyPI package release pipeline
 ```
 
 ---
@@ -148,8 +155,17 @@ uv tool install sovereign-dc
 # Check container health, solar power, and space link telemetry
 smdc status
 
+# Launch real-time Web Operations Dashboard & REST API
+smdc dashboard --port 8080
+
 # Run automated security compliance & CIS benchmark audit
 smdc audit
+
+# Post-quantum cryptographic operations (NIST FIPS 203/204)
+smdc security pqc --help
+
+# Mesh chaos engineering & resilience simulations
+smdc mesh chaos --help
 
 # Autonomous AI Agent operations
 smdc agent status                                    # Inspect running agent daemons & Ollama status
@@ -334,7 +350,7 @@ helm upgrade --install sovereign-stack ./kubernetes/helm/sovereign-stack \
 ---
 
 ## 🛡️ Quality Gates & Automated Tests
-The project enforces strict automated Quality Gates covering Ruff linting, Ruff formatting, Mypy static typing, Docker Compose multi-stack integrity, and Pytest coverage ($\ge 85\%$):
+The project enforces strict automated Quality Gates covering Ruff linting, Ruff formatting, Mypy static typing, Docker Compose multi-stack integrity, and Pytest coverage with 274+ automated tests ($\ge 85\%$ strict threshold):
 
 ```bash
 # Run all quality gates locally
@@ -343,6 +359,7 @@ powershell -File scripts/quality_gate.ps1  # Windows PowerShell
 
 # Run individual checks
 uv tool run ruff check src/ tests/
+uv tool run ruff format --check src/ tests/
 uv tool run mypy --ignore-missing-imports src/sovereign_dc
 uv run pytest tests/ --cov=src/sovereign_dc --cov-fail-under=85
 ```

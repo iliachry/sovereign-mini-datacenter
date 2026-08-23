@@ -15,6 +15,7 @@
 2. **Local AI & Multi-Agent Copilots**: On-premise LLM inference (Ollama) + semantic vector search (Qdrant) running on NVIDIA Jetson Orin AGX / DGX accelerators.
 3. **Multi-Spectral Failover & Space DTN**: Resilient communication tiered from 10GbE fiber mesh $\to$ Starlink/5G $\to$ Sub-GHz LoRa Meshtastic $\to$ RFC 9171 Space Delay-Tolerant Networking (BPv7) with SGP4 orbital tracking.
 4. **Hardware-Enforced Load Shedding**: Real-time solar and battery State-of-Charge (SoC) telemetry automatically throttles heavy GPU batch workloads during low power states.
+5. **Post-Quantum Cryptography & Zero-Trust**: Quantum-safe key encapsulation (NIST FIPS 203 ML-KEM) and lattice signatures (NIST FIPS 204 ML-DSA) securing mesh peering and space bundles.
 
 ---
 
@@ -24,30 +25,46 @@
 sovereign-mini-datacenter/
 ├── src/
 │   └── sovereign_dc/            # Core Python library & CLI package (`smdc`)
-│       ├── __init__.py          # Version definition
+│       ├── __init__.py          # Version definition & package exports
 │       ├── __main__.py          # `python -m sovereign_dc` entry point
 │       ├── cli.py               # Unified click/rich CLI interface
+│       ├── config.py            # Layered configuration management (Defaults -> YAML -> Env)
+│       ├── events.py            # Thread-safe in-process publish/subscribe event bus
+│       ├── log.py               # Structured JSON & colored console formatters
 │       ├── telemetry.py         # Hardware telemetry parsers (VE.Direct, RS485, DS18B20)
 │       ├── agents/              # Autonomous local agent engines
 │       │   ├── sentinel_copilot.py   # Energy & thermal watchdog + load shedder
 │       │   ├── knowledge_indexer.py  # Semantic chunker & Qdrant RAG vectorizer
-│       │   └── gitlab_reviewer.py    # Automated git diff AI code reviewer
+│       │   ├── gitlab_reviewer.py    # Automated git diff AI code reviewer
+│       │   └── technician_notifier.py# Autonomous multi-channel technician dispatch
+│       ├── hal/                 # Hardware Abstraction Layer
+│       │   ├── gpu.py                # NVIDIA Jetson / Tegra / Desktop GPU telemetry
+│       │   ├── power.py              # Victron MPPT & SmartShunt BMS readers
+│       │   ├── storage.py            # NVMe health, S.M.A.R.T. & IOPS telemetry
+│       │   └── thermal.py            # 1-Wire DS18B20 liquid coolant & ambient probes
 │       ├── mesh/                # Multi-node peer-to-peer & LoRa networking
 │       │   ├── mesh_sync.py          # WireGuard peer health and state synchronizer
+│       │   ├── consensus.py          # Raft distributed consensus state machine
+│       │   ├── chaos.py              # Split-brain, link loss & packet loss chaos simulator
 │       │   └── lora/
 │       │       └── meshtastic_gateway.py # Sub-GHz LoRa packet gateway (AES-256-GCM)
-│       └── space/               # Space communications & satellite tracking
-│           ├── space_exporter.py     # Prometheus exporter for orbital/link metrics
-│           ├── dtn/                  # RFC 9171 Delay-Tolerant Networking (BPv7)
-│           │   ├── bundle.py         # Bundle creation, CBOR/JSON serialization, TTL
-│           │   └── router.py         # Persistent NVMe store-and-forward spool
-│           ├── orbital/              # Satellite orbital mechanics (SGP4)
-│           │   ├── propagator.py     # AOS/LOS contact pass calculator
-│           │   └── tle_updater.py    # Two-Line Element (TLE) ephemeris fetcher
-│           └── transceiver/          # RF Link budget & ground station models
-│               └── simulated_link.py # FSPL, Doppler shift, SNR, azimuth/elevation
+│       ├── security/            # Post-Quantum Cryptography Engine
+│       │   └── pqc.py                # NIST FIPS 203 ML-KEM & FIPS 204 ML-DSA
+│       ├── space/               # Space communications & satellite tracking
+│       │   ├── space_exporter.py     # Prometheus exporter for orbital/link metrics
+│       │   ├── dtn/                  # RFC 9171 Delay-Tolerant Networking (BPv7)
+│       │   │   ├── bundle.py         # Bundle creation, CBOR/JSON serialization, TTL
+│       │   │   └── router.py         # Persistent NVMe store-and-forward spool
+│       │   ├── orbital/              # Satellite orbital mechanics (SGP4)
+│       │   │   ├── propagator.py     # AOS/LOS contact pass calculator
+│       │   │   └── tle_updater.py    # Two-Line Element (TLE) ephemeris fetcher
+│       │   └── transceiver/          # RF Link budget & ground station models
+│       │       └── simulated_link.py # FSPL, Doppler shift, SNR, azimuth/elevation
+│       └── web/                 # Operations Web Dashboard & REST API
+│           └── dashboard.py          # Real-time HTTP dashboard & /api/status telemetry
 ├── software/                    # Production deployment & service definitions
 │   ├── docker-compose.yml       # Primary 11-service production stack
+│   ├── Dockerfile.smdc          # Multi-architecture container blueprint (amd64, arm64)
 │   ├── setup.sh                 # Modular deployment CLI script
 │   ├── env.example              # Environment variables template
 │   ├── prometheus.yml           # Prometheus scrape configurations
@@ -76,7 +93,7 @@ sovereign-mini-datacenter/
 │   └── MANUFACTURING_GUIDE.md   # Laser cut DXF export, CNC sheet metal bending specs
 ├── docs/                        # Interactive Three.js WebGL Digital Twin & GitHub Pages
 │   └── index.html               # 3D WebGL CAD viewer + interactive sizing & TCO calculator
-├── tests/                       # Complete automated Pytest suite (92+ tests, 96.5% coverage)
+├── tests/                       # Complete automated Pytest suite (274+ tests, 93.4%+ coverage)
 ├── ARCHITECTURE.md              # Multi-node autonomous network architecture specification
 ├── COMMERCIALIZATION.md         # Investment thesis, TAM/SAM/SOM & 3-year TCO payback model
 ├── BENCHMARKS.md                # Quantified LLM, vector search, load shedding & space metrics
@@ -89,39 +106,38 @@ sovereign-mini-datacenter/
 
 ## 3. Core Subsystems & Technical Specifications
 
-### A. Autonomous AI Agents (`src/sovereign_dc/agents/`)
-- **Sentinel Copilot (`sentinel_copilot.py`)**:
-  - Scrapes physical telemetry (Victron VE.Direct serial, RS485 Modbus battery BMS, 1-Wire DS18B20 temperature).
-  - Dynamically calculates load-shedding states:
-    - `L0` (Nominal, SoC > 50%): Full AI batch pipelines and multi-node compute.
-    - `L1` (Mild Throttling, SoC 30–50%): GPU power capped to 50W, non-critical metrics interval relaxed.
-    - `L2` (Heavy Shedding, SoC 20–30%): Secondary compute nodes isolated via relay.
-    - `L3` (Critical Preservation, SoC 10–20%): Primary compute suspended; LoRa emergency heartbeats only.
-    - `L4` (Blackout Safe, SoC < 10%): Total compute shutdown; solar auto-wake armed.
-- **Knowledge Indexer (`knowledge_indexer.py`)**:
-  - Chunks documentation (`.md`, `.txt`, `.py`, `.json`) into semantic windows (default: 500 chars with 50-char overlap).
-  - Generates dense vector embeddings using local Ollama models (`nomic-embed-text` / `bge-m3`) and stores them in Qdrant collections.
-- **GitLab Code Reviewer (`gitlab_reviewer.py`)**:
-  - Evaluates git diffs and patches locally using Ollama (`codellama` / `qwen2.5-coder` / `deepseek-coder`).
-  - Outputs structured code review commentary, security risk ratings, and patch recommendations.
+### A. Centralized Configuration & Event Bus (`src/sovereign_dc/config.py`, `events.py`)
+- **Layered Configuration (`config.py`)**: Hierarchical configuration dataclass (`SovereignConfig`) supporting programmatic defaults $\to$ YAML configuration files $\to$ environment variables (`SMDC_*`).
+- **In-Process Event Bus (`events.py`)**: Thread-safe publish/subscribe event dispatcher (`SovereignEventBus`) with wildcard event routing (`load_shedding.*`, `mesh.*`, `space.*`) and ring-buffered audit logs.
 
-### B. Space Delay-Tolerant Networking (DTN / BPv7) (`src/sovereign_dc/space/`)
-- **RFC 9171 BPv7 Bundles (`dtn/bundle.py`)**:
-  - Implements Delay-Tolerant Networking bundle creation, source/destination Endpoint Identifiers (`dtn://node.sovereign.space`), creation timestamps, lifetime TTL, and CRC-32 integrity checks.
-- **Store-and-Forward Router (`dtn/router.py`)**:
-  - Persistent NVMe disk-spooling queue for bundles waiting for orbital passes or intermittent mesh contacts.
-- **SGP4 Orbital Propagator (`orbital/propagator.py`)**:
-  - Calculates satellite contact windows: Acquisition of Signal (AOS), Time of Closest Approach (TCA), and Loss of Signal (LOS).
-  - Tracks elevation, azimuth, slant range, and Doppler frequency shifts.
-- **RF Link Budget Simulator (`transceiver/simulated_link.py`)**:
-  - Models Free-Space Path Loss (FSPL) across carrier frequencies (437 MHz UHF, 2.4 GHz S-band, 10.4 GHz X-band).
+### B. Hardware Abstraction Layer (HAL) (`src/sovereign_dc/hal/`)
+- **GPU (`gpu.py`)**: Automatic discovery of NVIDIA Tegra (Jetson Orin) via sysfs `/devices/platform/` or desktop GPUs via `pynvml`, parsing power draw, temperature, and utilization.
+- **Power (`power.py`)**: Interfaces Victron SmartSolar MPPT controllers and SmartShunt battery monitors via VE.Direct text streams.
+- **Storage (`storage.py`)**: Evaluates NVMe drive wear-out percentage, temperatures, and filesystem I/O metrics.
+- **Thermal (`thermal.py`)**: Reads 1-Wire DS18B20 Dallas sensors across `/sys/bus/w1/devices/` for liquid cooling flow monitoring.
 
-### C. Sovereign Mesh & LoRa Gateway (`src/sovereign_dc/mesh/`)
-- **Mesh Sync (`mesh_sync.py`)**:
-  - Multi-node health monitoring over WireGuard/Headscale private overlay IPs (`100.64.0.0/16`).
-  - Triggers state synchronization between nodes and falls back to Space DTN queues if terrestrial links drop.
-- **Meshtastic Gateway (`lora/meshtastic_gateway.py`)**:
-  - Encodes telemetry and emergency commands into Sub-GHz (868/915 MHz) LoRa packets with hardware AES-256-GCM encryption.
+### C. Post-Quantum Cryptography & Security Engine (`src/sovereign_dc/security/pqc.py`)
+- **NIST FIPS 204 (ML-DSA-65 & ML-DSA-87)**: Lattice-based digital signatures for cluster peer identity attestation, firmware verification, and RFC 9172 (BPSec) DTN bundle signing.
+- **NIST FIPS 203 (ML-KEM-768 & ML-KEM-1024)**: Lattice-based Key Encapsulation Mechanism (KEM) establishing quantum-safe symmetric encryption keys across terrestrial and space links.
+
+### D. Operations Dashboard & REST API (`src/sovereign_dc/web/dashboard.py`)
+- Built-in zero-dependency HTTP server delivering a responsive, dark-mode glassmorphic single-page operations console (`smdc dashboard`).
+- Provides real-time status REST APIs (`/api/status`, `/health`) tracking battery State-of-Charge, solar harvest, thermal loops, Space DTN spools, and mesh peers.
+
+### E. Mesh Chaos Engineering Simulator (`src/sovereign_dc/mesh/chaos.py`)
+- Simulates network partition scenarios, split-brain conditions, terrestrial link dropouts with automatic Space DTN spooling fallback, and deterministic packet loss replication.
+
+### F. Autonomous AI Agents (`src/sovereign_dc/agents/`)
+- **Sentinel Copilot (`sentinel_copilot.py`)**: Scrapes physical telemetry (VE.Direct serial, RS485 Modbus, 1-Wire DS18B20) and enforces dynamic load shedding ($L_0 \to L_4$).
+- **Knowledge Indexer (`knowledge_indexer.py`)**: Chunks documents into semantic windows, generating embeddings via local Ollama models (`nomic-embed-text` / `bge-m3`) stored in Qdrant collections.
+- **GitLab Code Reviewer (`gitlab_reviewer.py`)**: Evaluates git diffs and patches locally using Ollama (`codellama` / `qwen2.5-coder` / `deepseek-coder`).
+- **Technician Notifier (`technician_notifier.py`)**: Dispatches urgent hardware repair instructions over LoRa, Matrix, and SMTP.
+
+### G. Space Delay-Tolerant Networking (DTN / BPv7) (`src/sovereign_dc/space/`)
+- **RFC 9171 BPv7 Bundles (`dtn/bundle.py`)**: Creates and verifies BPv7 bundles with CRC-32 integrity and optional PQC signatures.
+- **Store-and-Forward Router (`dtn/router.py`)**: Persistent NVMe spool for bundles awaiting satellite contact windows.
+- **SGP4 Orbital Propagator (`orbital/propagator.py`)**: Computes AOS/LOS satellite contact passes, azimuth, elevation, and Doppler shifts.
+- **RF Link Budget Simulator (`transceiver/simulated_link.py`)**: Free-Space Path Loss (FSPL) calculations across UHF, S-band, and X-band.
 
 ---
 
@@ -132,18 +148,24 @@ When contributing code, modifying existing modules, or adding new features, agen
 ### Python Standards
 - **Python Version**: Target Python $\ge 3.11$ (compatible with 3.11, 3.12, and 3.13).
 - **Type Annotations**: All function arguments, return types, and class attributes must have explicit type annotations (`typing.List`, `typing.Dict`, `typing.Optional`, `typing.Tuple`, `typing.Any`).
-- **Logging**: Use standard library `logging` instead of `print()` in core libraries. Format: `logging.basicConfig(format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")`.
-- **Package Layout**: All core Python code lives under `src/sovereign_dc/`. CLI entry points must be declared in `pyproject.toml` under `[project.scripts]`.
+- **Logging**: Use standard library `logging` or `sovereign_dc.log` with lazy `%s` interpolation. Never use bare `print()` in core libraries.
+- **Package Layout**: All core Python code lives under `src/sovereign_dc/`. CLI subcommands must be registered in `src/sovereign_dc/cli.py`.
 
-### Documentation & Markdown Formatting Rules
+### Documentation, Mermaid Diagrams & Math Formatting Rules
 - **Mermaid Diagrams on GitHub**:
-  - Always quote node labels containing spaces, punctuation, special symbols, slashes, or hyphens: `NodeID["Label text"]`.
-  - **Never** use bare pipe characters (`|`) inside node labels. Use bullet points (`•`), commas, or slashes instead.
-  - **Never** use raw `<` or `>` characters inside unquoted state transitions or labels (e.g. use `SoC under 50%` instead of `SoC < 50%` to avoid triggering GitHub's HTML sanitizer).
-  - Wrap sequence diagram participant aliases in quotes: `participant Sun as "☀️ Solar Array (MPPT)"`.
+  - **Quoted Node Labels**: Always quote node labels containing spaces, punctuation, special symbols, slashes, or hyphens: `NodeID["Label text"]`.
+  - **No Bare Pipes**: **Never** use bare pipe characters (`|`) inside node labels. Use bullet points (`•`), commas, or slashes instead.
+  - **Quoted Transition & Edge Labels**: Always quote transition labels containing special characters or ampersands: `-->|"Attestation & Keys"|`.
+  - **No Raw Angle Brackets**: **Never** use raw `<` or `>` characters inside unquoted state transitions or labels (e.g., write `SoC under 50%` or `SoC < 50%` with quotes/text to avoid triggering GitHub's HTML sanitizer).
+  - **Sequence Diagram Aliases**: Wrap participant aliases in quotes: `participant Sun as "☀️ Solar Array (MPPT)"`.
+  - **XYChart Beta Syntax**: In `xychart-beta`, define `bar` and `line` series as numerical arrays directly (`bar [1.2, 2.4, 4.8]`), omitting bracketed duplicate series names.
 - **LaTeX Math Rendering**:
-  - Place display math `$$` on its own separate line with a preceding and following blank line.
-  - **Never** use underscores inside `\text{...}` (e.g. use `$U_{\mathrm{gpu}}$` or `\text{GPU-Util}` instead of `\text{GPU_Util}`).
+  - **Display Math Blocks**: Place display math `$$` on its own separate line with a preceding and following blank line.
+  - **No Underscores in `\text{...}`**: **Never** use underscores inside `\text{...}`. Use `$U_{\mathrm{gpu}}$`, `\mathrm{ef\_search}`, or `\text{ef-search}` instead.
+  - **Table Math Spacing**: Ensure all mathematical expressions inside markdown tables have clean whitespace around comparison operators (`< 5 ms`, `> 1 kW`).
+
+### Continuous Documentation Synchronization Rule
+- **Mandatory AGENTS.md & README.md Updates**: Whenever new subsystems, modules, CLI commands, test suites, or architectural pillars are created or modified, `AGENTS.md` and `README.md` **must be updated immediately** to reflect the new state, file tree, test metrics, and CLI instructions.
 
 ---
 
@@ -178,6 +200,9 @@ uv run pytest tests/ --cov=src/sovereign_dc --cov-fail-under=85
 # Execute CLI locally
 .\.venv\Scripts\python -m sovereign_dc --help
 .\.venv\Scripts\python -m sovereign_dc status
+.\.venv\Scripts\python -m sovereign_dc dashboard --port 8080
+.\.venv\Scripts\python -m sovereign_dc mesh chaos --help
+.\.venv\Scripts\python -m sovereign_dc security pqc --help
 .\.venv\Scripts\python -m sovereign_dc benchmark --all
 .\.venv\Scripts\python -m sovereign_dc demo --steps 3
 .\.venv\Scripts\python -m sovereign_dc mesh consensus --nodes 3
@@ -192,7 +217,8 @@ uv run pytest tests/ --cov=src/sovereign_dc --cov-fail-under=85
 1. [ ] **Pass All Quality Gates Locally**: Run `scripts/quality_gate.ps1` or `scripts/quality_gate.sh` (Ruff lint/format, Mypy typing, Pytest $\ge 85\%$ coverage).
 2. [ ] **Pass All Unit Tests**: Verify all 274+ unit tests in `tests/` pass with zero failures.
 3. [ ] **Preserve Existing Interfaces**: Ensure CLI arguments, Prometheus metric names, and DTN bundle schemas remain backward-compatible.
-4. [ ] **Verify Markdown/Mermaid**: Ensure any new or modified `.md` files strictly comply with GitHub rendering guidelines.
-5. [ ] **Clean Conventional Commits**: Format commit messages cleanly using Conventional Commits (`feat:`, `fix:`, `docs:`, `test:`, `refactor:`).
-6. [ ] **Commit & Push to Remote**: Always stage changes, commit, and push directly to `origin/main` (or working feature branch).
-7. [ ] **Verify Remote CI Pipeline & Succeeded Before Stopping**: Always monitor and check that the remote GitHub Actions CI pipeline completes with **100% green (succeeded)** status after pushing. If any step fails, investigate, fix, commit, and re-verify until the entire CI pipeline succeeds before concluding the task.
+4. [ ] **Verify Markdown/Mermaid & Math**: Ensure any new or modified `.md` files strictly comply with GitHub Mermaid and LaTeX math rendering rules.
+5. [ ] **Synchronize Documentation**: Update `AGENTS.md` and `README.md` with any newly added modules, subcommands, or architectural changes.
+6. [ ] **Clean Conventional Commits**: Format commit messages cleanly using Conventional Commits (`feat:`, `fix:`, `docs:`, `test:`, `refactor:`).
+7. [ ] **Commit & Push to Remote**: Always stage changes, commit, and push directly to `origin/main` (or working feature branch).
+8. [ ] **Verify Remote CI Pipeline & Succeeded Before Stopping**: Always monitor and check that the remote GitHub Actions CI pipeline completes with **100% green (succeeded)** status after pushing. If any step fails, investigate, fix, commit, and re-verify until the entire CI pipeline succeeds before concluding the task.
