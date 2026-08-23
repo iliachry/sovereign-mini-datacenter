@@ -132,8 +132,8 @@ sovereign-mini-datacenter/
 │   ├── accessories.scad         # 3D printable DIN rails, Jetson mounts, OLED bezels
 │   ├── MANUFACTURING_GUIDE.md   # Laser cut, CNC bend, and assembly instructions
 │   └── render.jpg               # Photorealistic 3D product render
-├── tests/                       # 296+ Automated unit & integration tests (93.3%+ coverage)
-├── docs/                        # Interactive Three.js WebGL CAD & Space Viewer for GitHub Pages
+├── docs/                        # Interactive Three.js WebGL Digital Twin (ES Modules) & GitHub Pages
+├── tests/                       # 302+ Automated unit & integration tests (93.3%+ coverage)
 └── .github/
     └── workflows/
         ├── ci.yml               # Complete CI pipeline + Pytest + GitHub Pages deploy
