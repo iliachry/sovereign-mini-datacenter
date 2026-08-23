@@ -7,7 +7,7 @@
 Developed by **[Metatopia Studio](https://metatopia.gr)** · Author & Lead Architect: **[Ilias Chrysovergis](https://iliachry.gr)** · License: MIT · © 2026
 
 [![CI & Quality Gates](https://github.com/iliachry/sovereign-mini-datacenter/actions/workflows/ci.yml/badge.svg)](https://github.com/iliachry/sovereign-mini-datacenter/actions/workflows/ci.yml)
-[![Quality Gate](https://img.shields.io/badge/Quality%20Gate-Strict%20Enforcement%20(93.3%25%20Cov)-10b981?style=flat&logo=githubactions)](https://github.com/iliachry/sovereign-mini-datacenter/actions/workflows/ci.yml)
+[![Quality Gate](https://img.shields.io/badge/Quality%20Gate-Strict%20Enforcement%20(93.5%25%20Cov)-10b981?style=flat&logo=githubactions)](https://github.com/iliachry/sovereign-mini-datacenter/actions/workflows/ci.yml)
 [![Commercialization](https://img.shields.io/badge/Commercialization-Investment%20Thesis-f59e0b?style=flat)](COMMERCIALIZATION.md)
 [![Benchmarks](https://img.shields.io/badge/Benchmarks-Empirical%20AI%20%26%20Power-06b6d4?style=flat)](BENCHMARKS.md)
 [![Compliance](https://img.shields.io/badge/Compliance-SOC%202%20%26%20PQC%20Ready-ec4899?style=flat)](COMPLIANCE.md)
@@ -38,66 +38,84 @@ Inspect the 9U 19" chassis, rails, liquid-cooling loop, space DTN antenna, and r
 
 ## 🏛️ System Architecture
 
-> 📖 **Looking for the full multi-node network architecture?** See the comprehensive [Autonomous Sovereign Mesh Architecture](ARCHITECTURE.md) blueprint covering 7-layer protocol stacks, energy-directed workload scheduling, space DTN fallbacks, and zero-trust PQC security.
+```mermaid
+graph TD
+    classDef space fill:#1e1e38,stroke:#818cf8,stroke-width:2px,color:#fff;
+    classDef compute fill:#1e293b,stroke:#38bdf8,stroke-width:2px,color:#fff;
+    classDef power fill:#2a1b12,stroke:#f59e0b,stroke-width:2px,color:#fff;
+    classDef secure fill:#0f291e,stroke:#10b981,stroke-width:2px,color:#fff;
+    classDef client fill:#2d122d,stroke:#ec4899,stroke-width:2px,color:#fff;
 
-```
-                    ┌─────────────────────────────────────────────────────────┐
-                    │                   INTERNET / OFF-GRID                   │
-                    └───────────┬─────────────────────────────────┬───────────┘
-                                │ Public HTTPS (443)              │ Encrypted WireGuard (3478)
-                                ▼                                 ▼
-                    ┌───────────────────────┐         ┌───────────────────────┐
-                    │       TRAEFIK v3      │         │   HEADSCALE MESH VPN  │
-                    │  (Automatic TLS / LE) │◄───────►│  (Zero-Trust Overlay) │
-                    └───────────┬───────────┘         └───────────────────────┘
-                                │
-        ┌───────────────────────┼───────────────────────┬───────────────────────┐
-        ▼                       ▼                       ▼                       ▼
-┌───────────────┐       ┌───────────────┐       ┌───────────────┐       ┌───────────────┐
-│  OPEN-WEBUI   │       │   GITLAB CE   │       │  OPENPROJECT  │       │   NEXTCLOUD   │
-│  Private AI   │       │  Code & CI/CD │       │  Project Mgmt │       │  Cloud Files  │
-└───────┬───────┘       └───────┬───────┘       └───────┬───────┘       └───────┬───────┘
-        │                       │                       │                       │
-        ├───────────────────────┴───────────────────────┴───────────────────────┤
-        ▼                                                                       ▼
-┌───────────────┐       ┌───────────────┐       ┌───────────────┐       ┌───────────────┐
-│  OLLAMA (GPU) │       │ QDRANT VECTOR │       │  VAULTWARDEN  │       │    MAILCOW    │
-│  LLM Engine   │       │  Private RAG  │       │ Password Safe │       │ Sovereign Mail│
-└───────┬───────┘       └───────────────┘       └───────────────┘       └───────────────┘
-        │
-        ▼
-┌───────────────────────────────────────────────────────────────────────────────────────┐
-│                      TELEMETRY, AUTOMATION & DISASTER RECOVERY                        │
-├───────────────────────┬───────────────────────┬───────────────────────────────────────┤
-│    PROMETHEUS &       │   POWER & BMS         │          RESTIC BACKUP                │
-│       GRAFANA         │   TELEMETRY EXPORTER  │             ENGINE                    │
-│ Metrics & Dashboards  │ Solar / Battery / Temp│ AES-256 Snapshots to NVMe / S3 / B2   │
-└───────────────────────┴───────────┬───────────┴───────────────────────────────────────┘
-                                    │
-                                    ▼ (Dynamic Load-Shedding Trigger)
-                        ┌───────────────────────┐
-                        │ LOAD-SHEDDER SENTINEL │
-                        │ Auto-Throttles GPU if │
-                        │  Battery SoC < 20%    │
-                        └───────────────────────┘
+    subgraph SpaceLayer["🛰️ Space & Satellite DTN Layer (RFC 9171)"]
+        Sat1["Starlink LEO Relay<br/>(S-Band / Ku-Band)"]:::space
+        Sat2["Iridium / Swarm IoT<br/>(Doppler-Compensated LoRa)"]:::space
+        DTNRouter["RFC 9171 BPv7 DTN Router<br/>(Store-and-Forward NVMe Spool)"]:::space
+    end
+
+    subgraph EnergyLayer["☀️ Off-Grid Power & Environmental Fabric"]
+        Solar["1,640W Bifacial Solar PV"]:::power
+        MPPT["Victron SmartSolar MPPT 150/35"]:::power
+        Battery["10.24 kWh LiFePO4 Smart BMS"]:::power
+        Cooling["Dual 360mm Closed Liquid Loop<br/>(1-Wire DS18B20 Probes)"]:::power
+    end
+
+    subgraph ComputeStack["⚡ Sovereign Edge Compute & AI Cluster"]
+        Jetson1["Primary: Jetson AGX Orin 64GB<br/>(Ollama LLM Engine • 275 TOPS)"]:::compute
+        Jetson2["Secondary: Jetson AGX Orin 64GB<br/>(Qdrant Semantic Vector Search)"]:::compute
+        Sentinel["Sentinel Copilot Agent<br/>(Telemetry & Dynamic Load Shedding)"]:::secure
+        Economy["Autonomous Compute Economy<br/>(State Channels • Solar Price Oracle)"]:::secure
+    end
+
+    subgraph SecurityMesh["🛡️ Quantum-Safe WireGuard Mesh"]
+        PQC["NIST FIPS 203 ML-KEM-1024<br/>NIST FIPS 204 ML-DSA-87"]:::secure
+        WireGuard["WireGuard Zero-Trust Mesh"]:::secure
+        LoRaMesh["Sub-GHz LoRa Meshtastic Mesh"]:::secure
+    end
+
+    subgraph ClientAccess["💻 Sovereign Digital Twin & Client Access"]
+        WebTwin["3D WebGL Digital Twin (Three.js ESM)<br/>Live Telemetry SSE Stream"]:::client
+        MCP["Model Context Protocol Server<br/>(smdc mcp • stdio JSON-RPC 2.0)"]:::client
+        OpsConsole["smdc CLI & Web Dashboard"]:::client
+    end
+
+    Solar --> MPPT --> Battery
+    Battery --> Jetson1
+    Battery --> Jetson2
+    Cooling -.->|"Thermal Telemetry"| Sentinel
+    MPPT -.->|"VE.Direct Telemetry"| Sentinel
+    Sentinel -->|"L0-L4 Load Shedding"| Jetson1
+    Sentinel -->|"Price Adjustments"| Economy
+
+    Jetson1 <-->|"NVLink / 10GbE"| Jetson2
+    Jetson1 -->|"BPSec Signed Bundles"| DTNRouter
+    DTNRouter <-->|"AOS/LOS SGP4 Contact"| Sat1
+    DTNRouter <-->|"Sub-GHz LoRa Relays"| Sat2
+
+    PQC --> WireGuard
+    WireGuard <--> Jetson1
+    LoRaMesh <--> Sentinel
+
+    WebTwin <-->|"Live SSE & Control REST"| OpsConsole
+    MCP <-->|"JSON-RPC 2.0 stdio"| Jetson1
 ```
 
 ---
 
-## 🏗️ Repository Structure
+## 📁 Repository Layout
 
 ```
 sovereign-mini-datacenter/
 ├── src/
-│   └── sovereign_dc/            # Python CLI & Core Engine (`smdc`)
-│       ├── cli.py               # Unified management CLI entry point
-│       ├── __main__.py          # `python -m sovereign_dc` execution support
-│       ├── config.py            # Layered configuration management (Defaults -> YAML -> Env)
-│       ├── events.py            # Thread-safe in-process publish/subscribe event bus
+│   └── sovereign_dc/            # Python CLI & Core Stack Package (`smdc`)
+│       ├── __init__.py          # Version & package metadata
+│       ├── cli.py               # Unified CLI interface (Click/Rich)
+│       ├── config.py            # Layered configuration (Defaults -> YAML -> Env)
+│       ├── events.py            # In-process thread-safe pub/sub event bus
+│       ├── log.py               # Structured JSON & colored logging
 │       ├── hal/                 # Hardware Abstraction Layer (GPU, Power, Storage, Thermal)
-│       ├── log.py               # Structured JSON & colored console logging
-│       ├── agents/              # Sentinel, Indexer & Reviewer AI integrations
+│       ├── agents/              # Autonomous AI Agents (Sentinel, Indexer, CodeReviewer)
 │       ├── economy/             # Monetary & Compute Economy (Wallets, Ledger, State Channels, Dynamic Pricing)
+│       ├── mcp/                 # Native Model Context Protocol Server (2024-11-05 JSON-RPC 2.0)
 │       ├── mesh/                # Multi-node WireGuard, LoRa & Chaos engineering simulator
 │       ├── security/            # NIST FIPS 203/204 Post-Quantum Cryptography (ML-KEM, ML-DSA)
 │       ├── space/               # Space DTN routing (RFC 9171) & SGP4 orbital propagator
@@ -133,7 +151,7 @@ sovereign-mini-datacenter/
 │   ├── MANUFACTURING_GUIDE.md   # Laser cut, CNC bend, and assembly instructions
 │   └── render.jpg               # Photorealistic 3D product render
 ├── docs/                        # Interactive Three.js WebGL Digital Twin (ES Modules) & GitHub Pages
-├── tests/                       # 302+ Automated unit & integration tests (93.3%+ coverage)
+├── tests/                       # 333+ Automated unit & integration tests (93.5%+ coverage)
 └── .github/
     └── workflows/
         ├── ci.yml               # Complete CI pipeline + Pytest + GitHub Pages deploy

@@ -47,6 +47,12 @@ sovereign-mini-datacenter/
 │       │   ├── power.py              # Victron MPPT & SmartShunt BMS readers
 │       │   ├── storage.py            # NVMe health, S.M.A.R.T. & IOPS telemetry
 │       │   └── thermal.py            # 1-Wire DS18B20 liquid coolant & ambient probes
+│       ├── mcp/                 # Native Model Context Protocol (MCP) Server
+│       │   ├── __init__.py           # Package exports (MCPServer, MCPTool, MCPResource, MCPPrompt)
+│       │   ├── server.py             # JSON-RPC 2.0 stdio server and request router
+│       │   ├── tools.py              # 10 MCP operational tools (telemetry, pricing, DTN, PQC)
+│       │   ├── resources.py          # 5 dynamic MCP resource URI endpoints
+│       │   └── prompts.py            # 3 operational workflow prompts
 │       ├── mesh/                # Multi-node peer-to-peer & LoRa networking
 │       │   ├── mesh_sync.py          # WireGuard peer health and state synchronizer
 │       │   ├── consensus.py          # Raft distributed consensus state machine
@@ -98,7 +104,7 @@ sovereign-mini-datacenter/
 │   └── MANUFACTURING_GUIDE.md   # Laser cut DXF export, CNC sheet metal bending specs
 ├── docs/                        # Interactive Three.js WebGL Digital Twin & GitHub Pages
 │   └── index.html               # 3D WebGL CAD viewer + interactive sizing & TCO calculator
-├── tests/                       # Complete automated Pytest suite (302+ tests, 93.3%+ coverage)
+├── tests/                       # Complete automated Pytest suite (333+ tests, 93.5%+ coverage)
 ├── ARCHITECTURE.md              # Multi-node autonomous network architecture specification
 ├── COMMERCIALIZATION.md         # Investment thesis, TAM/SAM/SOM & 3-year TCO payback model
 ├── BENCHMARKS.md                # Quantified LLM, vector search, load shedding & space metrics
@@ -151,6 +157,12 @@ sovereign-mini-datacenter/
 - **Immutable Ledger & State Channels (`ledger.py`)**: Append-only transaction ledger with replay protection and bidirectional off-chain micropayment state channels.
 - **Dynamic Solar-Aware Pricing Engine (`market.py`)**: Real-time pricing oracle adjusting service rates based on solar harvest ($>1000\text{ W} \to 50\%$ discount) and battery reserves ($<25\% \to 3.0\times$ surge pricing).
 - **Delay-Tolerant Settlement (`settlement.py`)**: Cryptographic Proof-of-Compute and Proof-of-Relay verification reconciled across terrestrial mesh or RFC 9171 satellite contact passes.
+
+### I. Native Model Context Protocol (MCP) Server (`src/sovereign_dc/mcp/`)
+- **Standard Protocol Support (2024-11-05)**: Standardized JSON-RPC 2.0 stdio interface exposing datacenter hardware and services to AI assistants (Antigravity, Claude Desktop, Cursor, Cline).
+- **Operational MCP Tools (`tools.py`)**: 10 callable tools including `get_telemetry`, `get_system_status`, `set_load_shedding`, `query_market_pricing`, `get_wallet_balances`, `spool_dtn_bundle`, `predict_satellite_passes`, `query_knowledge_indexer`, `run_security_audit`, and `dispatch_technician_alert`.
+- **Dynamic MCP Resources (`resources.py`)**: 5 live URI resources (`smdc://telemetry/current`, `smdc://system/manifest`, `smdc://economy/market`, `smdc://space/dtn/spool`, `smdc://security/pqc/status`).
+- **Standard MCP Prompts (`prompts.py`)**: 3 diagnostic and workflow prompts (`diagnose_power_incident`, `plan_compute_workload`, `prepare_space_transmission`).
 
 ---
 
@@ -223,6 +235,11 @@ uv run pytest tests/ --cov=src/sovereign_dc --cov-fail-under=85
 .\.venv\Scripts\python -m sovereign_dc mesh consensus --nodes 3
 .\.venv\Scripts\python -m sovereign_dc space passes --hours 12
 .\.venv\Scripts\python -m sovereign_dc agent ask "Summarize power status"
+.\.venv\Scripts\python -m sovereign_dc mcp test
+.\.venv\Scripts\python -m sovereign_dc mcp tools
+.\.venv\Scripts\python -m sovereign_dc mcp resources
+.\.venv\Scripts\python -m sovereign_dc mcp prompts
+.\.venv\Scripts\python -m sovereign_dc mcp serve
 ```
 
 ---

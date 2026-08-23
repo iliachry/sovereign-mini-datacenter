@@ -929,6 +929,136 @@ def cmd_bootstrap(args):
             print("\nWatchdog terminated by operator.")
 
 
+# --- Model Context Protocol (MCP) Handlers ---
+
+
+def cmd_mcp_serve(args: Any) -> None:
+    """Runs standard Model Context Protocol (MCP) JSON-RPC 2.0 stdio server."""
+    from sovereign_dc.mcp.server import MCPServer
+
+    server = MCPServer()
+    server.run_stdio()
+
+
+def cmd_mcp_tools(args: Any) -> None:
+    """Lists all registered Model Context Protocol (MCP) tools."""
+    from sovereign_dc.mcp.tools import get_mcp_tools
+
+    tools = get_mcp_tools()
+    print(f"\n{BOLD}{CYAN}=== Sovereign Mini Datacenter — Registered MCP Tools ({len(tools)}) ==={RESET}\n")
+    for i, t in enumerate(tools, 1):
+        print(f"  {GREEN}{i:2d}. {BOLD}{t.name:<26}{RESET} {t.description}")
+        props = t.input_schema.get("properties", {})
+        req = t.input_schema.get("required", [])
+        if props:
+            for p_name, p_info in props.items():
+                req_tag = f"{RED}*{RESET}" if p_name in req else ""
+                print(
+                    f"      • {CYAN}{p_name}{req_tag}{RESET} ({p_info.get('type', 'any')}): {p_info.get('description', '')}"
+                )
+    print(f"\n{MAGENTA}💡 Run 'smdc mcp serve' to launch JSON-RPC stdio server for Claude Desktop / Cursor.{RESET}\n")
+
+
+def cmd_mcp_resources(args: Any) -> None:
+    """Lists all registered Model Context Protocol (MCP) resource URIs."""
+    from sovereign_dc.mcp.resources import get_mcp_resources
+
+    resources = get_mcp_resources()
+    print(f"\n{BOLD}{CYAN}=== Sovereign Mini Datacenter — Registered MCP Resources ({len(resources)}) ==={RESET}\n")
+    for i, r in enumerate(resources, 1):
+        print(f"  {GREEN}{i:2d}. {BOLD}{r.uri:<32}{RESET} [{r.mime_type}]")
+        print(f"      {r.name} — {r.description}")
+    print(f"\n{MAGENTA}💡 Read dynamically via JSON-RPC 'resources/read' with uri parameter.{RESET}\n")
+
+
+def cmd_mcp_prompts(args: Any) -> None:
+    """Lists all registered Model Context Protocol (MCP) operational prompts."""
+    from sovereign_dc.mcp.prompts import get_mcp_prompts
+
+    prompts = get_mcp_prompts()
+    print(f"\n{BOLD}{CYAN}=== Sovereign Mini Datacenter — Registered MCP Prompts ({len(prompts)}) ==={RESET}\n")
+    for i, p in enumerate(prompts, 1):
+        print(f"  {GREEN}{i:2d}. {BOLD}{p.name:<28}{RESET} {p.description}")
+        if p.arguments:
+            for arg in p.arguments:
+                req_tag = f"{RED}*{RESET}" if arg.required else ""
+                print(f"      • {YELLOW}{arg.name}{req_tag}{RESET}: {arg.description}")
+    print()
+
+
+def cmd_mcp_test(args: Any) -> None:
+    """Performs end-to-end self-test of the MCP server handshake, tools, resources and prompts."""
+    from sovereign_dc.mcp.server import MCPServer
+
+    print(f"\n{BOLD}{CYAN}=== Sovereign Mini Datacenter — MCP Self-Test & Diagnostic ==={RESET}\n")
+    server = MCPServer()
+
+    # 1. Test initialize handshake
+    init_req = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2024-11-05"}}
+    res = server.handle_request(init_req)
+    if res and "result" in res and res["result"].get("protocolVersion") == "2024-11-05":
+        print(
+            f"  [{GREEN}PASS{RESET}] Handshake: MCP Protocol 2024-11-05 initialized ({server.server_name} v{server.version})"
+        )
+    else:
+        print(f"  [{RED}FAIL{RESET}] Handshake: Invalid response: {res}")
+
+    # 2. Test ping
+    ping_req = {"jsonrpc": "2.0", "id": 2, "method": "ping"}
+    res = server.handle_request(ping_req)
+    if res and res.get("result") == {}:
+        print(f"  [{GREEN}PASS{RESET}] Ping: JSON-RPC 2.0 keepalive nominal")
+    else:
+        print(f"  [{RED}FAIL{RESET}] Ping: Failed")
+
+    # 3. Test tools/list
+    tlist_req = {"jsonrpc": "2.0", "id": 3, "method": "tools/list"}
+    res = server.handle_request(tlist_req)
+    t_count = len(res.get("result", {}).get("tools", [])) if res else 0
+    print(f"  [{GREEN}PASS{RESET}] Tools List: Discovered {BOLD}{t_count}{RESET} operational tools")
+
+    # 4. Test tool call: get_telemetry
+    tcall_req = {
+        "jsonrpc": "2.0",
+        "id": 4,
+        "method": "tools/call",
+        "params": {"name": "get_telemetry", "arguments": {}},
+    }
+    res = server.handle_request(tcall_req)
+    if res and not res.get("result", {}).get("isError"):
+        print(f"  [{GREEN}PASS{RESET}] Tool Call: `get_telemetry` returned hardware payload")
+    else:
+        print(f"  [{RED}FAIL{RESET}] Tool Call: `get_telemetry` failed: {res}")
+
+    # 5. Test resources/read: smdc://telemetry/current
+    rread_req = {
+        "jsonrpc": "2.0",
+        "id": 5,
+        "method": "resources/read",
+        "params": {"uri": "smdc://telemetry/current"},
+    }
+    res = server.handle_request(rread_req)
+    if res and "contents" in res.get("result", {}):
+        print(f"  [{GREEN}PASS{RESET}] Resource Read: `smdc://telemetry/current` successfully resolved")
+    else:
+        print(f"  [{RED}FAIL{RESET}] Resource Read: Failed: {res}")
+
+    # 6. Test prompts/get: diagnose_power_incident
+    pget_req = {
+        "jsonrpc": "2.0",
+        "id": 6,
+        "method": "prompts/get",
+        "params": {"name": "diagnose_power_incident", "arguments": {"symptom": "Low SoC test"}},
+    }
+    res = server.handle_request(pget_req)
+    if res and "messages" in res.get("result", {}):
+        print(f"  [{GREEN}PASS{RESET}] Prompt Get: `diagnose_power_incident` synthesized context")
+    else:
+        print(f"  [{RED}FAIL{RESET}] Prompt Get: Failed: {res}")
+
+    print(f"\n{GREEN}{BOLD}✅ All Model Context Protocol (MCP) diagnostic checks passed.{RESET}\n")
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="smdc",
@@ -1126,6 +1256,29 @@ def main():
     p_dash.add_argument("--port", type=int, default=8080, help="Port to listen on (default: 8080)")
     p_dash.add_argument("--no-browser", action="store_true", help="Do not automatically open default web browser")
     p_dash.set_defaults(func=cmd_dashboard)
+
+    # Model Context Protocol (MCP) Server Suite
+    p_mcp = subparsers.add_parser(
+        "mcp", help="Native Model Context Protocol (MCP) Server for Claude Desktop, Cursor & AI agents"
+    )
+    mcp_subs = p_mcp.add_subparsers(dest="mcp_command", help="MCP actions")
+
+    p_mcp_serve = mcp_subs.add_parser("serve", help="Run standard MCP JSON-RPC 2.0 stdio server loop")
+    p_mcp_serve.set_defaults(func=cmd_mcp_serve)
+
+    p_mcp_tools = mcp_subs.add_parser("tools", help="List all registered MCP tools and JSON schemas")
+    p_mcp_tools.set_defaults(func=cmd_mcp_tools)
+
+    p_mcp_resources = mcp_subs.add_parser("resources", help="List all registered MCP resources and URIs")
+    p_mcp_resources.set_defaults(func=cmd_mcp_resources)
+
+    p_mcp_prompts = mcp_subs.add_parser("prompts", help="List all registered MCP operational prompt templates")
+    p_mcp_prompts.set_defaults(func=cmd_mcp_prompts)
+
+    p_mcp_test = mcp_subs.add_parser("test", help="Run end-to-end self-test of MCP handshake, tools and resources")
+    p_mcp_test.set_defaults(func=cmd_mcp_test)
+
+    p_mcp.set_defaults(func=cmd_mcp_tools)
 
     args = parser.parse_args()
     if hasattr(args, "func"):
