@@ -160,6 +160,26 @@ jobs:
             cad/rack_enclosure.scad
           echo "✅ OpenSCAD export succeeded: $(du -sh docs/cad/rack_enclosure.stl)"
 
+  # ── Quality Gate 7: Embedded Firmware & ESPHome Integrity ──────────
+  quality-gate-firmware-validation:
+    name: "Quality Gate: Embedded Firmware & ESPHome"
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python for ESPHome validation
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Validate ESPHome and Firmware configurations
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyyaml
+          python -c "import yaml; yaml.safe_load(open('firmware/esphome_smdc_bridge.yaml'))"
+          [ -s firmware/esp32_telemetry_bridge.ino ] || (echo "Arduino firmware missing!" && exit 1)
+          echo "✅ ESPHome configuration and Arduino INO verified."
+
   # ── Quality Gate Final: GitHub Pages Deployment ────────────────────
   deploy-pages:
     name: "Deploy 3D Digital Twin to GitHub Pages"
@@ -170,6 +190,7 @@ jobs:
       - quality-gate-pytest-matrix
       - quality-gate-security-audit
       - quality-gate-scad-export
+      - quality-gate-firmware-validation
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     steps:

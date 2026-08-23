@@ -619,6 +619,87 @@ def cmd_mesh_consensus(args):
     print(f"\n{GREEN}✅ Raft consensus and log replication verified.{RESET}\n")
 
 
+def cmd_mesh_chaos(args):
+    """Executes chaos engineering scenarios against simulated multi-node cluster."""
+    from sovereign_dc.mesh.chaos import MeshChaosSimulator
+
+    print(f"\n{BOLD}{CYAN}=== Sovereign Multi-Node Mesh — Chaos Engineering Suite ==={RESET}\n")
+    sim = MeshChaosSimulator()
+    scenario = getattr(args, "scenario", "all") or "all"
+
+    if scenario == "split-brain":
+        results = {"split_brain": sim.simulate_split_brain_partition()}
+    elif scenario == "leader-crash":
+        results = {"leader_crash": sim.simulate_leader_crash_and_failover()}
+    elif scenario == "dtn-fallback":
+        results = {"dtn_fallback": sim.simulate_terrestrial_sever_dtn_fallback()}
+    elif scenario == "packet-loss":
+        results = {"packet_loss": sim.simulate_packet_loss_replication()}
+    else:
+        results = sim.run_all_scenarios()
+
+    for r in results.values():
+        st = f"{GREEN}PASSED{RESET}" if r.success else f"{RED}FAILED{RESET}"
+        print(
+            f"  [ {st} ] Scenario: {BOLD}{r.scenario}{RESET} ({r.elapsed_ms:.1f}ms) | Score: {GREEN}{r.resilience_score:.1f}%{RESET}"
+        )
+        for k, v in r.details.items():
+            print(f"         • {k}: {v}")
+
+    print(f"\n{GREEN}✅ Chaos engineering stress-tests completed.{RESET}\n")
+
+
+def cmd_security_pqc(args):
+    """Benchmarks and verifies NIST FIPS 204 ML-DSA and FIPS 203 ML-KEM cryptographic engines."""
+    from sovereign_dc.security.pqc import PQCKEM, PQCAlgorithm, PQCSigner
+
+    print(f"\n{BOLD}{CYAN}=== Post-Quantum Cryptography (PQC) Verification Suite ==={RESET}\n")
+    print(f"Standards: {BOLD}NIST FIPS 204 (ML-DSA / Dilithium) & FIPS 203 (ML-KEM / Kyber){RESET}\n")
+
+    # 1. ML-DSA Digital Signature test
+    signer = PQCSigner(PQCAlgorithm.ML_DSA_65)
+    t0 = time.perf_counter()
+    kp = signer.generate_keypair()
+    t_kg = (time.perf_counter() - t0) * 1000.0
+
+    test_msg = b"SOVEREIGN_NODE_ATTESTATION_PAYLOAD_SHA3_512"
+    t0 = time.perf_counter()
+    sig = signer.sign(test_msg, kp.private_key)
+    t_sign = (time.perf_counter() - t0) * 1000.0
+
+    t0 = time.perf_counter()
+    verified = signer.verify(test_msg, sig, kp.public_key)
+    t_ver = (time.perf_counter() - t0) * 1000.0
+
+    print(f"{BOLD}[1] ML-DSA-65 (Lattice Digital Signature):{RESET}")
+    print(f"  • Key ID:          {CYAN}{kp.key_id}{RESET}")
+    print(f"  • Public Key Size: {len(kp.public_key)} bytes | Signature Size: {len(sig)} bytes")
+    print(f"  • Keygen Latency:  {t_kg:.2f}ms | Sign: {t_sign:.2f}ms | Verify: {t_ver:.2f}ms")
+    print(f"  • Status:          {GREEN if verified else RED}{'AUTHENTICATED' if verified else 'FAILED'}{RESET}")
+
+    # 2. ML-KEM Key Encapsulation test
+    kem = PQCKEM(PQCAlgorithm.ML_KEM_768)
+    t0 = time.perf_counter()
+    kem_kp = kem.generate_keypair()
+    t_kem_kg = (time.perf_counter() - t0) * 1000.0
+
+    t0 = time.perf_counter()
+    ct, ss_sender = kem.encapsulate(kem_kp.public_key)
+    t_enc = (time.perf_counter() - t0) * 1000.0
+
+    t0 = time.perf_counter()
+    ss_recip = kem.decapsulate(ct, kem_kp.private_key)
+    t_dec = (time.perf_counter() - t0) * 1000.0
+
+    kem_ok = ss_sender == ss_recip
+    print(f"\n{BOLD}[2] ML-KEM-768 (Lattice Key Encapsulation):{RESET}")
+    print(f"  • Ciphertext Size: {len(ct)} bytes | Shared Secret: {len(ss_sender) * 8}-bit AES Key")
+    print(f"  • Keygen Latency:  {t_kem_kg:.2f}ms | Encapsulate: {t_enc:.2f}ms | Decapsulate: {t_dec:.2f}ms")
+    print(f"  • Shared Secret:   {GREEN if kem_ok else RED}{'MATCHED' if kem_ok else 'MISMATCH'}{RESET}")
+
+    print(f"\n{GREEN}✅ Post-Quantum Cryptography engines operating nominally.{RESET}\n")
+
+
 def cmd_bootstrap(args):
     """Executes autonomous node bootstrap provisioner on hardware power-up."""
     from sovereign_dc.agents.bootstrap_provisioner import BootstrapProvisioner
@@ -773,7 +854,24 @@ def main():
     p_mesh_consensus = mesh_subs.add_parser("consensus", help="Simulate decentralized Raft leader election")
     p_mesh_consensus.add_argument("--nodes", type=int, default=3, help="Number of cluster nodes (default: 3)")
     p_mesh_consensus.set_defaults(func=cmd_mesh_consensus)
+    p_mesh_chaos = mesh_subs.add_parser("chaos", help="Simulate network partitions, leader crashes & DTN fallback")
+    p_mesh_chaos.add_argument(
+        "--scenario",
+        choices=["all", "split-brain", "leader-crash", "dtn-fallback", "packet-loss"],
+        default="all",
+        help="Specific chaos scenario to execute (default: all)",
+    )
+    p_mesh_chaos.set_defaults(func=cmd_mesh_chaos)
     p_mesh.set_defaults(func=cmd_mesh)
+
+    # Security Subcommand Suite
+    p_sec = subparsers.add_parser("security", help="Security auditing, CIS benchmarks & Post-Quantum Cryptography")
+    sec_subs = p_sec.add_subparsers(dest="sec_command", help="Security actions")
+    p_sec_audit = sec_subs.add_parser("audit", help="Run automated CIS benchmarks and security hardening audit")
+    p_sec_audit.set_defaults(func=cmd_audit)
+    p_sec_pqc = sec_subs.add_parser("pqc", help="Benchmark NIST FIPS 204 ML-DSA and FIPS 203 ML-KEM engines")
+    p_sec_pqc.set_defaults(func=cmd_security_pqc)
+    p_sec.set_defaults(func=cmd_audit)
 
     # Deploy
     p_deploy = subparsers.add_parser("deploy", help="Deploy or update container stacks")

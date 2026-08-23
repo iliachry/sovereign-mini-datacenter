@@ -89,3 +89,47 @@ def test_smdc_agent_cli():
     assert "ask" in res.stdout
     assert "review" in res.stdout
     assert "index" in res.stdout
+
+
+def test_smdc_mesh_chaos_cli():
+    res = subprocess.run(
+        [sys.executable, "-m", "sovereign_dc.cli", "mesh", "chaos", "--scenario", "split-brain"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=ENV,
+    )
+    assert res.returncode == 0
+    assert "Chaos Engineering Suite" in res.stdout
+    assert "split_brain_partition" in res.stdout
+    assert "PASSED" in res.stdout
+
+
+def test_smdc_security_pqc_cli():
+    res = subprocess.run(
+        [sys.executable, "-m", "sovereign_dc.cli", "security", "pqc"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=ENV,
+    )
+    assert res.returncode == 0
+    assert "Post-Quantum Cryptography" in res.stdout
+    assert "ML-DSA-65" in res.stdout
+    assert "ML-KEM-768" in res.stdout
+    assert "AUTHENTICATED" in res.stdout
+
+
+def test_smdc_security_audit_cli():
+    res = subprocess.run(
+        [sys.executable, "-m", "sovereign_dc.cli", "security", "audit"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=ENV,
+    )
+    assert res.returncode == 0
+    assert "Security Compliance Audit" in res.stdout
