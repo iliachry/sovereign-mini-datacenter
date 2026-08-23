@@ -700,6 +700,15 @@ def cmd_security_pqc(args):
     print(f"\n{GREEN}✅ Post-Quantum Cryptography engines operating nominally.{RESET}\n")
 
 
+def cmd_dashboard(args):
+    """Launches real-time Web Operations Dashboard and REST API server."""
+    from sovereign_dc.web.dashboard import run_dashboard_server
+
+    port = getattr(args, "port", 8080) or 8080
+    open_browser = not getattr(args, "no_browser", False)
+    run_dashboard_server(port=port, open_browser=open_browser)
+
+
 def cmd_bootstrap(args):
     """Executes autonomous node bootstrap provisioner on hardware power-up."""
     from sovereign_dc.agents.bootstrap_provisioner import BootstrapProvisioner
@@ -948,6 +957,12 @@ def main():
     # Docs
     p_docs = subparsers.add_parser("docs", help="Show 3D viewer and documentation URLs")
     p_docs.set_defaults(func=cmd_docs)
+
+    # Dashboard
+    p_dash = subparsers.add_parser("dashboard", help="Launch real-time Web Operations Dashboard & REST API")
+    p_dash.add_argument("--port", type=int, default=8080, help="Port to listen on (default: 8080)")
+    p_dash.add_argument("--no-browser", action="store_true", help="Do not automatically open default web browser")
+    p_dash.set_defaults(func=cmd_dashboard)
 
     args = parser.parse_args()
     if hasattr(args, "func"):

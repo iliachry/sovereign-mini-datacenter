@@ -1,0 +1,44 @@
+# ====================================================================
+# Sovereign Mini Datacenter — Multi-Arch Container Image Blueprint
+# Platforms: linux/amd64, linux/arm64 (NVIDIA Jetson Orin AGX / DGX)
+# ====================================================================
+
+# syntax=docker/dockerfile:1.7
+FROM python:3.12-slim-bookworm AS base
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    DEBIAN_FRONTEND=noninteractive \
+    SMDC_HOME=/app
+
+WORKDIR /app
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    iproute2 \
+    wireguard-tools \
+    sqlite3 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install python package
+COPY pyproject.toml README.md ./
+COPY src/ ./src/
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir .
+
+# Non-root unprivileged execution
+RUN useradd -m -u 1000 smdc && \
+    mkdir -p /data/dtn /data/documents && \
+    chown -R smdc:smdc /data /app
+
+USER smdc
+
+EXPOSE 8080 9101 9102
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:8080/health || exit 1
+
+ENTRYPOINT ["smdc"]
+CMD ["dashboard", "--port", "8080", "--no-browser"]

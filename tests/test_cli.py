@@ -133,3 +133,17 @@ def test_smdc_security_audit_cli():
     )
     assert res.returncode == 0
     assert "Security Compliance Audit" in res.stdout
+
+
+def test_smdc_dashboard_cli_help():
+    res = subprocess.run(
+        [sys.executable, "-m", "sovereign_dc.cli", "dashboard", "--help"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=ENV,
+    )
+    assert res.returncode == 0
+    assert "--port" in res.stdout
+    assert "--no-browser" in res.stdout
