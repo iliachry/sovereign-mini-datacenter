@@ -146,4 +146,40 @@ def get_mcp_prompts() -> list[MCPPrompt]:
             ],
             builder=build_prepare_space_transmission_prompt,
         ),
+        MCPPrompt(
+            name="onboard_enterprise_workload",
+            description="Step-by-step diagnostic and scaffolding prompt for onboarding third-party enterprise workloads.",
+            arguments=[
+                MCPPromptArgument(
+                    name="project_description",
+                    description="Natural language summary of the enterprise application to onboard",
+                    required=True,
+                )
+            ],
+            builder=build_onboard_enterprise_workload_prompt,
+        ),
+    ]
+
+
+def build_onboard_enterprise_workload_prompt(args: dict[str, str]) -> list[dict[str, Any]]:
+    """Builds a guided prompt for scaffolding and onboarding an enterprise application."""
+    project_desc = args.get(
+        "project_description", "An industrial IoT telemetry aggregator with real-time anomaly detection"
+    )
+    return [
+        {
+            "role": "user",
+            "content": {
+                "type": "text",
+                "text": (
+                    f"You are the Sovereign Mini Datacenter Enterprise Onboarding Copilot.\n"
+                    f"The enterprise operator wants to onboard the following project: '{project_desc}'.\n\n"
+                    f"Please perform the following onboarding workflow:\n"
+                    f"1. Call `scaffold_enterprise_app` with appropriate operational category, runtime, and power shedding tier.\n"
+                    f"2. Inspect the current node capacity by reading `smdc://system/manifest` and `get_telemetry`.\n"
+                    f"3. Verify if GPU vRAM or persistent NVMe storage quotas fit within available hardware limits.\n"
+                    f"4. Provide the operator with clear instructions on validating (`smdc app validate`), registering (`smdc app register`), and managing the application (`manage_enterprise_app`)."
+                ),
+            },
+        }
     ]

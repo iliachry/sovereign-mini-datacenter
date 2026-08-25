@@ -1059,6 +1059,350 @@ def cmd_mcp_test(args: Any) -> None:
     print(f"\n{GREEN}{BOLD}✅ All Model Context Protocol (MCP) diagnostic checks passed.{RESET}\n")
 
 
+def cmd_app_init(args):
+    """Scaffold a new turnkey enterprise application."""
+    from pathlib import Path
+
+    from sovereign_dc.enterprise.registry import EnterpriseRegistry
+    from sovereign_dc.enterprise.schema import AppCategory, PowerPriority, RuntimeType
+
+    print(f"\n{BOLD}{CYAN}=== Sovereign Mini Datacenter — Enterprise App Scaffolding ==={RESET}\n")
+    app_name = args.name or "My Enterprise Workload"
+    app_id = args.app_id or app_name.lower().replace(" ", "-").replace("_", "-")
+
+    try:
+        category = AppCategory(args.category)
+    except ValueError:
+        category = AppCategory.CUSTOM
+
+    try:
+        runtime = RuntimeType(args.runtime)
+    except ValueError:
+        runtime = RuntimeType.PROCESS
+
+    try:
+        power_tier = PowerPriority(args.power_tier)
+    except ValueError:
+        power_tier = PowerPriority.L1_STANDARD
+
+    target_dir = Path(args.target_dir or f"./apps/{app_id}")
+    manifest = EnterpriseRegistry.scaffold_manifest(
+        name=app_name,
+        app_id=app_id,
+        category=category,
+        runtime=runtime,
+        entrypoint=args.entrypoint or "python3 app.py",
+        gpu_required=args.gpu,
+        power_tier=power_tier,
+    )
+
+    created_path = EnterpriseRegistry.create_project_scaffold(target_dir, manifest, create_sample_code=True)
+    print(f"  {GREEN}✔ Created enterprise app scaffold:{RESET} {BOLD}{created_path}{RESET}")
+    print(f"  • App Name:      {CYAN}{manifest.name}{RESET} (`{manifest.app_id}`)")
+    print(f"  • Category:      {MAGENTA}{manifest.category.value}{RESET}")
+    print(
+        f"  • Power Tier:    {YELLOW}{manifest.power.tier.value}{RESET} (Min SoC: {manifest.power.min_battery_soc}%%)"
+    )
+    print(f"  • Runtime:       {BLUE}{manifest.runtime.value}{RESET} (`{manifest.entrypoint}`)")
+    print(
+        f"  • Quotas:        {manifest.resources.cpu_cores} Cores | {manifest.resources.ram_mb} MB RAM | {manifest.resources.max_power_w} W Max"
+    )
+
+    print(f"\n{BOLD}Next Steps to Onboard:{RESET}")
+    print(f"  1. Validate manifest:   {CYAN}smdc app validate {created_path}{RESET}")
+    print(f"  2. Register with node:  {CYAN}smdc app register {created_path}{RESET}")
+    print(f"  3. Start execution:     {CYAN}smdc app start {manifest.app_id}{RESET}")
+    print(f"  4. Monitor telemetry:   {CYAN}smdc app status {manifest.app_id}{RESET}\n")
+
+
+def cmd_app_validate(args):
+    """Validate an application manifest file or directory against schema and node budgets."""
+    from pathlib import Path
+
+    from sovereign_dc.enterprise.registry import EnterpriseRegistry
+
+    print(f"\n{BOLD}{CYAN}=== Sovereign Mini Datacenter — Enterprise Manifest Validation ==={RESET}\n")
+    target = Path(args.path or ".")
+    if target.is_dir():
+        manifest_file = target / "smdc-app.yaml"
+        if not manifest_file.exists():
+            manifest_file = target / "smdc-app.json"
+    else:
+        manifest_file = target
+
+    if not manifest_file.exists():
+        print(f"  {RED}✖ Manifest file not found:{RESET} {manifest_file}")
+        return
+
+    registry = EnterpriseRegistry()
+    manifest = registry.load_manifest_file(manifest_file)
+    if not manifest:
+        print(f"  {RED}✖ Validation failed:{RESET} Unable to parse manifest at {manifest_file}")
+        return
+
+    errors = manifest.validate()
+    if errors:
+        print(f"  {RED}✖ Validation errors found ({len(errors)}):{RESET}")
+        for err in errors:
+            print(f"    • {RED}{err}{RESET}")
+    else:
+        print(f"  {GREEN}✔ Manifest is valid:{RESET} {BOLD}{manifest.name}{RESET} ({manifest.app_id})")
+        print(f"  • Version:       {manifest.version}")
+        print(f"  • Category:      {MAGENTA}{manifest.category.value}{RESET}")
+        print(
+            f"  • Power Tier:    {YELLOW}{manifest.power.tier.value}{RESET} (Min SoC: {manifest.power.min_battery_soc}%%)"
+        )
+        print(f"  • Max Power:     {manifest.resources.max_power_w} W")
+        print(f"  • Compute:       {manifest.resources.cpu_cores} Cores | {manifest.resources.ram_mb} MB RAM")
+        if manifest.resources.gpu_required:
+            print(f"  • GPU VRAM:      {manifest.resources.gpu_vram_mb} MB (Required)")
+        print(f"  • Ports:         {manifest.network.ports or 'None'}")
+        print(f"  • Storage Mount: {manifest.storage.mount_point or 'Ephemeral'}\n")
+
+
+def cmd_app_register(args):
+    """Register an application with the local SMDC registry."""
+    from pathlib import Path
+
+    from sovereign_dc.enterprise.registry import EnterpriseRegistry
+
+    print(f"\n{BOLD}{CYAN}=== Sovereign Mini Datacenter — Register Enterprise Application ==={RESET}\n")
+    target = Path(args.path or ".")
+    if target.is_dir():
+        manifest_file = target / "smdc-app.yaml"
+        if not manifest_file.exists():
+            manifest_file = target / "smdc-app.json"
+    else:
+        manifest_file = target
+
+    registry = EnterpriseRegistry()
+    manifest = registry.load_manifest_file(manifest_file)
+    if not manifest:
+        print(f"  {RED}✖ Failed to load manifest from:{RESET} {manifest_file}")
+        return
+
+    success, errors = registry.register_app(manifest, manifest_path=manifest_file, persist=True)
+    if success:
+        print(
+            f"  {GREEN}✔ Successfully registered application:{RESET} {BOLD}{manifest.name}{RESET} (`{manifest.app_id}`)"
+        )
+        print(f"  • Run with: {CYAN}smdc app start {manifest.app_id}{RESET}\n")
+    else:
+        print(f"  {RED}✖ Registration rejected:{RESET} {'; '.join(errors)}\n")
+
+
+def cmd_app_unregister(args):
+    """Unregister an application from the local SMDC registry."""
+    from sovereign_dc.enterprise.registry import EnterpriseRegistry
+
+    registry = EnterpriseRegistry()
+    if registry.unregister_app(args.app_id, persist=True):
+        print(f"\n  {GREEN}✔ Successfully unregistered application:{RESET} {BOLD}{args.app_id}{RESET}\n")
+    else:
+        print(f"\n  {YELLOW}○ Application not found in registry:{RESET} {args.app_id}\n")
+
+
+def cmd_app_list(args):
+    """List all registered enterprise applications and their states."""
+    from sovereign_dc.enterprise.manager import EnterpriseManager
+
+    print(f"\n{BOLD}{CYAN}=== Sovereign Mini Datacenter — Onboarded Enterprise Applications ==={RESET}\n")
+    manager = EnterpriseManager()
+    states = manager.list_runtime_states()
+
+    if not states:
+        print(f"  {YELLOW}No enterprise applications registered.{RESET}")
+        print(f"  Scaffold a new application using: {CYAN}smdc app init <app-name>{RESET}\n")
+        return
+
+    print(f"  {BOLD}{'APP ID':<20} {'NAME':<24} {'CATEGORY':<16} {'POWER TIER':<16} {'STATUS':<12}{RESET}")
+    print(f"  {'-' * 20} {'-' * 24} {'-' * 16} {'-' * 16} {'-' * 12}")
+
+    for s in states:
+        m = s.manifest
+        status_color = (
+            GREEN if s.status.value == "running" else (YELLOW if s.status.value in ["paused", "starting"] else RESET)
+        )
+        print(
+            f"  {CYAN}{m.app_id:<20}{RESET} {m.name:<24} {MAGENTA}{m.category.value:<16}{RESET} {YELLOW}{m.power.tier.value:<16}{RESET} {status_color}{s.status.value.upper():<12}{RESET}"
+        )
+    print()
+
+
+def cmd_app_start(args):
+    """Start an enterprise application."""
+    from sovereign_dc.enterprise.manager import EnterpriseManager
+
+    print(f"\n{BOLD}{CYAN}=== Sovereign Mini Datacenter — Launch Enterprise Workload ==={RESET}\n")
+    manager = EnterpriseManager()
+    success, msg = manager.start_app(args.app_id)
+    if success:
+        print(f"  {GREEN}✔ {msg}{RESET}")
+        state = manager.get_runtime_state(args.app_id)
+        if state:
+            print(f"  • Power Allocation: {YELLOW}{state.power_draw_w:.1f} W{RESET}")
+            print(f"  • Memory Allocated: {state.ram_usage_mb:.1f} MB")
+            print(f"  • CPU Allocation:   {state.cpu_usage_percent:.1f}%\n")
+    else:
+        print(f"  {RED}✖ {msg}{RESET}\n")
+
+
+def cmd_app_stop(args):
+    """Stop an enterprise application."""
+    from sovereign_dc.enterprise.manager import EnterpriseManager
+
+    manager = EnterpriseManager()
+    success, msg = manager.stop_app(args.app_id)
+    if success:
+        print(f"\n  {GREEN}✔ {msg}{RESET}\n")
+    else:
+        print(f"\n  {RED}✖ {msg}{RESET}\n")
+
+
+def cmd_app_restart(args):
+    """Restart an enterprise application."""
+    from sovereign_dc.enterprise.manager import EnterpriseManager
+
+    manager = EnterpriseManager()
+    success, msg = manager.restart_app(args.app_id)
+    if success:
+        print(f"\n  {GREEN}✔ {msg}{RESET}\n")
+    else:
+        print(f"\n  {RED}✖ {msg}{RESET}\n")
+
+
+def cmd_app_status(args):
+    """Show detailed status and telemetry for enterprise applications."""
+    from sovereign_dc.enterprise.manager import EnterpriseManager
+
+    print(f"\n{BOLD}{CYAN}=== Sovereign Mini Datacenter — Enterprise Application Telemetry ==={RESET}\n")
+    manager = EnterpriseManager()
+
+    if args.app_id:
+        state = manager.get_runtime_state(args.app_id)
+        if not state:
+            print(f"  {RED}✖ Application '{args.app_id}' not found.{RESET}\n")
+            return
+        states = [state]
+    else:
+        states = manager.list_runtime_states()
+
+    if not states:
+        print(f"  {YELLOW}No enterprise applications registered.{RESET}\n")
+        return
+
+    for s in states:
+        m = s.manifest
+        status_color = (
+            GREEN if s.status.value == "running" else (YELLOW if s.status.value in ["paused", "starting"] else RESET)
+        )
+        print(f"  {BOLD}• Application:{RESET}      {CYAN}{m.name}{RESET} (`{m.app_id}` v{m.version})")
+        print(f"    - Category:         {MAGENTA}{m.category.value}{RESET}")
+        print(f"    - Status:           {status_color}{s.status.value.upper()}{RESET} (Health: {s.health_status})")
+        print(
+            f"    - Power Policy:     {YELLOW}{m.power.tier.value}{RESET} (Min SoC: {m.power.min_battery_soc}%%, Active Draw: {s.power_draw_w:.1f} W)"
+        )
+        print(
+            f"    - Resource Usage:   CPU: {s.cpu_usage_percent:.1f}% | RAM: {s.ram_usage_mb:.1f} MB (Max: {m.resources.ram_mb} MB)"
+        )
+        print(
+            f"    - Network Ports:    {m.network.ports or 'None'} (WireGuard: {m.network.expose_wireguard}, Space DTN: {m.network.space_dtn_enabled})"
+        )
+        print(f"    - Uptime:           {s.to_dict()['uptime_seconds']}s (Restarts: {s.restart_count})")
+        if s.custom_metrics:
+            print(f"    - Custom Metrics:   {json.dumps(s.custom_metrics)}")
+        print()
+
+
+def cmd_app_package(args):
+    """Package an application into a verified, PQC-signed .smdc-app bundle."""
+    from pathlib import Path
+
+    from sovereign_dc.enterprise.manager import EnterpriseManager
+
+    print(f"\n{BOLD}{CYAN}=== Sovereign Mini Datacenter — Package Enterprise Application ==={RESET}\n")
+    target = Path(args.path or ".")
+    manager = EnterpriseManager()
+    success, msg, meta = manager.package_app(target, output_path=args.output, sign_pqc=not args.no_pqc)
+
+    if success:
+        print(f"  {GREEN}✔ {msg}{RESET}")
+        print(f"  • App ID:            {CYAN}{meta.get('app_id')}{RESET} (v{meta.get('version')})")
+        print(f"  • SHA-256 Digest:    {meta.get('sha256')}")
+        print(f"  • Package Size:      {meta.get('package_size_bytes')} bytes")
+        pqc_sig = meta.get("pqc_signature")
+        if pqc_sig:
+            print(f"  • PQC Signature:     {GREEN}NIST FIPS 204 ML-DSA-87 Verified{RESET}")
+        else:
+            print(f"  • PQC Signature:     {YELLOW}Omitted (--no-pqc){RESET}")
+        print("\n  Package is ready for air-gapped deployment and Space DTN synchronization.\n")
+    else:
+        print(f"  {RED}✖ {msg}{RESET}\n")
+
+
+def cmd_app_test(args):
+    """Run automated self-test of the enterprise onboarding framework."""
+    import tempfile
+    from pathlib import Path
+
+    from sovereign_dc.enterprise.manager import EnterpriseManager
+    from sovereign_dc.enterprise.registry import EnterpriseRegistry
+    from sovereign_dc.enterprise.schema import AppCategory, PowerPriority
+
+    print(f"\n{BOLD}{CYAN}=== Sovereign Mini Datacenter — Enterprise Framework Self-Test ==={RESET}\n")
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir)
+        app_dir = tmp_path / "test-iot-sensor"
+        reg_file = tmp_path / "registry.json"
+
+        # 1. Test Scaffolding
+        print(f"  [{CYAN}RUN{RESET}] Step 1: Scaffolding test application...")
+        manifest = EnterpriseRegistry.scaffold_manifest(
+            name="Test IoT Ingest",
+            app_id="test-iot-ingest",
+            category=AppCategory.IOT,
+            power_tier=PowerPriority.L0_CRITICAL,
+        )
+        EnterpriseRegistry.create_project_scaffold(app_dir, manifest, create_sample_code=True)
+        assert (app_dir / "smdc-app.yaml").exists()
+        assert (app_dir / "app.py").exists()
+        print(f"  [{GREEN}PASS{RESET}] Step 1: Scaffolding created valid directory structure")
+
+        # 2. Test Validation
+        print(f"  [{CYAN}RUN{RESET}] Step 2: Validating manifest schema...")
+        registry = EnterpriseRegistry(registry_file=reg_file)
+        loaded = registry.load_manifest_file(app_dir / "smdc-app.yaml")
+        assert loaded is not None
+        assert len(loaded.validate()) == 0
+        print(f"  [{GREEN}PASS{RESET}] Step 2: Manifest validated with zero schema violations")
+
+        # 3. Test Registration
+        print(f"  [{CYAN}RUN{RESET}] Step 3: Registering with local registry...")
+        ok, errs = registry.register_app(loaded, manifest_path=app_dir / "smdc-app.yaml")
+        assert ok
+        assert registry.get_app("test-iot-ingest") is not None
+        print(f"  [{GREEN}PASS{RESET}] Step 3: Application successfully registered")
+
+        # 4. Test Lifecycle & Supervision
+        print(f"  [{CYAN}RUN{RESET}] Step 4: Testing lifecycle supervision...")
+        manager = EnterpriseManager(registry=registry)
+        start_ok, _ = manager.start_app("test-iot-ingest")
+        assert start_ok
+        state = manager.get_runtime_state("test-iot-ingest")
+        assert state is not None and state.status.value == "running"
+        print(f"  [{GREEN}PASS{RESET}] Step 4: Application launched and health status nominal")
+
+        # 5. Test Packaging
+        print(f"  [{CYAN}RUN{RESET}] Step 5: Packaging into PQC-signed .smdc-app bundle...")
+        pkg_ok, _, meta = manager.package_app(app_dir, output_path=tmp_path / "test.smdc-app", sign_pqc=True)
+        assert pkg_ok
+        assert "sha256" in meta
+        print(f"  [{GREEN}PASS{RESET}] Step 5: Package built with SHA-256 and PQC ML-DSA-87 attestation")
+
+    print(f"\n{GREEN}{BOLD}✅ All Enterprise Framework diagnostic checks passed.{RESET}\n")
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="smdc",
@@ -1234,7 +1578,7 @@ def main():
     p_ec_send.set_defaults(func=cmd_economy_send)
 
     p_ec_market = econ_subs.add_parser("market", help="Inspect dynamic compute pricing and solar discount rates")
-    p_ec_market.add_argument("--soc", type=float, default=85.0, help="Simulated battery SoC percentage (default: 85%)")
+    p_ec_market.add_argument("--soc", type=float, default=85.0, help="Simulated battery SoC percentage (default: 85%%)")
     p_ec_market.add_argument(
         "--solar", type=float, default=850.0, help="Simulated solar power in Watts (default: 850W)"
     )
@@ -1279,6 +1623,84 @@ def main():
     p_mcp_test.set_defaults(func=cmd_mcp_test)
 
     p_mcp.set_defaults(func=cmd_mcp_tools)
+
+    # Enterprise Application & Onboarding Framework Suite
+    p_app = subparsers.add_parser(
+        "app",
+        aliases=["enterprise"],
+        help="Enterprise Application & Workload Onboarding Framework (IoT, AI, Spatial, Vaults)",
+    )
+    app_subs = p_app.add_subparsers(dest="app_command", help="Application actions")
+
+    p_app_init = app_subs.add_parser("init", help="Scaffold a new enterprise application project directory")
+    p_app_init.add_argument("name", nargs="?", help="Application display name")
+    p_app_init.add_argument("--app-id", type=str, help="Application unique identifier (slug)")
+    p_app_init.add_argument(
+        "--category",
+        choices=["iot", "ai_inference", "spatial_media", "database", "distributed", "web_service", "custom"],
+        default="custom",
+        help="Application operational vertical category (default: custom)",
+    )
+    p_app_init.add_argument(
+        "--runtime",
+        choices=["process", "docker", "systemd", "wasm"],
+        default="process",
+        help="Execution runtime engine (default: process)",
+    )
+    p_app_init.add_argument("--entrypoint", type=str, help="Entrypoint execution command (e.g. 'python3 app.py')")
+    p_app_init.add_argument("--gpu", action="store_true", help="Declare GPU vRAM requirements")
+    p_app_init.add_argument(
+        "--power-tier",
+        choices=["L0_CRITICAL", "L1_STANDARD", "L2_BACKGROUND", "L3_DEFERRABLE", "L4_IDLE"],
+        default="L1_STANDARD",
+        help="Power load shedding priority tier (default: L1_STANDARD)",
+    )
+    p_app_init.add_argument("--target-dir", type=str, help="Target destination directory for scaffolding")
+    p_app_init.set_defaults(func=cmd_app_init)
+
+    p_app_val = app_subs.add_parser("validate", help="Validate manifest against schema and node hardware budgets")
+    p_app_val.add_argument("path", nargs="?", default=".", help="Path to manifest file or application directory")
+    p_app_val.set_defaults(func=cmd_app_validate)
+
+    p_app_reg = app_subs.add_parser("register", help="Register an enterprise application with local node")
+    p_app_reg.add_argument("path", nargs="?", default=".", help="Path to manifest file or application directory")
+    p_app_reg.set_defaults(func=cmd_app_register)
+
+    p_app_unreg = app_subs.add_parser("unregister", help="Unregister an application from local node")
+    p_app_unreg.add_argument("app_id", help="Application unique identifier to remove")
+    p_app_unreg.set_defaults(func=cmd_app_unregister)
+
+    p_app_list = app_subs.add_parser("list", aliases=["ps"], help="List all registered enterprise applications")
+    p_app_list.set_defaults(func=cmd_app_list)
+
+    p_app_start = app_subs.add_parser("start", help="Start an enterprise application")
+    p_app_start.add_argument("app_id", help="Application unique identifier to start")
+    p_app_start.set_defaults(func=cmd_app_start)
+
+    p_app_stop = app_subs.add_parser("stop", help="Stop a running enterprise application")
+    p_app_stop.add_argument("app_id", help="Application unique identifier to stop")
+    p_app_stop.set_defaults(func=cmd_app_stop)
+
+    p_app_restart = app_subs.add_parser("restart", help="Restart an enterprise application")
+    p_app_restart.add_argument("app_id", help="Application unique identifier to restart")
+    p_app_restart.set_defaults(func=cmd_app_restart)
+
+    p_app_status = app_subs.add_parser("status", help="Show real-time telemetry and power metrics for applications")
+    p_app_status.add_argument("app_id", nargs="?", help="Specific application identifier to query")
+    p_app_status.set_defaults(func=cmd_app_status)
+
+    p_app_pkg = app_subs.add_parser(
+        "package", help="Package application into verified .smdc-app bundle with PQC attestation"
+    )
+    p_app_pkg.add_argument("path", nargs="?", default=".", help="Path to application directory")
+    p_app_pkg.add_argument("--output", type=str, help="Custom output package file path")
+    p_app_pkg.add_argument("--no-pqc", action="store_true", help="Skip NIST FIPS 204 ML-DSA post-quantum signature")
+    p_app_pkg.set_defaults(func=cmd_app_package)
+
+    p_app_test = app_subs.add_parser("test", help="Run end-to-end automated self-test of enterprise framework")
+    p_app_test.set_defaults(func=cmd_app_test)
+
+    p_app.set_defaults(func=cmd_app_list)
 
     args = parser.parse_args()
     if hasattr(args, "func"):

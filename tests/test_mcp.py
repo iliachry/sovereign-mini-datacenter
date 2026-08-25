@@ -95,7 +95,7 @@ class TestMCPTools(unittest.TestCase):
         res = self.server.handle_request(req)
         self.assertIsNotNone(res)
         tools = res["result"]["tools"]
-        self.assertEqual(len(tools), 10)
+        self.assertEqual(len(tools), 13)
         tool_names = [t["name"] for t in tools]
         self.assertIn("get_telemetry", tool_names)
         self.assertIn("get_system_status", tool_names)
@@ -107,6 +107,9 @@ class TestMCPTools(unittest.TestCase):
         self.assertIn("query_knowledge_indexer", tool_names)
         self.assertIn("run_security_audit", tool_names)
         self.assertIn("dispatch_technician_alert", tool_names)
+        self.assertIn("list_enterprise_apps", tool_names)
+        self.assertIn("manage_enterprise_app", tool_names)
+        self.assertIn("scaffold_enterprise_app", tool_names)
 
     def test_call_get_telemetry(self) -> None:
         req = {
@@ -289,7 +292,7 @@ class TestMCPTools(unittest.TestCase):
 
 
 class TestMCPResources(unittest.TestCase):
-    """Tests all 5 MCP Resources."""
+    """Tests all 7 MCP Resources."""
 
     def setUp(self) -> None:
         self.server = MCPServer()
@@ -298,13 +301,15 @@ class TestMCPResources(unittest.TestCase):
         req = {"jsonrpc": "2.0", "id": 1, "method": "resources/list"}
         res = self.server.handle_request(req)
         resources = res["result"]["resources"]
-        self.assertEqual(len(resources), 5)
+        self.assertEqual(len(resources), 7)
         uris = [r["uri"] for r in resources]
         self.assertIn("smdc://telemetry/current", uris)
         self.assertIn("smdc://system/manifest", uris)
         self.assertIn("smdc://economy/market", uris)
         self.assertIn("smdc://space/dtn/spool", uris)
         self.assertIn("smdc://security/pqc/status", uris)
+        self.assertIn("smdc://enterprise/apps", uris)
+        self.assertIn("smdc://enterprise/schema", uris)
 
     def test_read_all_resources(self) -> None:
         uris = [
@@ -313,6 +318,8 @@ class TestMCPResources(unittest.TestCase):
             "smdc://economy/market",
             "smdc://space/dtn/spool",
             "smdc://security/pqc/status",
+            "smdc://enterprise/apps",
+            "smdc://enterprise/schema",
         ]
         for uri in uris:
             req = {"jsonrpc": "2.0", "id": 2, "method": "resources/read", "params": {"uri": uri}}
@@ -342,7 +349,7 @@ class TestMCPResources(unittest.TestCase):
 
 
 class TestMCPPrompts(unittest.TestCase):
-    """Tests all 3 MCP Prompt Templates."""
+    """Tests all 4 MCP Prompt Templates."""
 
     def setUp(self) -> None:
         self.server = MCPServer()
@@ -351,11 +358,12 @@ class TestMCPPrompts(unittest.TestCase):
         req = {"jsonrpc": "2.0", "id": 1, "method": "prompts/list"}
         res = self.server.handle_request(req)
         prompts = res["result"]["prompts"]
-        self.assertEqual(len(prompts), 3)
+        self.assertEqual(len(prompts), 4)
         names = [p["name"] for p in prompts]
         self.assertIn("diagnose_power_incident", names)
         self.assertIn("plan_compute_workload", names)
         self.assertIn("prepare_space_transmission", names)
+        self.assertIn("onboard_enterprise_workload", names)
 
     def test_get_prompts(self) -> None:
         req1 = {
@@ -391,6 +399,18 @@ class TestMCPPrompts(unittest.TestCase):
         }
         res3 = self.server.handle_request(req3)
         self.assertIn("dtn://orbit.space/science", res3["result"]["messages"][0]["content"]["text"])
+
+        req4 = {
+            "jsonrpc": "2.0",
+            "id": 5,
+            "method": "prompts/get",
+            "params": {
+                "name": "onboard_enterprise_workload",
+                "arguments": {"project_description": "Smart Grid Ingestion"},
+            },
+        }
+        res4 = self.server.handle_request(req4)
+        self.assertIn("Smart Grid Ingestion", res4["result"]["messages"][0]["content"]["text"])
 
     def test_get_unknown_prompt(self) -> None:
         req = {"jsonrpc": "2.0", "id": 5, "method": "prompts/get", "params": {"name": "unknown_prompt"}}

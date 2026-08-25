@@ -42,6 +42,11 @@ sovereign-mini-datacenter/
 │       │   ├── ledger.py             # Append-only hash-linked ledger & offline state channels
 │       │   ├── market.py             # Solar-aware dynamic price oracle & service catalog
 │       │   └── settlement.py         # Proof-of-Compute/Relay & RFC 9171 DTN bundle settlement
+│       ├── enterprise/          # Enterprise Workload Onboarding & Coupling Framework
+│       │   ├── schema.py             # smdc-app.yaml manifest dataclass & schema validation
+│       │   ├── registry.py           # Multi-path app discovery, registration & scaffolding
+│       │   ├── sdk.py                # Zero-dependency SMDCClient & AppLifecycleHandler SDK
+│       │   └── manager.py            # Process supervision, load-shedding hooks & PQC packaging
 │       ├── hal/                 # Hardware Abstraction Layer
 │       │   ├── gpu.py                # NVIDIA Jetson / Tegra / Desktop GPU telemetry
 │       │   ├── power.py              # Victron MPPT & SmartShunt BMS readers
@@ -50,9 +55,9 @@ sovereign-mini-datacenter/
 │       ├── mcp/                 # Native Model Context Protocol (MCP) Server
 │       │   ├── __init__.py           # Package exports (MCPServer, MCPTool, MCPResource, MCPPrompt)
 │       │   ├── server.py             # JSON-RPC 2.0 stdio server and request router
-│       │   ├── tools.py              # 10 MCP operational tools (telemetry, pricing, DTN, PQC)
-│       │   ├── resources.py          # 5 dynamic MCP resource URI endpoints
-│       │   └── prompts.py            # 3 operational workflow prompts
+│       │   ├── tools.py              # 13 MCP operational tools (telemetry, pricing, DTN, PQC, apps)
+│       │   ├── resources.py          # 7 dynamic MCP resource URI endpoints
+│       │   └── prompts.py            # 4 operational workflow prompts
 │       ├── mesh/                # Multi-node peer-to-peer & LoRa networking
 │       │   ├── mesh_sync.py          # WireGuard peer health and state synchronizer
 │       │   ├── consensus.py          # Raft distributed consensus state machine
@@ -73,6 +78,12 @@ sovereign-mini-datacenter/
 │       │       └── simulated_link.py # FSPL, Doppler shift, SNR, azimuth/elevation
 │       └── web/                 # Operations Web Dashboard & REST API
 │           └── dashboard.py          # Real-time HTTP dashboard & /api/status telemetry
+├── examples/                    # Turnkey Enterprise Application Archetypes
+│   └── enterprise_apps/         # Reference implementations for edge onboarding
+│       ├── iot-edge-gateway/    # L0 Critical Sub-GHz sensor telemetry aggregator
+│       ├── edge-vision-ai/      # L2 Background GPU-accelerated TensorRT computer vision
+│       ├── spatial-digital-twin/# L1 Standard Three.js WebGL spatial simulation
+│       └── confidential-vault/  # L0 Critical NIST FIPS 203/204 zero-trust secrets vault
 ├── software/                    # Production deployment & service definitions
 │   ├── docker-compose.yml       # Primary 11-service production stack
 │   ├── Dockerfile.smdc          # Multi-architecture container blueprint (amd64, arm64)
@@ -104,8 +115,9 @@ sovereign-mini-datacenter/
 │   └── MANUFACTURING_GUIDE.md   # Laser cut DXF export, CNC sheet metal bending specs
 ├── docs/                        # Interactive Three.js WebGL Digital Twin & GitHub Pages
 │   └── index.html               # 3D WebGL CAD viewer + interactive sizing & TCO calculator
-├── tests/                       # Complete automated Pytest suite (333+ tests, 93.5%+ coverage)
+├── tests/                       # Complete automated Pytest suite (354+ tests, 90.5%+ coverage)
 ├── ARCHITECTURE.md              # Multi-node autonomous network architecture specification
+├── ENTERPRISE_ONBOARDING.md     # Enterprise manifest spec, power tiers & developer guide
 ├── COMMERCIALIZATION.md         # Investment thesis, TAM/SAM/SOM & 3-year TCO payback model
 ├── BENCHMARKS.md                # Quantified LLM, vector search, load shedding & space metrics
 ├── COMPLIANCE.md                # SOC 2, ISO 27001, NIST Zero Trust & PQC cryptographic attestation
@@ -160,9 +172,15 @@ sovereign-mini-datacenter/
 
 ### I. Native Model Context Protocol (MCP) Server (`src/sovereign_dc/mcp/`)
 - **Standard Protocol Support (2024-11-05)**: Standardized JSON-RPC 2.0 stdio interface exposing datacenter hardware and services to AI assistants (Antigravity, Claude Desktop, Cursor, Cline).
-- **Operational MCP Tools (`tools.py`)**: 10 callable tools including `get_telemetry`, `get_system_status`, `set_load_shedding`, `query_market_pricing`, `get_wallet_balances`, `spool_dtn_bundle`, `predict_satellite_passes`, `query_knowledge_indexer`, `run_security_audit`, and `dispatch_technician_alert`.
-- **Dynamic MCP Resources (`resources.py`)**: 5 live URI resources (`smdc://telemetry/current`, `smdc://system/manifest`, `smdc://economy/market`, `smdc://space/dtn/spool`, `smdc://security/pqc/status`).
-- **Standard MCP Prompts (`prompts.py`)**: 3 diagnostic and workflow prompts (`diagnose_power_incident`, `plan_compute_workload`, `prepare_space_transmission`).
+- **Operational MCP Tools (`tools.py`)**: 13 callable tools including `get_telemetry`, `get_system_status`, `set_load_shedding`, `query_market_pricing`, `get_wallet_balances`, `spool_dtn_bundle`, `predict_satellite_passes`, `query_knowledge_indexer`, `run_security_audit`, `dispatch_technician_alert`, `list_enterprise_apps`, `manage_enterprise_app`, and `scaffold_enterprise_app`.
+- **Dynamic MCP Resources (`resources.py`)**: 7 live URI resources (`smdc://telemetry/current`, `smdc://system/manifest`, `smdc://economy/market`, `smdc://space/dtn/spool`, `smdc://security/pqc/status`, `smdc://enterprise/apps`, `smdc://enterprise/schema`).
+- **Standard MCP Prompts (`prompts.py`)**: 4 diagnostic and workflow prompts (`diagnose_power_incident`, `plan_compute_workload`, `prepare_space_transmission`, `onboard_enterprise_workload`).
+
+### J. Enterprise Workload Onboarding & Coupling Framework (`src/sovereign_dc/enterprise/`)
+- **Declarative Manifest Specification (`schema.py`)**: Type-safe `smdc-app.yaml` manifest supporting multi-tier power shedding ($L_0 \to L_4$), memory/vRAM quotas, network policies, and health probes.
+- **Enterprise Registry & Discovery (`registry.py`)**: Automated discovery across `/etc/smdc/apps`, `~/.smdc/apps`, and workspace paths with turnkey project scaffolding (`smdc app init`).
+- **Zero-Dependency Enterprise SDK (`sdk.py`)**: Minimal footprint `SMDCClient` and `AppLifecycleHandler` providing direct event bus binding, hardware telemetry streams, dynamic pricing queries, and Space DTN spooling.
+- **Supervision & Load Shedding Manager (`manager.py`)**: Dynamic process management auto-pausing deferrable background apps ($L_2 \to L_4$) on low battery / thermal events and resuming on solar recovery, plus NIST FIPS 204 ML-DSA-87 cryptographic bundle packaging (`.smdc-app` + `.sig`).
 
 ---
 
@@ -226,6 +244,13 @@ uv run pytest tests/ --cov=src/sovereign_dc --cov-fail-under=85
 .\.venv\Scripts\python -m sovereign_dc --help
 .\.venv\Scripts\python -m sovereign_dc status
 .\.venv\Scripts\python -m sovereign_dc dashboard --port 8080
+.\.venv\Scripts\python -m sovereign_dc app list
+.\.venv\Scripts\python -m sovereign_dc app init --name "IoT Edge" --app-id iot-edge --category iot ./iot-edge
+.\.venv\Scripts\python -m sovereign_dc app validate ./iot-edge
+.\.venv\Scripts\python -m sovereign_dc app register ./iot-edge
+.\.venv\Scripts\python -m sovereign_dc app start iot-edge
+.\.venv\Scripts\python -m sovereign_dc app status iot-edge
+.\.venv\Scripts\python -m sovereign_dc app package ./iot-edge --output iot-edge-1.0.0.smdc-app
 .\.venv\Scripts\python -m sovereign_dc economy wallet
 .\.venv\Scripts\python -m sovereign_dc economy market --soc 85 --solar 1200
 .\.venv\Scripts\python -m sovereign_dc mesh chaos --help
@@ -236,6 +261,11 @@ uv run pytest tests/ --cov=src/sovereign_dc --cov-fail-under=85
 .\.venv\Scripts\python -m sovereign_dc space passes --hours 12
 .\.venv\Scripts\python -m sovereign_dc agent ask "Summarize power status"
 .\.venv\Scripts\python -m sovereign_dc mcp test
+.\.venv\Scripts\python -m sovereign_dc mcp tools
+.\.venv\Scripts\python -m sovereign_dc mcp resources
+.\.venv\Scripts\python -m sovereign_dc mcp prompts
+.\.venv\Scripts\python -m sovereign_dc mcp serve
+```
 .\.venv\Scripts\python -m sovereign_dc mcp tools
 .\.venv\Scripts\python -m sovereign_dc mcp resources
 .\.venv\Scripts\python -m sovereign_dc mcp prompts

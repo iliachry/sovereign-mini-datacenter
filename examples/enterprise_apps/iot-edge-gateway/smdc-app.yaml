@@ -1,0 +1,42 @@
+# Sovereign Mini Datacenter (SMDC) — Enterprise App Manifest
+name: "Industrial IoT Edge Gateway"
+app_id: "iot-edge-gateway"
+version: "1.0.0"
+description: "Sub-GHz LoRa / Modbus / MQTT sensor aggregation and telemetry ingestion."
+author: "Enterprise IoT Team"
+category: "iot"
+runtime: "process"
+entrypoint: "python3 app.py"
+
+resources:
+  cpu_cores: 0.5
+  ram_mb: 256
+  gpu_vram_mb: 0
+  storage_mb: 512
+  gpu_required: false
+  max_power_w: 8.0
+
+power:
+  tier: "L0_CRITICAL"
+  min_battery_soc: 15.0
+  max_ambient_temp_c: 65.0
+  allow_solar_burst: true
+  min_solar_watts: 0.0
+
+network:
+  ports: [8081]
+  expose_wireguard: true
+  space_dtn_enabled: false
+  lora_heartbeat: true
+
+storage:
+  persistent_volume: "iot-telemetry-data"
+  mount_point: "/var/lib/smdc/apps/iot-edge-gateway/data"
+  backup_enabled: true
+
+health_check:
+  type: "http"
+  endpoint: "/health"
+  port: 8081
+  interval_sec: 15
+  timeout_sec: 5

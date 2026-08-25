@@ -1,0 +1,42 @@
+# Sovereign Mini Datacenter (SMDC) — Enterprise App Manifest
+name: "Edge Vision AI Pipeline"
+app_id: "edge-vision-ai"
+version: "1.0.0"
+description: "Jetson Orin / TensorRT accelerated real-time computer vision inference and object detection."
+author: "Computer Vision Engineering"
+category: "ai_inference"
+runtime: "process"
+entrypoint: "python3 app.py"
+
+resources:
+  cpu_cores: 4.0
+  ram_mb: 4096
+  gpu_vram_mb: 4096
+  storage_mb: 8192
+  gpu_required: true
+  max_power_w: 45.0
+
+power:
+  tier: "L2_BACKGROUND"
+  min_battery_soc: 40.0
+  max_ambient_temp_c: 50.0
+  allow_solar_burst: true
+  min_solar_watts: 300.0
+
+network:
+  ports: [8082]
+  expose_wireguard: true
+  space_dtn_enabled: true
+  lora_heartbeat: false
+
+storage:
+  persistent_volume: "vision-models"
+  mount_point: "/var/lib/smdc/apps/edge-vision-ai/models"
+  backup_enabled: false
+
+health_check:
+  type: "http"
+  endpoint: "/health"
+  port: 8082
+  interval_sec: 20
+  timeout_sec: 5

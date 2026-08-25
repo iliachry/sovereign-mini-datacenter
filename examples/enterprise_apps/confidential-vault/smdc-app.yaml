@@ -1,0 +1,42 @@
+# Sovereign Mini Datacenter (SMDC) — Enterprise App Manifest
+name: "Confidential Data Vault"
+app_id: "confidential-vault"
+version: "1.0.0"
+description: "Zero-trust encrypted database and key storage secured with NIST FIPS 203 ML-KEM and FIPS 204 ML-DSA."
+author: "Security & Cryptography Operations"
+category: "database"
+runtime: "process"
+entrypoint: "python3 app.py"
+
+resources:
+  cpu_cores: 1.0
+  ram_mb: 1024
+  gpu_vram_mb: 0
+  storage_mb: 2048
+  gpu_required: false
+  max_power_w: 12.0
+
+power:
+  tier: "L0_CRITICAL"
+  min_battery_soc: 10.0
+  max_ambient_temp_c: 65.0
+  allow_solar_burst: false
+  min_solar_watts: 0.0
+
+network:
+  ports: [8084]
+  expose_wireguard: true
+  space_dtn_enabled: true
+  lora_heartbeat: true
+
+storage:
+  persistent_volume: "encrypted-vault-storage"
+  mount_point: "/var/lib/smdc/apps/confidential-vault/db"
+  backup_enabled: true
+
+health_check:
+  type: "http"
+  endpoint: "/health"
+  port: 8084
+  interval_sec: 10
+  timeout_sec: 3

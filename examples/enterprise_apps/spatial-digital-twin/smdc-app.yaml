@@ -1,0 +1,42 @@
+# Sovereign Mini Datacenter (SMDC) — Enterprise App Manifest
+name: "Spatial 3D Digital Twin Engine"
+app_id: "spatial-digital-twin"
+version: "1.0.0"
+description: "Real-time 3D spatial simulation, WebGL rendering, and live sensor digital shadow streamer."
+author: "Spatial Computing Lab"
+category: "spatial_media"
+runtime: "process"
+entrypoint: "python3 app.py"
+
+resources:
+  cpu_cores: 2.0
+  ram_mb: 2048
+  gpu_vram_mb: 2048
+  storage_mb: 4096
+  gpu_required: false
+  max_power_w: 25.0
+
+power:
+  tier: "L1_STANDARD"
+  min_battery_soc: 25.0
+  max_ambient_temp_c: 55.0
+  allow_solar_burst: true
+  min_solar_watts: 100.0
+
+network:
+  ports: [8083]
+  expose_wireguard: true
+  space_dtn_enabled: false
+  lora_heartbeat: false
+
+storage:
+  persistent_volume: "digital-twin-assets"
+  mount_point: "/var/lib/smdc/apps/spatial-digital-twin/assets"
+  backup_enabled: true
+
+health_check:
+  type: "http"
+  endpoint: "/health"
+  port: 8083
+  interval_sec: 15
+  timeout_sec: 5

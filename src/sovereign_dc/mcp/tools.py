@@ -529,4 +529,148 @@ def get_mcp_tools() -> list[MCPTool]:
             },
             handler=tool_dispatch_technician_alert,
         ),
+        MCPTool(
+            name="list_enterprise_apps",
+            description="Query all onboarded enterprise applications, runtime states, power shedding tiers, and resource usage.",
+            input_schema={
+                "type": "object",
+                "properties": {},
+            },
+            handler=tool_list_enterprise_apps,
+        ),
+        MCPTool(
+            name="manage_enterprise_app",
+            description="Supervise enterprise workload lifecycle (start, stop, restart, pause, resume) with power budget enforcement.",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "app_id": {"type": "string", "description": "Unique identifier of the enterprise application"},
+                    "action": {
+                        "type": "string",
+                        "enum": ["start", "stop", "restart", "pause", "resume"],
+                        "description": "Lifecycle action to perform",
+                    },
+                    "reason": {"type": "string", "description": "Optional reason for pause/resume"},
+                },
+                "required": ["app_id", "action"],
+            },
+            handler=tool_manage_enterprise_app,
+        ),
+        MCPTool(
+            name="scaffold_enterprise_app",
+            description="Generate a standardized SMDC enterprise application manifest (smdc-app.yaml) for third-party software onboarding.",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Display name of the application"},
+                    "app_id": {"type": "string", "description": "Unique slug identifier (e.g. smart-grid-analytics)"},
+                    "category": {
+                        "type": "string",
+                        "enum": [
+                            "iot",
+                            "ai_inference",
+                            "spatial_media",
+                            "database",
+                            "distributed",
+                            "web_service",
+                            "custom",
+                        ],
+                        "description": "Operational vertical category",
+                    },
+                    "runtime": {
+                        "type": "string",
+                        "enum": ["process", "docker", "systemd", "wasm"],
+                        "description": "Runtime execution engine",
+                    },
+                    "power_tier": {
+                        "type": "string",
+                        "enum": ["L0_CRITICAL", "L1_STANDARD", "L2_BACKGROUND", "L3_DEFERRABLE", "L4_IDLE"],
+                        "description": "Power shedding priority tier",
+                    },
+                    "gpu_required": {"type": "boolean", "description": "Whether GPU compute is required"},
+                    "entrypoint": {"type": "string", "description": "Execution entrypoint command"},
+                },
+                "required": ["name"],
+            },
+            handler=tool_scaffold_enterprise_app,
+        ),
     ]
+
+
+def tool_list_enterprise_apps(params: dict[str, Any]) -> dict[str, Any]:
+    """Lists all registered enterprise applications and live runtime states."""
+    from sovereign_dc.enterprise.manager import EnterpriseManager
+
+    manager = EnterpriseManager()
+    states = manager.list_runtime_states()
+    return {
+        "count": len(states),
+        "apps": [s.to_dict() for s in states],
+    }
+
+
+def tool_manage_enterprise_app(params: dict[str, Any]) -> dict[str, Any]:
+    """Controls application lifecycle (start, stop, restart, pause, resume)."""
+    from sovereign_dc.enterprise.manager import EnterpriseManager
+
+    app_id = str(params.get("app_id", ""))
+    action = str(params.get("action", "start"))
+    manager = EnterpriseManager()
+
+    if action == "start":
+        success, msg = manager.start_app(app_id)
+    elif action == "stop":
+        success, msg = manager.stop_app(app_id)
+    elif action == "restart":
+        success, msg = manager.restart_app(app_id)
+    elif action == "pause":
+        success, msg = manager.pause_app(app_id, reason=str(params.get("reason", "Operator request")))
+    elif action == "resume":
+        success, msg = manager.resume_app(app_id, reason=str(params.get("reason", "Operator request")))
+    else:
+        return {"success": False, "error": f"Unknown action: {action}"}
+
+    state = manager.get_runtime_state(app_id)
+    return {
+        "success": success,
+        "message": msg,
+        "state": state.to_dict() if state else None,
+    }
+
+
+def tool_scaffold_enterprise_app(params: dict[str, Any]) -> dict[str, Any]:
+    """Generates an enterprise application manifest and directory template."""
+    from sovereign_dc.enterprise.registry import EnterpriseRegistry
+    from sovereign_dc.enterprise.schema import AppCategory, PowerPriority, RuntimeType
+
+    name = str(params.get("name", "Custom App"))
+    app_id = str(params.get("app_id") or name.lower().replace(" ", "-"))
+
+    try:
+        category = AppCategory(str(params.get("category", "custom")))
+    except ValueError:
+        category = AppCategory.CUSTOM
+
+    try:
+        runtime = RuntimeType(str(params.get("runtime", "process")))
+    except ValueError:
+        runtime = RuntimeType.PROCESS
+
+    try:
+        power_tier = PowerPriority(str(params.get("power_tier", "L1_STANDARD")))
+    except ValueError:
+        power_tier = PowerPriority.L1_STANDARD
+
+    manifest = EnterpriseRegistry.scaffold_manifest(
+        name=name,
+        app_id=app_id,
+        category=category,
+        runtime=runtime,
+        entrypoint=str(params.get("entrypoint", "python3 app.py")),
+        gpu_required=bool(params.get("gpu_required", False)),
+        power_tier=power_tier,
+    )
+    return {
+        "manifest": manifest.to_dict(),
+        "yaml_preview": manifest.to_json(),
+    }

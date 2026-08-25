@@ -198,4 +198,64 @@ def get_mcp_resources() -> list[MCPResource]:
             mime_type="application/json",
             reader=read_pqc_status_resource,
         ),
+        MCPResource(
+            uri="smdc://enterprise/apps",
+            name="Enterprise Applications Manifest & States",
+            description="Live catalog of onboarded enterprise applications, running states, and power shedding allocations.",
+            mime_type="application/json",
+            reader=read_enterprise_apps_resource,
+        ),
+        MCPResource(
+            uri="smdc://enterprise/schema",
+            name="Enterprise Manifest Specification Schema",
+            description="JSON schema definition and field constraints for smdc-app.yaml manifests.",
+            mime_type="application/json",
+            reader=read_enterprise_schema_resource,
+        ),
     ]
+
+
+def read_enterprise_apps_resource() -> str:
+    """Returns a JSON string snapshot of all registered enterprise applications."""
+    from sovereign_dc.enterprise.manager import EnterpriseManager
+
+    manager = EnterpriseManager()
+    states = manager.list_runtime_states()
+    return json.dumps(
+        {
+            "uri": "smdc://enterprise/apps",
+            "timestamp": time.time(),
+            "count": len(states),
+            "apps": [s.to_dict() for s in states],
+        },
+        indent=2,
+    )
+
+
+def read_enterprise_schema_resource() -> str:
+    """Returns the JSON schema specification for enterprise manifests."""
+    from sovereign_dc.enterprise.schema import AppCategory, PowerPriority, RuntimeType
+
+    schema = {
+        "uri": "smdc://enterprise/schema",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": "SMDC Enterprise Application Manifest",
+        "type": "object",
+        "required": ["name", "app_id", "entrypoint"],
+        "properties": {
+            "name": {"type": "string", "description": "Display name of application"},
+            "app_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{2,63}$"},
+            "version": {"type": "string", "default": "1.0.0"},
+            "category": {"type": "string", "enum": [c.value for c in AppCategory]},
+            "runtime": {"type": "string", "enum": [r.value for r in RuntimeType]},
+            "entrypoint": {"type": "string"},
+            "power": {
+                "type": "object",
+                "properties": {
+                    "tier": {"type": "string", "enum": [p.value for p in PowerPriority]},
+                    "min_battery_soc": {"type": "number", "minimum": 0, "maximum": 100},
+                },
+            },
+        },
+    }
+    return json.dumps(schema, indent=2)

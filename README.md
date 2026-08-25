@@ -7,7 +7,9 @@
 Developed by **[Metatopia Studio](https://metatopia.gr)** · Author & Lead Architect: **[Ilias Chrysovergis](https://iliachry.gr)** · License: MIT · © 2026
 
 [![CI & Quality Gates](https://github.com/iliachry/sovereign-mini-datacenter/actions/workflows/ci.yml/badge.svg)](https://github.com/iliachry/sovereign-mini-datacenter/actions/workflows/ci.yml)
-[![Quality Gate](https://img.shields.io/badge/Quality%20Gate-Strict%20Enforcement%20(93.5%25%20Cov)-10b981?style=flat&logo=githubactions)](https://github.com/iliachry/sovereign-mini-datacenter/actions/workflows/ci.yml)
+[![CI & Quality Gates](https://github.com/iliachry/sovereign-mini-datacenter/actions/workflows/ci.yml/badge.svg)](https://github.com/iliachry/sovereign-mini-datacenter/actions/workflows/ci.yml)
+[![Quality Gate](https://img.shields.io/badge/Quality%20Gate-Strict%20Enforcement%20(90.5%25%20Cov)-10b981?style=flat&logo=githubactions)](https://github.com/iliachry/sovereign-mini-datacenter/actions/workflows/ci.yml)
+[![Enterprise Onboarding](https://img.shields.io/badge/Enterprise-Workload%20Coupling%20Framework-8b5cf6?style=flat)](ENTERPRISE_ONBOARDING.md)
 [![Commercialization](https://img.shields.io/badge/Commercialization-Investment%20Thesis-f59e0b?style=flat)](COMMERCIALIZATION.md)
 [![Benchmarks](https://img.shields.io/badge/Benchmarks-Empirical%20AI%20%26%20Power-06b6d4?style=flat)](BENCHMARKS.md)
 [![Compliance](https://img.shields.io/badge/Compliance-SOC%202%20%26%20PQC%20Ready-ec4899?style=flat)](COMPLIANCE.md)
@@ -21,6 +23,7 @@ Developed by **[Metatopia Studio](https://metatopia.gr)** · Author & Lead Archi
 
 | Resource | Scope & Key Takeaways | Link |
 | :--- | :--- | :---: |
+| **🏢 Enterprise Onboarding & SDK** | Vendor-neutral manifest (`smdc-app.yaml`), zero-dependency SDK, power tiers ($L_0 \to L_4$), and PQC packaging | [**`ENTERPRISE_ONBOARDING.md`**](ENTERPRISE_ONBOARDING.md) |
 | **📈 Commercial Strategy & TCO Model** | Market Sizing (\$60.4B TAM), Unit Economics, 5-Year Financials, **5.1 Mo Payback & 73.6% TCO Savings** vs. AWS | [**`COMMERCIALIZATION.md`**](COMMERCIALIZATION.md) |
 | **⚡ Empirical Performance Benchmarks** | Quantified local LLM token throughput (82.4 t/s), Qdrant retrieval latency (< 5 ms), load shedding (< 110 ms) | [**`BENCHMARKS.md`**](BENCHMARKS.md) |
 | **🛡️ Enterprise Compliance & PQC Security** | SOC 2 Type II, ISO 27001, NIST 800-207 Zero Trust, Post-Quantum Cryptography (ML-KEM/Kyber-1024), TPM 2.0 | [**`COMPLIANCE.md`**](COMPLIANCE.md) |
@@ -114,6 +117,11 @@ sovereign-mini-datacenter/
 │       ├── log.py               # Structured JSON & colored logging
 │       ├── hal/                 # Hardware Abstraction Layer (GPU, Power, Storage, Thermal)
 │       ├── agents/              # Autonomous AI Agents (Sentinel, Indexer, CodeReviewer)
+│       ├── enterprise/          # Enterprise Workload Onboarding & Coupling Framework
+│       │   ├── schema.py        # Declarative manifest dataclass & validation (smdc-app.yaml)
+│       │   ├── registry.py      # App discovery, registry persistence & scaffolding
+│       │   ├── sdk.py           # Zero-dependency SMDCClient & AppLifecycleHandler SDK
+│       │   └── manager.py       # Supervision, load-shedding hooks & PQC packaging
 │       ├── economy/             # Monetary & Compute Economy (Wallets, Ledger, State Channels, Dynamic Pricing)
 │       ├── mcp/                 # Native Model Context Protocol Server (2024-11-05 JSON-RPC 2.0)
 │       ├── mesh/                # Multi-node WireGuard, LoRa & Chaos engineering simulator
@@ -121,6 +129,12 @@ sovereign-mini-datacenter/
 │       ├── space/               # Space DTN routing (RFC 9171) & SGP4 orbital propagator
 │       ├── telemetry/           # Power, BMS & thermal telemetry collector
 │       └── web/                 # Real-time Web Operations Dashboard & REST API
+├── examples/                    # Turnkey Enterprise Reference Applications
+│   └── enterprise_apps/         # Starter templates for rapid edge onboarding
+│       ├── iot-edge-gateway/    # L0 Critical Sub-GHz sensor telemetry aggregator
+│       ├── edge-vision-ai/      # L2 Background GPU-accelerated TensorRT computer vision
+│       ├── spatial-digital-twin/# L1 Standard Three.js WebGL spatial simulation
+│       └── confidential-vault/  # L0 Critical NIST FIPS 203/204 zero-trust secrets vault
 ├── software/
 │   ├── docker-compose.yml       # Sovereign Core 11-service production stack
 │   ├── Dockerfile.smdc          # Multi-arch container image (linux/amd64, linux/arm64)
@@ -151,7 +165,7 @@ sovereign-mini-datacenter/
 │   ├── MANUFACTURING_GUIDE.md   # Laser cut, CNC bend, and assembly instructions
 │   └── render.jpg               # Photorealistic 3D product render
 ├── docs/                        # Interactive Three.js WebGL Digital Twin (ES Modules) & GitHub Pages
-├── tests/                       # 333+ Automated unit & integration tests (93.5%+ coverage)
+├── tests/                       # 354+ Automated unit & integration tests (90.5%+ coverage)
 └── .github/
     └── workflows/
         ├── ci.yml               # Complete CI pipeline + Pytest + GitHub Pages deploy
@@ -201,6 +215,15 @@ smdc agent ask "How do I throttle background jobs?" # Ask Sentinel Copilot direc
 smdc agent review --diff patch.diff                  # AI code review on local git diff
 smdc agent index --path /data/docs                   # Trigger semantic RAG vector indexing
 
+# Enterprise Workload Onboarding & Lifecycle Management
+smdc app list                                        # List all registered enterprise apps & runtime state
+smdc app init --name "IoT Edge" --app-id iot-edge --category iot ./iot-edge # Scaffold new app repo
+smdc app validate ./iot-edge                         # Validate smdc-app.yaml schema and resource quotas
+smdc app register ./iot-edge                         # Register app on local sovereign node
+smdc app start iot-edge                              # Launch enterprise workload process
+smdc app status iot-edge                             # Query live health probe, PID, power and custom metrics
+smdc app package ./iot-edge --output iot-edge.smdc-app # Package & sign with NIST FIPS 204 ML-DSA-87
+
 # Inspect multi-node global mesh cluster topology
 smdc mesh
 
@@ -248,6 +271,12 @@ smdc deploy --all
 * **Append-Only Compute Credit Ledger:** Monotonically increasing nonces, transaction hashes, and offline bidirectional micro-payment state channels for streaming compute.
 * **Solar-Aware Dynamic Price Oracle:** Dynamic discount engine offering up to 50% discount on GPU inference during solar surplus (>1 kW) and up to 3.0x surge pricing during battery preservation.
 * **Delay-Tolerant Settlement:** Cryptographic Proof-of-Compute and Proof-of-Relay verification reconciled across terrestrial mesh or RFC 9171 DTN satellite contact passes.
+
+### 7. 🏢 Generic Enterprise Workload Coupling Framework (`src/sovereign_dc/enterprise/`)
+* **Declarative Manifests (`smdc-app.yaml`):** Standardized specification defining CPU/GPU/storage quotas, network bindings, persistent NVMe volumes, and power shedding tiers ($L_0 \to L_4$).
+* **Zero-Dependency SDK (`sovereign_dc.enterprise.sdk`):** Lightweight client library for querying node telemetry, publishing custom application metrics, listening for power throttling signals, and spooling space DTN bundles.
+* **Post-Quantum Cryptography Packaging:** Turnkey bundling of edge applications into verified `.smdc-app` archives signed with lattice-based NIST FIPS 204 ML-DSA-87 signatures.
+* **Reference Archetypes (`examples/enterprise_apps/`):** Pre-built templates for IoT edge gateways, GPU vision AI inference, spatial digital twins, and zero-trust confidential databases. See [**`ENTERPRISE_ONBOARDING.md`**](ENTERPRISE_ONBOARDING.md) for full developer documentation.
 
 ---
 
