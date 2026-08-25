@@ -14,21 +14,32 @@ authors = [
 ]
 keywords = [
     "datacenter",
+    "micro-datacenter",
     "sovereign-cloud",
+    "edge-computing",
     "off-grid",
     "solar-power",
     "ai-cluster",
+    "local-ai",
+    "ollama",
+    "qdrant",
     "self-hosted",
+    "enterprise-framework",
+    "mcp-server",
     "delay-tolerant-networking",
+    "rfc-9171",
     "space-communications",
     "satellite-tracking",
     "bundle-protocol-v7",
+    "post-quantum-cryptography",
+    "zero-trust",
     "autonomous-agents",
     "crowdsec",
     "esp32-bridge",
     "victron-energy",
     "lifepo4-bms",
-    "digital-twin"
+    "digital-twin",
+    "hardware-enclosure"
 ]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
