@@ -12,6 +12,7 @@ Developed by **[Metatopia Studio](https://metatopia.gr)** · Author & Lead Archi
 [![Commercialization](https://img.shields.io/badge/Commercialization-Investment%20Thesis-f59e0b?style=flat)](COMMERCIALIZATION.md)
 [![Benchmarks](https://img.shields.io/badge/Benchmarks-Empirical%20AI%20%26%20Power-06b6d4?style=flat)](BENCHMARKS.md)
 [![Compliance](https://img.shields.io/badge/Compliance-SOC%202%20%26%20PQC%20Ready-ec4899?style=flat)](COMPLIANCE.md)
+[![OpenTofu / Terraform](https://img.shields.io/badge/IaC-OpenTofu%20%26%20Terraform-844fba?style=flat&logo=opentofu)](terraform/README.md)
 [![3D WebGL Viewer](https://img.shields.io/badge/3D%20CAD%20Viewer-Live%20Demo-10b981?style=flat&logo=three.js)](https://iliachry.gr/sovereign-mini-datacenter/)
 [![AI Agents Guide](https://img.shields.io/badge/AI%20Agents-Engineering%20Playbook-6366f1?style=flat)](AGENTS.md)
 [![Architecture](https://img.shields.io/badge/Architecture-Autonomous%20Mesh-3b82f6?style=flat)](ARCHITECTURE.md)
@@ -24,6 +25,7 @@ Developed by **[Metatopia Studio](https://metatopia.gr)** · Author & Lead Archi
 | :--- | :--- | :---: |
 | **🏢 Enterprise Onboarding & SDK** | Vendor-neutral manifest (`smdc-app.yaml`), zero-dependency SDK, power tiers ($L_0 \to L_4$), and PQC packaging | [**`ENTERPRISE_ONBOARDING.md`**](ENTERPRISE_ONBOARDING.md) |
 | **📈 Commercial Strategy & TCO Model** | Market Sizing (\$60.4B TAM), Unit Economics, 5-Year Financials, **5.1 Mo Payback & 73.6% TCO Savings** vs. AWS | [**`COMMERCIALIZATION.md`**](COMMERCIALIZATION.md) |
+| **🏗️ Terraform & OpenTofu IaC** | Bare-metal Talos Linux, Proxmox VE GPU passthrough, WireGuard mesh, and automated Helm bootstrapping | [**`terraform/README.md`**](terraform/README.md) |
 | **⚡ Empirical Performance Benchmarks** | Quantified local LLM token throughput (82.4 t/s), Qdrant retrieval latency (< 5 ms), load shedding (< 110 ms) | [**`BENCHMARKS.md`**](BENCHMARKS.md) |
 | **🛡️ Enterprise Compliance & PQC Security** | SOC 2 Type II, ISO 27001, NIST 800-207 Zero Trust, Post-Quantum Cryptography (ML-KEM/Kyber-1024), TPM 2.0 | [**`COMPLIANCE.md`**](COMPLIANCE.md) |
 | **🌐 Interactive Digital Twin & ROI Simulator** | 3D WebGL CAD visualizer, live subsystem explorer, and **interactive investor TCO calculator** | [**Live 3D WebGL Viewer**](https://iliachry.gr/sovereign-mini-datacenter/) |
@@ -420,6 +422,26 @@ helm upgrade --install sovereign-stack ./kubernetes/helm/sovereign-stack \
   --create-namespace \
   --values kubernetes/helm/sovereign-stack/values.yaml
 ```
+
+---
+
+## 🏗️ Terraform & OpenTofu Infrastructure-as-Code (`terraform/`)
+
+Automate bare-metal Talos Linux OS provisioning, Proxmox VE GPU passthrough, WireGuard mesh, and Helm bootstrapping:
+
+```bash
+# Deploy bare-metal Talos cluster & Sovereign Helm stack
+cd terraform/environments/baremetal-talos
+tofu init
+tofu apply -auto-approve
+
+# Or spin up a virtualized Proxmox VE GPU edge testbed
+cd terraform/environments/proxmox-dev
+tofu init
+tofu apply -auto-approve
+```
+
+See [`terraform/README.md`](terraform/README.md) for full module documentation and input variable references.
 
 ---
 

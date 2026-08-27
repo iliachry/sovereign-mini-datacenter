@@ -1,0 +1,30 @@
+cluster_name     = "sovereign-mini-dc"
+cluster_endpoint = "https://10.0.0.10:6443"
+domain           = "sovereign.local"
+ollama_model     = "qwen2.5-coder:7b"
+
+control_plane_nodes = {
+  "cp-01" = {
+    ip           = "10.0.0.10"
+    hostname     = "smdc-cp-01"
+    install_disk = "/dev/nvme0n1"
+    interface    = "10gbe0"
+  }
+}
+
+worker_nodes = {
+  "worker-gpu-01" = {
+    ip           = "10.0.0.20"
+    hostname     = "smdc-worker-gpu-01"
+    install_disk = "/dev/nvme0n1"
+    has_gpu      = true
+    interface    = "10gbe0"
+  }
+  "worker-gpu-02" = {
+    ip           = "10.0.0.21"
+    hostname     = "smdc-worker-gpu-02"
+    install_disk = "/dev/nvme0n1"
+    has_gpu      = true
+    interface    = "10gbe0"
+  }
+}

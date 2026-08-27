@@ -1,0 +1,5 @@
+proxmox_endpoint  = "https://10.0.0.5:8006/"
+proxmox_api_token = "root@pam!token_name=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+proxmox_insecure  = true
+target_node       = "pve-01"
+cluster_name      = "smdc-proxmox-dev"

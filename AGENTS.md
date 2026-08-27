@@ -110,6 +110,18 @@ sovereign-mini-datacenter/
 │   ├── helm/sovereign-stack/    # Production Helm chart (AI, telemetry, ingress)
 │   ├── k3s-sovereign.yaml       # K3s lightweight Kubernetes cluster manifest
 │   └── talos-config.yaml        # Talos Linux immutable bare-metal OS config
+├── terraform/                   # Terraform & OpenTofu Infrastructure-as-Code (IaC)
+│   ├── README.md                # IaC architectural guide, workflows & module index
+│   ├── versions.tf              # Root OpenTofu/Terraform provider version constraints
+│   ├── modules/                 # Reusable on-premise infrastructure modules
+│   │   ├── talos-cluster/       # Bare-metal Talos Linux OS, LUKS2 & K8s bootstrapping
+│   │   ├── proxmox-edge-node/   # Proxmox VE VM provisioning with PCIe GPU passthrough
+│   │   ├── libvirt-edge-node/   # Local KVM/Libvirt VM edge node provisioning
+│   │   ├── wireguard-mesh/      # Zero-trust P2P WireGuard mesh peering (10.42.0.0/16)
+│   │   └── k8s-sovereign-stack/ # Helm automation for ./kubernetes/helm/sovereign-stack
+│   └── environments/            # Turnkey deployment blueprints
+│       ├── baremetal-talos/     # Production bare-metal 3-node Talos cluster
+│       └── proxmox-dev/         # Virtualized Proxmox VE dev/testbed environment
 ├── firmware/                    # Embedded hardware micro-controller code
 │   ├── esp32_telemetry_bridge.ino # Arduino C++ firmware (I2C OLED, VE.Direct serial)
 │   └── esphome_smdc_bridge.yaml   # ESPHome firmware with MQTT/Prometheus metrics
@@ -197,6 +209,13 @@ sovereign-mini-datacenter/
 - **DePIN Decentralized SLA & Blockchain Consensus (`depin_sla.py`)**: Multi-validator PoS/dBFT consensus requiring $\lceil 2N/3 \rceil + 1$ multi-signatures, enforcing minimum SINR rejection thresholds ($-15\text{ dB}$) and automated repositioning triggers.
 - **Multi-Layer Orchestrator (`engine.py`)**: Implements Algorithm 1 (3-phase execution: parallel IoT/ray-tracing collection $\to$ critical path decision $<6\text{ ms} \to$ asynchronous DePIN block finalization).
 - **Comparative RL Benchmark Suite (`benchmark.py`)**: Parametric sweeps evaluating $+79.6\%$ capacity gains for disadvantaged receiver Rx1, execution latencies, and Shannon spectral efficiencies.
+
+### L. Terraform & OpenTofu Infrastructure-as-Code (`terraform/`)
+- **Zero-Cloud Declarative IaC**: Compatible with OpenTofu ($\ge 1.7$) and Terraform ($\ge 1.6$), managing bare-metal and virtualized on-premise infrastructure without public cloud lock-in.
+- **Talos Linux Automation (`modules/talos-cluster/`)**: Automates machine secret creation, LUKS2 disk encryption, 10GbE network interfaces, NVIDIA GPU container extensions, and kubeconfig generation.
+- **Hypervisor Edge Nodes (`modules/proxmox-edge-node/`, `modules/libvirt-edge-node/`)**: Provisions VMs with PCI GPU passthrough and high-performance NVMe storage.
+- **Zero-Trust WireGuard Mesh (`modules/wireguard-mesh/`)**: Generates node keypairs and full P2P peer tables for overlay mesh networking (`10.42.0.0/16`).
+- **Kubernetes Workload Bootstrap (`modules/k8s-sovereign-stack/`)**: Automated Helm deployment of the sovereign datacenter stack directly onto provisioned clusters.
 
 ---
 
