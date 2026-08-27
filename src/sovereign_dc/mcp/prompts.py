@@ -158,6 +158,40 @@ def get_mcp_prompts() -> list[MCPPrompt]:
             ],
             builder=build_onboard_enterprise_workload_prompt,
         ),
+        MCPPrompt(
+            name="optimize_uav_coverage",
+            description="Workflow prompt to execute Scene-Aware PPO optimization and 5G network slicing adjustments.",
+            arguments=[
+                MCPPromptArgument(
+                    name="target_receiver",
+                    description="Disadvantaged user identifier to prioritize (default: 'Rx1')",
+                    required=False,
+                )
+            ],
+            builder=build_optimize_uav_coverage_prompt,
+        ),
+    ]
+
+
+def build_optimize_uav_coverage_prompt(args: dict[str, str]) -> list[dict[str, Any]]:
+    """Builds a guided prompt for autonomous UAV positioning optimization and 5G slicing."""
+    target_rx = args.get("target_receiver", "Rx1")
+    return [
+        {
+            "role": "user",
+            "content": {
+                "type": "text",
+                "text": (
+                    f"You are the Sovereign Metaverse Wireless Management Copilot.\n"
+                    f"Operator requests positioning optimization prioritizing disadvantaged receiver '{target_rx}'.\n\n"
+                    f"Please perform the following operational workflow:\n"
+                    f"1. Read `smdc://metaverse/uav/status` and `smdc://metaverse/5g/slices` to inspect current link qualities and slice latencies.\n"
+                    f"2. Execute `run_metaverse_sim_cycle(cycles=5)` to run Scene-Aware PPO forward passes with Sionna ray-tracing.\n"
+                    f"3. Validate the new position against DePIN smart contract SLA rules via `validate_depin_sla` (ensuring SINR >= -15 dB).\n"
+                    f"4. Summarize the capacity improvements and URLLC command latency (< 1ms)."
+                ),
+            },
+        }
     ]
 
 

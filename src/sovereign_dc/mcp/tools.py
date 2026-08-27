@@ -594,6 +594,54 @@ def get_mcp_tools() -> list[MCPTool]:
             },
             handler=tool_scaffold_enterprise_app,
         ),
+        MCPTool(
+            name="run_metaverse_sim_cycle",
+            description="Execute multi-layer metaverse simulation cycles (Algorithm 1: SA-PPO, Sionna Ray-Tracing, 5G Slicing, DePIN SLA).",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "cycles": {
+                        "type": "integer",
+                        "description": "Number of simulation cycles to execute",
+                        "default": 1,
+                    },
+                    "deterministic": {
+                        "type": "boolean",
+                        "description": "Use deterministic policy inference",
+                        "default": True,
+                    },
+                    "seed": {"type": "integer", "description": "Random seed for reproducible training", "default": 111},
+                },
+            },
+            handler=tool_run_metaverse_sim_cycle,
+        ),
+        MCPTool(
+            name="get_5g_slices_status",
+            description="Query real-time 5G network slicing QoS, allocated bandwidth, latency, and active connection metrics.",
+            input_schema={
+                "type": "object",
+                "properties": {},
+            },
+            handler=tool_get_5g_slices_status,
+        ),
+        MCPTool(
+            name="validate_depin_sla",
+            description="Validate UAV position and receiver SINRs against DePIN smart contract SLA rules and Byzantine multi-sig consensus.",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "uav_x": {"type": "number", "description": "UAV X coordinate in meters", "default": 10.0},
+                    "uav_y": {"type": "number", "description": "UAV Y coordinate in meters", "default": 15.0},
+                    "uav_z": {"type": "number", "description": "UAV Z altitude in meters", "default": 40.0},
+                    "sensor_signatures_valid": {
+                        "type": "boolean",
+                        "description": "Whether ECDSA sensor signatures are valid",
+                        "default": True,
+                    },
+                },
+            },
+            handler=tool_validate_depin_sla,
+        ),
     ]
 
 
@@ -673,4 +721,64 @@ def tool_scaffold_enterprise_app(params: dict[str, Any]) -> dict[str, Any]:
     return {
         "manifest": manifest.to_dict(),
         "yaml_preview": manifest.to_json(),
+    }
+
+
+def tool_run_metaverse_sim_cycle(params: dict[str, Any]) -> dict[str, Any]:
+    """Executes multi-layer metaverse simulation cycles (Algorithm 1: SA-PPO, Sionna Ray-Tracing, 5G Slicing, DePIN SLA)."""
+    from sovereign_dc.metaverse.engine import MetaverseOrchestrator
+
+    cycles = int(params.get("cycles", 1))
+    deterministic = bool(params.get("deterministic", True))
+    seed = int(params.get("seed", 111))
+
+    orch = MetaverseOrchestrator(seed=seed)
+    traces = orch.run_cycles(count=cycles, deterministic=deterministic)
+
+    return {
+        "cycles_executed": len(traces),
+        "latest_trace": traces[-1].to_dict() if traces else None,
+        "uav_final_position": orch.uav_position,
+        "emergency_stopped": orch.is_emergency_stopped,
+    }
+
+
+def tool_get_5g_slices_status(params: dict[str, Any]) -> dict[str, Any]:
+    """Queries real-time QoS, allocated bandwidth, latency, and active connection metrics for 5G network slices."""
+    from sovereign_dc.metaverse.slicing import NetworkSlicingManager
+
+    mgr = NetworkSlicingManager()
+    return {
+        "timestamp": time.time(),
+        "slices": mgr.get_summary(),
+        "isolation_formula": "T_tx = (D * 8) / B_slice * 1000 ms",
+    }
+
+
+def tool_validate_depin_sla(params: dict[str, Any]) -> dict[str, Any]:
+    """Tests DePIN smart contract SLA validation rules on specified or current UAV coordinates and receiver SINR values."""
+    from sovereign_dc.metaverse.depin_sla import DePINSLAValidator
+
+    val = DePINSLAValidator()
+    uav_x = float(params.get("uav_x", 10.0))
+    uav_y = float(params.get("uav_y", 15.0))
+    uav_z = float(params.get("uav_z", 40.0))
+    sinrs = params.get("receiver_sinrs", {"Rx1": -9.5, "Rx2": -7.8, "Rx3": -4.2})
+
+    res = val.evaluate_uav_position_sla(
+        uav_pos=(uav_x, uav_y, uav_z),
+        per_receiver_sinr=sinrs,
+        sensor_signatures_valid=bool(params.get("sensor_signatures_valid", True)),
+    )
+
+    return {
+        "valid": res.valid,
+        "position_approved": res.position_approved,
+        "rejection_reason": res.rejection_reason,
+        "min_sinr_db": res.min_sinr_db,
+        "optimization_event_triggered": res.optimization_event_triggered,
+        "validator_signatures_count": res.validator_signatures_count,
+        "required_threshold": res.required_threshold,
+        "block_hash": res.block_hash,
+        "finality_time_sec": res.finality_time_sec,
     }

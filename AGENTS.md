@@ -55,15 +55,22 @@ sovereign-mini-datacenter/
 │       ├── mcp/                 # Native Model Context Protocol (MCP) Server
 │       │   ├── __init__.py           # Package exports (MCPServer, MCPTool, MCPResource, MCPPrompt)
 │       │   ├── server.py             # JSON-RPC 2.0 stdio server and request router
-│       │   ├── tools.py              # 13 MCP operational tools (telemetry, pricing, DTN, PQC, apps)
-│       │   ├── resources.py          # 7 dynamic MCP resource URI endpoints
-│       │   └── prompts.py            # 4 operational workflow prompts
+│       │   ├── tools.py              # 16 MCP operational tools (telemetry, pricing, DTN, PQC, apps, metaverse)
+│       │   ├── resources.py          # 9 dynamic MCP resource URI endpoints
+│       │   └── prompts.py            # 5 operational workflow prompts
 │       ├── mesh/                # Multi-node peer-to-peer & LoRa networking
 │       │   ├── mesh_sync.py          # WireGuard peer health and state synchronizer
 │       │   ├── consensus.py          # Raft distributed consensus state machine
 │       │   ├── chaos.py              # Split-brain, link loss & packet loss chaos simulator
 │       │   └── lora/
 │       │       └── meshtastic_gateway.py # Sub-GHz LoRa packet gateway (AES-256-GCM)
+│       ├── metaverse/           # 5G RAN & UAV Metaverse Simulation Stack (IEEE IoT Mag 2026)
+│       │   ├── ray_tracer.py         # 3GPP UMi & Sionna 3D multipath ray-tracer (3.5 GHz)
+│       │   ├── agent.py              # Scene-Aware PPO (SA-PPO) & Model-Driven PPO (MD-PPO)
+│       │   ├── slicing.py            # 5G Network Slicing traffic isolation (URLLC/eMBB/mMTC)
+│       │   ├── depin_sla.py          # DePIN PoS/dBFT consensus & smart contract SLA verification
+│       │   ├── engine.py             # Algorithm 1 MultiLayerOrchestrator (<6ms critical path)
+│       │   └── benchmark.py          # Comparative RL benchmarking & capacity gain sweeps
 │       ├── security/            # Post-Quantum Cryptography Engine
 │       │   └── pqc.py                # NIST FIPS 203 ML-KEM & FIPS 204 ML-DSA
 │       ├── space/               # Space communications & satellite tracking
@@ -83,7 +90,8 @@ sovereign-mini-datacenter/
 │       ├── iot-edge-gateway/    # L0 Critical Sub-GHz sensor telemetry aggregator
 │       ├── edge-vision-ai/      # L2 Background GPU-accelerated TensorRT computer vision
 │       ├── spatial-digital-twin/# L1 Standard Three.js WebGL spatial simulation
-│       └── confidential-vault/  # L0 Critical NIST FIPS 203/204 zero-trust secrets vault
+│       ├── confidential-vault/  # L0 Critical NIST FIPS 203/204 zero-trust secrets vault
+│       └── oran-ric-controller/ # L0 Critical O-RAN Near-RT RIC xApp 5G slicing & UAV controller
 ├── software/                    # Production deployment & service definitions
 │   ├── docker-compose.yml       # Primary 11-service production stack
 │   ├── Dockerfile.smdc          # Multi-architecture container blueprint (amd64, arm64)
@@ -115,7 +123,7 @@ sovereign-mini-datacenter/
 │   └── MANUFACTURING_GUIDE.md   # Laser cut DXF export, CNC sheet metal bending specs
 ├── docs/                        # Interactive Three.js WebGL Digital Twin & GitHub Pages
 │   └── index.html               # 3D WebGL CAD viewer + interactive sizing & TCO calculator
-├── tests/                       # Complete automated Pytest suite (354+ tests, 90.5%+ coverage)
+├── tests/                       # Complete automated Pytest suite (368+ tests, 91.2%+ coverage)
 ├── ARCHITECTURE.md              # Multi-node autonomous network architecture specification
 ├── ENTERPRISE_ONBOARDING.md     # Enterprise manifest spec, power tiers & developer guide
 ├── COMMERCIALIZATION.md         # Investment thesis, TAM/SAM/SOM & 3-year TCO payback model
@@ -131,7 +139,7 @@ sovereign-mini-datacenter/
 
 ### A. Centralized Configuration & Event Bus (`src/sovereign_dc/config.py`, `events.py`)
 - **Layered Configuration (`config.py`)**: Hierarchical configuration dataclass (`SovereignConfig`) supporting programmatic defaults $\to$ YAML configuration files $\to$ environment variables (`SMDC_*`).
-- **In-Process Event Bus (`events.py`)**: Thread-safe publish/subscribe event dispatcher (`SovereignEventBus`) with wildcard event routing (`load_shedding.*`, `mesh.*`, `space.*`, `economy.*`) and ring-buffered audit logs.
+- **In-Process Event Bus (`events.py`)**: Thread-safe publish/subscribe event dispatcher (`SovereignEventBus`) with wildcard event routing (`load_shedding.*`, `mesh.*`, `space.*`, `economy.*`, `metaverse.*`) and ring-buffered audit logs.
 
 ### B. Hardware Abstraction Layer (HAL) (`src/sovereign_dc/hal/`)
 - **GPU (`gpu.py`)**: Automatic discovery of NVIDIA Tegra (Jetson Orin) via sysfs `/devices/platform/` or desktop GPUs via `pynvml`, parsing power draw, temperature, and utilization.
@@ -146,8 +154,8 @@ sovereign-mini-datacenter/
 ### D. Operations Dashboard, Live Digital Shadow & REST API (`src/sovereign_dc/web/dashboard.py`)
 - Built-in zero-dependency HTTP server delivering a responsive, dark-mode glassmorphic single-page operations console (`smdc dashboard`).
 - **Live Digital Shadow SSE Stream (`/api/telemetry/stream`)**: Continuous Server-Sent Events stream delivering live telemetry snapshots (fan RPM, coolant temperature, solar harvest, battery SoC) directly to 3D WebGL Digital Twins.
-- **Hardware Control APIs**: Remote control endpoints (`/api/control/rack-door`, `/api/control/pdu-outlet`, `/api/control/dtn-transmit`) enabling physical solenoid door unlock and RFC 9171 bundle spooling from the 3D twin.
-- Provides real-time status REST APIs (`/api/status`, `/health`) tracking battery State-of-Charge, solar harvest, thermal loops, Space DTN spools, economy wallets, and mesh peers.
+- **Hardware & Metaverse Control APIs**: Remote control endpoints (`/api/control/rack-door`, `/api/control/pdu-outlet`, `/api/control/dtn-transmit`, `/api/metaverse/optimize`, `/api/metaverse/emergency-stop`) enabling physical solenoid door unlock, RFC 9171 bundle spooling, and SA-PPO UAV teleoperation from the 3D twin.
+- Provides real-time status REST APIs (`/api/status`, `/api/metaverse/status`, `/api/metaverse/slices`, `/health`) tracking battery State-of-Charge, solar harvest, thermal loops, Space DTN spools, economy wallets, 5G slices, and mesh peers.
 
 ### E. Mesh Chaos Engineering Simulator (`src/sovereign_dc/mesh/chaos.py`)
 - Simulates network partition scenarios, split-brain conditions, terrestrial link dropouts with automatic Space DTN spooling fallback, and deterministic packet loss replication.
@@ -172,15 +180,23 @@ sovereign-mini-datacenter/
 
 ### I. Native Model Context Protocol (MCP) Server (`src/sovereign_dc/mcp/`)
 - **Standard Protocol Support (2024-11-05)**: Standardized JSON-RPC 2.0 stdio interface exposing datacenter hardware and services to AI assistants (Antigravity, Claude Desktop, Cursor, Cline).
-- **Operational MCP Tools (`tools.py`)**: 13 callable tools including `get_telemetry`, `get_system_status`, `set_load_shedding`, `query_market_pricing`, `get_wallet_balances`, `spool_dtn_bundle`, `predict_satellite_passes`, `query_knowledge_indexer`, `run_security_audit`, `dispatch_technician_alert`, `list_enterprise_apps`, `manage_enterprise_app`, and `scaffold_enterprise_app`.
-- **Dynamic MCP Resources (`resources.py`)**: 7 live URI resources (`smdc://telemetry/current`, `smdc://system/manifest`, `smdc://economy/market`, `smdc://space/dtn/spool`, `smdc://security/pqc/status`, `smdc://enterprise/apps`, `smdc://enterprise/schema`).
-- **Standard MCP Prompts (`prompts.py`)**: 4 diagnostic and workflow prompts (`diagnose_power_incident`, `plan_compute_workload`, `prepare_space_transmission`, `onboard_enterprise_workload`).
+- **Operational MCP Tools (`tools.py`)**: 16 callable tools including `get_telemetry`, `get_system_status`, `set_load_shedding`, `query_market_pricing`, `get_wallet_balances`, `spool_dtn_bundle`, `predict_satellite_passes`, `query_knowledge_indexer`, `run_security_audit`, `dispatch_technician_alert`, `list_enterprise_apps`, `manage_enterprise_app`, `scaffold_enterprise_app`, `run_metaverse_sim_cycle`, `get_5g_slices_status`, and `validate_depin_sla`.
+- **Dynamic MCP Resources (`resources.py`)**: 9 live URI resources (`smdc://telemetry/current`, `smdc://system/manifest`, `smdc://economy/market`, `smdc://space/dtn/spool`, `smdc://security/pqc/status`, `smdc://enterprise/apps`, `smdc://enterprise/schema`, `smdc://metaverse/uav/status`, `smdc://metaverse/5g/slices`).
+- **Standard MCP Prompts (`prompts.py`)**: 5 diagnostic and workflow prompts (`diagnose_power_incident`, `plan_compute_workload`, `prepare_space_transmission`, `onboard_enterprise_workload`, `optimize_uav_coverage`).
 
 ### J. Enterprise Workload Onboarding & Coupling Framework (`src/sovereign_dc/enterprise/`)
 - **Declarative Manifest Specification (`schema.py`)**: Type-safe `smdc-app.yaml` manifest supporting multi-tier power shedding ($L_0 \to L_4$), memory/vRAM quotas, network policies, and health probes.
 - **Enterprise Registry & Discovery (`registry.py`)**: Automated discovery across `/etc/smdc/apps`, `~/.smdc/apps`, and workspace paths with turnkey project scaffolding (`smdc app init`).
 - **Zero-Dependency Enterprise SDK (`sdk.py`)**: Minimal footprint `SMDCClient` and `AppLifecycleHandler` providing direct event bus binding, hardware telemetry streams, dynamic pricing queries, and Space DTN spooling.
 - **Supervision & Load Shedding Manager (`manager.py`)**: Dynamic process management auto-pausing deferrable background apps ($L_2 \to L_4$) on low battery / thermal events and resuming on solar recovery, plus NIST FIPS 204 ML-DSA-87 cryptographic bundle packaging (`.smdc-app` + `.sig`).
+
+### K. 5G RAN & UAV Metaverse Simulation Stack (`src/sovereign_dc/metaverse/`)
+- **Physics-Based Electromagnetic Ray-Tracer (`ray_tracer.py`)**: 3GPP UMi & Sionna 3D multipath ray-tracer at 3.5 GHz with up to 5 reflection orders, urban building LoS obstruction checking, Kriging spatial interpolation, and per-receiver SINR calculation.
+- **Scene-Aware Deep Reinforcement Learning Agent (`agent.py`)**: 3-layer Actor-Critic neural networks with 20-dim state vector, discrete 6-directional action space ($\pm X, \pm Y, \pm Z$), sum-SINR reward formulation with disadvantaged receiver weighting, and Model-Driven PPO (MD-PPO) baseline comparison.
+- **5G Network Slicing & SDN Controller (`slicing.py`)**: Mathematical bandwidth isolation ($T_{\mathrm{tx}} = (D \cdot 8)/B_{\mathrm{slice}} \cdot 1000\text{ ms}$) managing URLLC ($< 1\text{ ms}$), eMBB ($127\text{ Mbps}$), and mMTC ($12\text{k devs/km}^2$) slices.
+- **DePIN Decentralized SLA & Blockchain Consensus (`depin_sla.py`)**: Multi-validator PoS/dBFT consensus requiring $\lceil 2N/3 \rceil + 1$ multi-signatures, enforcing minimum SINR rejection thresholds ($-15\text{ dB}$) and automated repositioning triggers.
+- **Multi-Layer Orchestrator (`engine.py`)**: Implements Algorithm 1 (3-phase execution: parallel IoT/ray-tracing collection $\to$ critical path decision $<6\text{ ms} \to$ asynchronous DePIN block finalization).
+- **Comparative RL Benchmark Suite (`benchmark.py`)**: Parametric sweeps evaluating $+79.6\%$ capacity gains for disadvantaged receiver Rx1, execution latencies, and Shannon spectral efficiencies.
 
 ---
 
@@ -259,13 +275,11 @@ uv run pytest tests/ --cov=src/sovereign_dc --cov-fail-under=85
 .\.venv\Scripts\python -m sovereign_dc demo --steps 3
 .\.venv\Scripts\python -m sovereign_dc mesh consensus --nodes 3
 .\.venv\Scripts\python -m sovereign_dc space passes --hours 12
-.\.venv\Scripts\python -m sovereign_dc agent ask "Summarize power status"
+.\.venv\Scripts\python -m sovereign_dc sim run --cycles 5
+.\.venv\Scripts\python -m sovereign_dc sim slices
+.\.venv\Scripts\python -m sovereign_dc sim sla
+.\.venv\Scripts\python -m sovereign_dc sim benchmark --episodes 5 --steps 10
 .\.venv\Scripts\python -m sovereign_dc mcp test
-.\.venv\Scripts\python -m sovereign_dc mcp tools
-.\.venv\Scripts\python -m sovereign_dc mcp resources
-.\.venv\Scripts\python -m sovereign_dc mcp prompts
-.\.venv\Scripts\python -m sovereign_dc mcp serve
-```
 .\.venv\Scripts\python -m sovereign_dc mcp tools
 .\.venv\Scripts\python -m sovereign_dc mcp resources
 .\.venv\Scripts\python -m sovereign_dc mcp prompts

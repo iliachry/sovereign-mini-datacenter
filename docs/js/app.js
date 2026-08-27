@@ -129,6 +129,10 @@ function setupUIListeners() {
     HUD.triggerRemoteDTNTransmit();
   });
 
+  document.getElementById('btn-uav-opt')?.addEventListener('click', () => {
+    HUD.triggerUAVOptimization();
+  });
+
   // Modal Triggers
   setupModalTrigger('btn-calc', 'modal-sizing');
   setupModalTrigger('btn-investor', 'modal-investor');

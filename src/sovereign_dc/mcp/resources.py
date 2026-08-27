@@ -212,7 +212,60 @@ def get_mcp_resources() -> list[MCPResource]:
             mime_type="application/json",
             reader=read_enterprise_schema_resource,
         ),
+        MCPResource(
+            uri="smdc://metaverse/uav/status",
+            name="Metaverse UAV Positioning & DT Telemetry",
+            description="Real-time 3D UAV coordinates, per-receiver SINR values, and DePIN SLA status.",
+            mime_type="application/json",
+            reader=read_metaverse_uav_status_resource,
+        ),
+        MCPResource(
+            uri="smdc://metaverse/5g/slices",
+            name="5G Network Slices QoS & Isolation",
+            description="Real-time bandwidth allocations, target vs avg latencies, and reliability metrics for URLLC/eMBB/mMTC.",
+            mime_type="application/json",
+            reader=read_metaverse_slices_resource,
+        ),
     ]
+
+
+def read_metaverse_uav_status_resource() -> str:
+    """Returns real-time snapshot of the metaverse UAV positioning and DT ray-tracing state."""
+    from sovereign_dc.metaverse.engine import MetaverseOrchestrator
+
+    orch = MetaverseOrchestrator()
+    trace = orch.step(deterministic=True)
+    return json.dumps(
+        {
+            "uri": "smdc://metaverse/uav/status",
+            "timestamp": time.time(),
+            "uav_position": trace.uav_position,
+            "per_receiver_sinr": trace.per_receiver_sinr,
+            "sum_capacity_bps_hz": trace.sum_capacity_bps_hz,
+            "decision_latency_ms": trace.decision_latency_ms,
+            "depin_sla": {
+                "valid": trace.sla_result.valid,
+                "block_hash": trace.sla_result.block_hash,
+                "signatures_count": trace.sla_result.validator_signatures_count,
+            },
+        },
+        indent=2,
+    )
+
+
+def read_metaverse_slices_resource() -> str:
+    """Returns 5G network slicing QoS and isolation status."""
+    from sovereign_dc.metaverse.slicing import NetworkSlicingManager
+
+    mgr = NetworkSlicingManager()
+    return json.dumps(
+        {
+            "uri": "smdc://metaverse/5g/slices",
+            "timestamp": time.time(),
+            "slices": mgr.get_summary(),
+        },
+        indent=2,
+    )
 
 
 def read_enterprise_apps_resource() -> str:

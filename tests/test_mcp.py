@@ -95,7 +95,7 @@ class TestMCPTools(unittest.TestCase):
         res = self.server.handle_request(req)
         self.assertIsNotNone(res)
         tools = res["result"]["tools"]
-        self.assertEqual(len(tools), 13)
+        self.assertEqual(len(tools), 16)
         tool_names = [t["name"] for t in tools]
         self.assertIn("get_telemetry", tool_names)
         self.assertIn("get_system_status", tool_names)
@@ -110,6 +110,9 @@ class TestMCPTools(unittest.TestCase):
         self.assertIn("list_enterprise_apps", tool_names)
         self.assertIn("manage_enterprise_app", tool_names)
         self.assertIn("scaffold_enterprise_app", tool_names)
+        self.assertIn("run_metaverse_sim_cycle", tool_names)
+        self.assertIn("get_5g_slices_status", tool_names)
+        self.assertIn("validate_depin_sla", tool_names)
 
     def test_call_get_telemetry(self) -> None:
         req = {
@@ -301,7 +304,7 @@ class TestMCPResources(unittest.TestCase):
         req = {"jsonrpc": "2.0", "id": 1, "method": "resources/list"}
         res = self.server.handle_request(req)
         resources = res["result"]["resources"]
-        self.assertEqual(len(resources), 7)
+        self.assertEqual(len(resources), 9)
         uris = [r["uri"] for r in resources]
         self.assertIn("smdc://telemetry/current", uris)
         self.assertIn("smdc://system/manifest", uris)
@@ -310,6 +313,8 @@ class TestMCPResources(unittest.TestCase):
         self.assertIn("smdc://security/pqc/status", uris)
         self.assertIn("smdc://enterprise/apps", uris)
         self.assertIn("smdc://enterprise/schema", uris)
+        self.assertIn("smdc://metaverse/uav/status", uris)
+        self.assertIn("smdc://metaverse/5g/slices", uris)
 
     def test_read_all_resources(self) -> None:
         uris = [
@@ -320,6 +325,8 @@ class TestMCPResources(unittest.TestCase):
             "smdc://security/pqc/status",
             "smdc://enterprise/apps",
             "smdc://enterprise/schema",
+            "smdc://metaverse/uav/status",
+            "smdc://metaverse/5g/slices",
         ]
         for uri in uris:
             req = {"jsonrpc": "2.0", "id": 2, "method": "resources/read", "params": {"uri": uri}}
@@ -349,7 +356,7 @@ class TestMCPResources(unittest.TestCase):
 
 
 class TestMCPPrompts(unittest.TestCase):
-    """Tests all 4 MCP Prompt Templates."""
+    """Tests all 5 MCP Prompt Templates."""
 
     def setUp(self) -> None:
         self.server = MCPServer()
@@ -358,12 +365,13 @@ class TestMCPPrompts(unittest.TestCase):
         req = {"jsonrpc": "2.0", "id": 1, "method": "prompts/list"}
         res = self.server.handle_request(req)
         prompts = res["result"]["prompts"]
-        self.assertEqual(len(prompts), 4)
+        self.assertEqual(len(prompts), 5)
         names = [p["name"] for p in prompts]
         self.assertIn("diagnose_power_incident", names)
         self.assertIn("plan_compute_workload", names)
         self.assertIn("prepare_space_transmission", names)
         self.assertIn("onboard_enterprise_workload", names)
+        self.assertIn("optimize_uav_coverage", names)
 
     def test_get_prompts(self) -> None:
         req1 = {

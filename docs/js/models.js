@@ -85,11 +85,41 @@ const COMPONENT_DATA = {
     desc: 'Ultra-fast Maximum Power Point Tracking (MPPT) solar charge controller converting high-voltage PV input to 48V battery bank.',
     specs: { 'Max PV Voltage': '150V', 'Max Charge Current': '35A', 'Peak Efficiency': '98%', 'Comms': 'VE.Direct Serial', 'Power': '1,330W Harvest' },
   },
-  solar: {
-    name: '1,640W Bifacial Solar PV Array',
+  solar_panels: {
+    name: 'Bifacial Solar Photovoltaic Array (1.64 kWp)',
     badge: 'SOLAR PV',
     desc: '4x 410W high-efficiency monocrystalline bifacial solar panels producing up to 8.6 kWh daily energy yield in Southern European latitudes.',
     specs: { 'Rating': '1,640W Peak', 'Cells': 'Monocrystalline N-Type', 'Bifacial Gain': '+15%', 'Daily Yield': '8.6 kWh / day', 'Area': '7.8 m²' },
+  },
+  uav_relay: {
+    name: 'Autonomous 5G UAV Mesh Relay (SA-PPO)',
+    badge: '5G / SA-PPO',
+    desc: 'Autonomous aerial base-station optimizing 3D positioning via Scene-Aware PPO (SA-PPO) and Sionna ray-tracing to provide dynamic URLLC & eMBB coverage for disadvantaged ground receivers.',
+    specs: { 'AI Policy': 'Scene-Aware PPO', 'Carrier': '3.5 GHz (100 MHz)', 'Latency': '< 1ms URLLC', 'SLA Consensus': 'PoS/dBFT 6/7 Sigs', 'Rx1 Gain': '+79.6% Capacity' },
+  },
+  rf_heatmap: {
+    name: 'Volumetric 3D SINR Heatmap Grid',
+    badge: 'DIGITAL TWIN',
+    desc: 'Real-time ray-traced electromagnetic signal propagation field calibrated by 180 heterogeneous IoT ground sensors and Kriging spatial interpolation.',
+    specs: { 'Resolution': '10x10 Spatial Grid', 'Reflection Depth': '5th-Order Multipath', 'Threshold': '-15 dB Min SINR', 'Update Rate': '12 ms' },
+  },
+  rx1: {
+    name: 'Ground Receiver 1 (Disadvantaged Urban Canyon)',
+    badge: 'IoT / 5G UE',
+    desc: 'Severely shadowed user equipment located in an urban street canyon, achieving +79.6% capacity gain under SA-PPO positioning optimization.',
+    specs: { 'Location': 'Urban Canyon', 'Initial SINR': '-12.0 dB', 'Optimized SINR': '-9.7 dB', 'Capacity': '0.187 bps/Hz', 'Gain': '+79.6%' },
+  },
+  rx2: {
+    name: 'Ground Receiver 2 (Suburban Edge)',
+    badge: 'IoT / 5G UE',
+    desc: 'Intermediate user equipment receiving secondary multipath reflections, achieving +49.9% capacity boost under SA-PPO.',
+    specs: { 'Location': 'Suburban Edge', 'Initial SINR': '-9.4 dB', 'Optimized SINR': '-8.1 dB', 'Capacity': '0.256 bps/Hz', 'Gain': '+49.9%' },
+  },
+  rx3: {
+    name: 'Ground Receiver 3 (Line-of-Sight)',
+    badge: 'IoT / 5G UE',
+    desc: 'Direct line-of-sight user equipment with minimal obstruction, achieving +27.0% capacity gain.',
+    specs: { 'Location': 'Open Line-of-Sight', 'Initial SINR': '-5.5 dB', 'Optimized SINR': '-5.1 dB', 'Capacity': '0.489 bps/Hz', 'Gain': '+27.0%' },
   },
 };
 
@@ -108,6 +138,7 @@ export function buildAll(scene) {
   coolingGroup = new THREE.Group();
   solarGroup = new THREE.Group();
   spaceGroup = new THREE.Group();
+  metaverseGroup = new THREE.Group();
 
   mainGroup.add(rackGroup);
   mainGroup.add(computeGroup);
@@ -115,6 +146,7 @@ export function buildAll(scene) {
   mainGroup.add(coolingGroup);
   mainGroup.add(solarGroup);
   mainGroup.add(spaceGroup);
+  mainGroup.add(metaverseGroup);
 
   buildRackEnclosure();
   buildRackMountComponents();
@@ -122,6 +154,7 @@ export function buildAll(scene) {
   buildPowerWall();
   buildSolarArray();
   buildSpaceTerminal();
+  buildMetaverseSystem();
 }
 
 function buildRackEnclosure() {
@@ -529,6 +562,111 @@ function buildSpaceTerminal() {
   spaceGroup.add(termMount);
 }
 
+let uavGroup;
+let uavRotors = [];
+
+function buildMetaverseSystem() {
+  // 1. Autonomous 5G UAV Drone
+  uavGroup = new THREE.Group();
+  uavGroup.position.set(0, 480, 180);
+
+  // Drone Central Hub Chassis
+  const chassisGeom = new THREE.BoxGeometry(70, 22, 70);
+  const chassisMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, metalness: 0.85, roughness: 0.2 });
+  const chassis = new THREE.Mesh(chassisGeom, chassisMat);
+  chassis.castShadow = true;
+  uavGroup.add(chassis);
+
+  // Drone 5G Micro-Patch Antenna Stalk
+  const mastGeom = new THREE.CylinderGeometry(3, 3, 40, 16);
+  const mastMat = new THREE.MeshStandardMaterial({ color: 0x38bdf8, metalness: 0.9, roughness: 0.1 });
+  const mast = new THREE.Mesh(mastGeom, mastMat);
+  mast.position.set(0, -25, 0);
+  uavGroup.add(mast);
+
+  const radomeGeom = new THREE.SphereGeometry(8, 16, 16);
+  const radomeMat = getMaterial('ledSky');
+  const radome = new THREE.Mesh(radomeGeom, radomeMat);
+  radome.position.set(0, -45, 0);
+  uavGroup.add(radome);
+
+  // 4 Quad-Rotor Carbon Arms and Rotors
+  const armGeom = new THREE.BoxGeometry(110, 6, 8);
+  const armMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, metalness: 0.7 });
+  const arm1 = new THREE.Mesh(armGeom, armMat);
+  arm1.rotation.y = Math.PI / 4;
+  uavGroup.add(arm1);
+  const arm2 = new THREE.Mesh(armGeom, armMat);
+  arm2.rotation.y = -Math.PI / 4;
+  uavGroup.add(arm2);
+
+  // 4 Rotors
+  const rotorPositions = [
+    [38, 10, 38],
+    [-38, 10, 38],
+    [38, 10, -38],
+    [-38, 10, -38],
+  ];
+  rotorPositions.forEach((p) => {
+    const motor = new THREE.Mesh(
+      new THREE.CylinderGeometry(6, 6, 8, 12),
+      new THREE.MeshStandardMaterial({ color: 0x64748b })
+    );
+    motor.position.set(p[0], p[1], p[2]);
+    uavGroup.add(motor);
+
+    const bladeGeom = new THREE.BoxGeometry(40, 1, 5);
+    const blade = new THREE.Mesh(
+      bladeGeom,
+      new THREE.MeshStandardMaterial({ color: 0x10b981, transparent: true, opacity: 0.85 })
+    );
+    blade.position.set(p[0], p[1] + 5, p[2]);
+    uavGroup.add(blade);
+    uavRotors.push(blade);
+  });
+
+  registerInteractive(chassis, 'uav_relay');
+  metaverseGroup.add(uavGroup);
+
+  // 2. Volumetric SINR Heatmap Floor Grid (380 x 380 mm visual plane)
+  const heatmapGeom = new THREE.PlaneGeometry(380, 380, 8, 8);
+  const heatmapMat = new THREE.MeshBasicMaterial({
+    color: 0x10b981,
+    wireframe: true,
+    transparent: true,
+    opacity: 0.35,
+  });
+  const heatmap = new THREE.Mesh(heatmapGeom, heatmapMat);
+  heatmap.rotation.x = -Math.PI / 2;
+  heatmap.position.set(0, -190, 0);
+  registerInteractive(heatmap, 'rf_heatmap');
+  metaverseGroup.add(heatmap);
+
+  // 3. Three Ground Receivers (Rx1 Disadvantaged, Rx2, Rx3)
+  const rxPositions = [
+    { id: 'rx1', name: 'Rx1 (Urban Canyon Disadvantaged)', pos: [-160, -185, 140], color: 0xef4444 },
+    { id: 'rx2', name: 'Rx2 (Suburban Edge)', pos: [150, -185, 120], color: 0x38bdf8 },
+    { id: 'rx3', name: 'Rx3 (Open LoS)', pos: [40, -185, -160], color: 0x10b981 },
+  ];
+  rxPositions.forEach((r) => {
+    const nodeGeom = new THREE.CylinderGeometry(8, 8, 12, 16);
+    const nodeMat = new THREE.MeshStandardMaterial({ color: r.color, metalness: 0.8, roughness: 0.2 });
+    const node = new THREE.Mesh(nodeGeom, nodeMat);
+    node.position.set(r.pos[0], r.pos[1], r.pos[2]);
+    registerInteractive(node, r.id);
+    metaverseGroup.add(node);
+
+    // Halo pulse ring
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(12, 16, 24),
+      new THREE.MeshBasicMaterial({ color: r.color, side: THREE.DoubleSide, transparent: true, opacity: 0.6 })
+    );
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.set(r.pos[0], r.pos[1] - 5, r.pos[2]);
+    metaverseGroup.add(ring);
+  });
+}
+
 export function toggleDoor() {
   if (!doorPivot) return false;
   doorOpen = !doorOpen;
@@ -548,6 +686,7 @@ export function setExplodedView(progress) {
   if (solarGroup) solarGroup.position.x = -640 - p * 200;
   if (spaceGroup) spaceGroup.position.y = p * 150;
   if (computeGroup) computeGroup.position.z = p * 180;
+  if (metaverseGroup) metaverseGroup.position.y = p * 120;
 }
 
 export function setSubsystemVisibility(layerKey) {
@@ -557,6 +696,7 @@ export function setSubsystemVisibility(layerKey) {
   if (coolingGroup) coolingGroup.visible = all || layerKey === 'cooling';
   if (solarGroup) solarGroup.visible = all || layerKey === 'solar';
   if (spaceGroup) spaceGroup.visible = all || layerKey === 'space';
+  if (metaverseGroup) metaverseGroup.visible = all || layerKey === 'metaverse';
 }
 
 export function updateAnimations() {
@@ -565,7 +705,16 @@ export function updateAnimations() {
   fanBlades.forEach((f) => {
     f.rotation.y += speed;
   });
+
+  // Animate UAV Drone hovering & rotors
+  if (uavGroup) {
+    uavGroup.position.y = 480 + Math.sin(Date.now() * 0.003) * 6;
+    uavRotors.forEach((r) => {
+      r.rotation.y += 0.35;
+    });
+  }
 }
 
 export function getInteractiveObjects() { return interactiveObjects; }
 export function getComponentData(key) { return COMPONENT_DATA[key]; }
+

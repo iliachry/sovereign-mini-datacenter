@@ -368,4 +368,44 @@ Phase 4: Autonomous Swarm Multi-Agent Governance
   ├── Create P2P gossip broker for Sentinel agents
   ├── Connect CrowdSec mesh threat intelligence across all nodes
   └── Launch automated orbital DTN contact scheduling with automated ground station tracking
+
+---
+
+## 11. 6-Layer Metaverse Framework for Wireless Systems Management (IEEE IoT Mag 2026)
+
+Based on the published IEEE Internet of Things Magazine theoretical framework (*"A Metaverse Framework for Wireless Systems Management"*, Sept 2026; Ilias Chrysovergis, Alexandros-Apostolos A. Boulogeorgos, Theodoros A. Tsiftsis, Dusit Niyato), the sovereign stack integrates a closed-loop cyber-physical optimization architecture:
+
+```mermaid
+graph TD
+    classDef xr fill:#4c1d95,stroke:#a855f7,color:#fff;
+    classDef twin fill:#1e3a8a,stroke:#3b82f6,color:#fff;
+    classDef ai fill:#065f46,stroke:#10b981,color:#fff;
+    classDef depin fill:#78350f,stroke:#f59e0b,color:#fff;
+    classDef net fill:#831843,stroke:#ec4899,color:#fff;
+    classDef iot fill:#1e293b,stroke:#64748b,color:#fff;
+
+    L6["Layer 6: XR Experience Layer (Real-Time 3D Immersion • Teleoperation • HMDs)"]:::xr
+    L5["Layer 5: Blockchain & DePIN Layer (Smart Contracts • PoS/dBFT Consensus • SLA Audits)"]:::depin
+    L4["Layer 4: Digital Twin Layer (Sionna 3D Ray-Tracing • Kriging Spatial Modeling)"]:::twin
+    L3["Layer 3: AI Engine Layer (Scene-Aware PPO • 20-Dim State • Sum-SINR Reward)"]:::ai
+    L2["Layer 2: Networking Layer (5G Network Slicing • URLLC < 1ms • eMBB • mMTC)"]:::net
+    L1["Layer 1: IoT & Physical Device Layer (UAV Drone Relay • 180 Sensors • Shadowed UEs)"]:::iot
+
+    L1 -->|"Real-Time Sensor Telemetry"| L4
+    L4 -->|"EM Propagation & Channel Matrices"| L3
+    L3 -->|"Action Vectors (±X, ±Y, ±Z)"| L2
+    L2 -->|"URLLC Micro-Command (< 1ms)"| L1
+    L1 -.->|"Position Attestations"| L5
+    L5 -->|"Multi-Sig Block Finality (3-6s)"| L6
+    L4 -->|"Point Cloud & Heatmap Streams"| L6
 ```
+
+### Key Analytical Specifications
+1. **Electromagnetic Ray-Tracing**: 3GPP UMi model at 3.5 GHz ($23\text{ dBm}$ TX, $+8\text{ dBi}$ gain), up to 5 reflection orders, urban building LoS obstruction checking, and spatial Kriging interpolation.
+2. **Scene-Aware Reinforcement Learning (SA-PPO)**: 3-layer Actor-Critic network ([256, 128, 64]) with 20-dim state vector, delivering $+79.6\%$ capacity boost on disadvantaged receiver Rx1 compared to conventional model-driven policies (MD-PPO).
+3. **5G Network Slicing & SDN**: Mathematical bandwidth isolation $T_{\mathrm{tx}} = \frac{D \cdot 8}{B_{\mathrm{slice}}} \cdot 1000\text{ ms}$, ensuring $< 1\text{ ms}$ URLLC flight execution.
+4. **DePIN PoS/dBFT Consensus**: $\lceil 2N/3 \rceil + 1$ multi-signature validation, enforcing $-15\text{ dB}$ minimum SINR rejection thresholds.
+5. **Algorithm 1 Multi-Phase Execution Pipeline**:
+   - **Phase 1 (Parallel Collection)**: Concurrently gathers IoT telemetry and evaluates Sionna ray-tracing propagation.
+   - **Phase 2 (Critical Path $<6\text{ ms}$)**: AI policy inference $\to$ URLLC dispatch $\to$ UAV actuator response.
+   - **Phase 3 (Asynchronous Finalization)**: Multi-signature validator voting, smart contract execution, and ledger finality ($3\text{--}6\text{ s}$).

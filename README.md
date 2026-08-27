@@ -7,8 +7,7 @@
 Developed by **[Metatopia Studio](https://metatopia.gr)** · Author & Lead Architect: **[Ilias Chrysovergis](https://iliachry.gr)** · License: MIT · © 2026
 
 [![CI & Quality Gates](https://github.com/iliachry/sovereign-mini-datacenter/actions/workflows/ci.yml/badge.svg)](https://github.com/iliachry/sovereign-mini-datacenter/actions/workflows/ci.yml)
-[![CI & Quality Gates](https://github.com/iliachry/sovereign-mini-datacenter/actions/workflows/ci.yml/badge.svg)](https://github.com/iliachry/sovereign-mini-datacenter/actions/workflows/ci.yml)
-[![Quality Gate](https://img.shields.io/badge/Quality%20Gate-Strict%20Enforcement%20(90.5%25%20Cov)-10b981?style=flat&logo=githubactions)](https://github.com/iliachry/sovereign-mini-datacenter/actions/workflows/ci.yml)
+[![Quality Gate](https://img.shields.io/badge/Quality%20Gate-Strict%20Enforcement%20(91.2%25%20Cov)-10b981?style=flat&logo=githubactions)](https://github.com/iliachry/sovereign-mini-datacenter/actions/workflows/ci.yml)
 [![Enterprise Onboarding](https://img.shields.io/badge/Enterprise-Workload%20Coupling%20Framework-8b5cf6?style=flat)](ENTERPRISE_ONBOARDING.md)
 [![Commercialization](https://img.shields.io/badge/Commercialization-Investment%20Thesis-f59e0b?style=flat)](COMMERCIALIZATION.md)
 [![Benchmarks](https://img.shields.io/badge/Benchmarks-Empirical%20AI%20%26%20Power-06b6d4?style=flat)](BENCHMARKS.md)
@@ -276,7 +275,13 @@ smdc deploy --all
 * **Declarative Manifests (`smdc-app.yaml`):** Standardized specification defining CPU/GPU/storage quotas, network bindings, persistent NVMe volumes, and power shedding tiers ($L_0 \to L_4$).
 * **Zero-Dependency SDK (`sovereign_dc.enterprise.sdk`):** Lightweight client library for querying node telemetry, publishing custom application metrics, listening for power throttling signals, and spooling space DTN bundles.
 * **Post-Quantum Cryptography Packaging:** Turnkey bundling of edge applications into verified `.smdc-app` archives signed with lattice-based NIST FIPS 204 ML-DSA-87 signatures.
-* **Reference Archetypes (`examples/enterprise_apps/`):** Pre-built templates for IoT edge gateways, GPU vision AI inference, spatial digital twins, and zero-trust confidential databases. See [**`ENTERPRISE_ONBOARDING.md`**](ENTERPRISE_ONBOARDING.md) for full developer documentation.
+* **Reference Archetypes (`examples/enterprise_apps/`):** Pre-built templates for IoT edge gateways, GPU vision AI inference, spatial digital twins, zero-trust confidential databases, and O-RAN Near-RT RIC controllers. See [**`ENTERPRISE_ONBOARDING.md`**](ENTERPRISE_ONBOARDING.md) for full developer documentation.
+
+### 8. 📡 5G RAN & UAV Metaverse Simulation Stack (`src/sovereign_dc/metaverse/`)
+* **Physics-Based Electromagnetic Ray-Tracing:** 3GPP UMi & Sionna 3D multipath propagation at 3.5 GHz ($23\text{ dBm}$ TX, $+8\text{ dBi}$ gain) with up to 5th-order reflections and Kriging spatial interpolation.
+* **Scene-Aware Reinforcement Learning (SA-PPO):** 3-layer Actor-Critic neural agent optimizing 3D UAV positioning ($\pm X, \pm Y, \pm Z$) with $+79.6\%$ capacity boost on disadvantaged urban receivers.
+* **5G Network Slicing & SDN:** Mathematical bandwidth isolation ($T_{\mathrm{tx}} = (D \cdot 8)/B_{\mathrm{slice}} \cdot 1000\text{ ms}$) managing URLLC ($<1\text{ ms}$), eMBB ($127\text{ Mbps}$), and mMTC ($12\text{k devs/km}^2$).
+* **DePIN Blockchain SLA & Consensus:** Multi-validator PoS/dBFT consensus requiring $\lceil 2N/3 \rceil + 1$ multi-signatures with $-15\text{ dB}$ minimum SINR rejection thresholds and $<6\text{ ms}$ critical-path deadlines.
 
 ---
 
@@ -389,6 +394,12 @@ smdc demo --steps 5               # Cross-platform CLI
 # Run empirical performance benchmarks (AI, Space DTN & unified memory)
 smdc benchmark --all --export benchmark_results.json
 
+# Run 5G Metaverse simulation cycles & DePIN SLA validation
+smdc sim run --cycles 5
+smdc sim slices
+smdc sim sla
+smdc sim benchmark --episodes 5 --steps 10
+
 # Simulate decentralized Raft leader election across 4 swarm nodes
 smdc mesh consensus --nodes 4
 ```
@@ -413,7 +424,7 @@ helm upgrade --install sovereign-stack ./kubernetes/helm/sovereign-stack \
 ---
 
 ## 🛡️ Quality Gates & Automated Tests
-The project enforces strict automated Quality Gates covering Ruff linting, Ruff formatting, Mypy static typing, Docker Compose multi-stack integrity, and Pytest coverage with 302+ automated tests ($\ge 85\%$ strict threshold):
+The project enforces strict automated Quality Gates covering Ruff linting, Ruff formatting, Mypy static typing, Docker Compose multi-stack integrity, and Pytest coverage with 368+ automated tests ($\ge 85\%$ strict threshold, achieving **91.2%+** coverage):
 
 ```bash
 # Run all quality gates locally

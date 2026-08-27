@@ -1,0 +1,42 @@
+# Sovereign Mini Datacenter (SMDC) — Enterprise App Manifest
+name: "O-RAN Near-RT RIC 5G Slicing Controller"
+app_id: "oran-ric-controller"
+version: "1.0.0"
+description: "Autonomous Near-RT RAN Intelligent Controller (RIC) xApp managing 5G URLLC/eMBB/mMTC traffic slicing and DePIN SLA enforcement."
+author: "Metatopia Telecom Labs"
+category: "distributed"
+runtime: "process"
+entrypoint: "python3 app.py"
+
+resources:
+  cpu_cores: 2.0
+  ram_mb: 2048
+  gpu_vram_mb: 1024
+  storage_mb: 2048
+  gpu_required: false
+  max_power_w: 30.0
+
+power:
+  tier: "L0_CRITICAL"
+  min_battery_soc: 15.0
+  max_ambient_temp_c: 65.0
+  allow_solar_burst: true
+  min_solar_watts: 50.0
+
+network:
+  ports: [8084]
+  expose_wireguard: true
+  space_dtn_enabled: true
+  lora_heartbeat: true
+
+storage:
+  persistent_volume: "oran-ric-telemetry"
+  mount_point: "/var/lib/smdc/apps/oran-ric-controller/telemetry"
+  backup_enabled: true
+
+health_check:
+  type: "http"
+  endpoint: "/health"
+  port: 8084
+  interval_sec: 10
+  timeout_sec: 3

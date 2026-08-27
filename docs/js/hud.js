@@ -377,5 +377,28 @@ export function showToast(msg) {
   }, 2400);
 }
 
+export async function triggerUAVOptimization() {
+  playClickSound(880, 0.08);
+  showToast('🎯 Triggering Scene-Aware PPO UAV Positioning Optimization...');
+  if (isLiveConnected && nodeBaseUrl) {
+    try {
+      const res = await fetch(`${nodeBaseUrl}/api/metaverse/optimize`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cycles: 3 }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const pos = data.uav_position;
+        showToast(`✅ SA-PPO Optimized: UAV at (${pos[0].toFixed(1)}m, ${pos[1].toFixed(1)}m, ${pos[2].toFixed(1)}m)`);
+      }
+    } catch (e) {
+      console.warn('UAV optimization dispatch notice:', e);
+    }
+  } else {
+    showToast('✨ SA-PPO Simulated Step: +79.6% Rx1 Capacity Boost');
+  }
+}
+
 export function getFanRpm() { return currentFanRpm; }
 export function getIsLiveConnected() { return isLiveConnected; }

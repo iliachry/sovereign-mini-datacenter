@@ -231,6 +231,19 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       <div class="status-row"><span>PQC Key Encapsulation</span><span class="code" style="color: var(--accent-purple);">ML-KEM-1024 (FIPS 203)</span></div>
       <div class="status-row"><span>Intrusion Prevention</span><span class="code" style="color: var(--accent);">CrowdSec ACTIVE</span></div>
     </div>
+
+    <!-- Card 8: 5G RAN & UAV Metaverse (IEEE IoT Mag 2026) -->
+    <div class="card">
+      <div class="card-title"><span>📡 5G RAN & UAV Metaverse</span><span class="code" style="color: var(--accent);" id="metaverse-sla-status">SLA NOMINAL</span></div>
+      <div class="status-row"><span>Autonomous UAV Pos</span><span class="code" style="color: var(--accent-blue);" id="uav-pos-display">(0.0m, 0.0m, 35.0m)</span></div>
+      <div class="status-row"><span>URLLC Slicing Latency</span><span class="code" style="color: var(--accent);">0.80 ms (99.999%)</span></div>
+      <div class="status-row"><span>eMBB XR Streaming</span><span class="code" style="color: var(--accent-purple);">127 Mbps (15 ms)</span></div>
+      <div class="status-row"><span>mMTC IoT Density</span><span class="code">12,000+ nodes/km²</span></div>
+      <div class="status-row" style="margin-top: 10px;">
+        <button id="btn-opt-uav" style="background: rgba(16,185,129,0.2); border: 1px solid var(--accent); color: var(--text); padding: 4px 10px; border-radius: 8px; cursor: pointer; font-family: inherit; font-size: 11px;">🎯 Optimize UAV (SA-PPO)</button>
+        <button id="btn-stop-uav" style="background: rgba(239,68,68,0.2); border: 1px solid var(--accent-red); color: var(--text); padding: 4px 10px; border-radius: 8px; cursor: pointer; font-family: inherit; font-size: 11px;">🛑 E-Stop</button>
+      </div>
+    </div>
   </div>
 
   <div class="footer">
@@ -286,10 +299,37 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
         // Storage
         document.getElementById('storage-used').textContent = `${data.storage.free_gb.toFixed(0)}GB Free of ${data.storage.total_gb.toFixed(0)}GB`;
+
+        // Metaverse
+        if (data.metaverse && data.metaverse.uav_position) {
+          const pos = data.metaverse.uav_position;
+          document.getElementById('uav-pos-display').textContent = `(${pos[0].toFixed(1)}m, ${pos[1].toFixed(1)}m, ${pos[2].toFixed(1)}m)`;
+          const stopped = data.metaverse.emergency_stopped;
+          document.getElementById('metaverse-sla-status').textContent = stopped ? 'E-STOPPED' : 'SLA NOMINAL';
+          document.getElementById('metaverse-sla-status').style.color = stopped ? 'var(--accent-red)' : 'var(--accent)';
+        }
       } catch (err) {
         console.warn('Telemetry fetch notice:', err);
       }
     }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      const btnOpt = document.getElementById('btn-opt-uav');
+      if (btnOpt) {
+        btnOpt.addEventListener('click', async () => {
+          await fetch('/api/metaverse/optimize', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({cycles: 3}) });
+          updateTelemetry();
+        });
+      }
+      const btnStop = document.getElementById('btn-stop-uav');
+      if (btnStop) {
+        btnStop.addEventListener('click', async () => {
+          await fetch('/api/metaverse/emergency-stop', { method: 'POST' });
+          updateTelemetry();
+        });
+      }
+    });
+
     updateTelemetry();
     setInterval(updateTelemetry, 2500);
   </script>
@@ -305,6 +345,18 @@ _HARDWARE_STATE: dict[str, Any] = {
     "fan_rpm": 2400,
     "last_bundle_tx": 0,
 }
+
+_METAVERSE_ORCH: Any = None
+
+
+def get_metaverse_orchestrator():
+    """Returns singleton instance of MetaverseOrchestrator."""
+    global _METAVERSE_ORCH
+    if _METAVERSE_ORCH is None:
+        from sovereign_dc.metaverse.engine import MetaverseOrchestrator
+
+        _METAVERSE_ORCH = MetaverseOrchestrator()
+    return _METAVERSE_ORCH
 
 
 def get_system_status_payload() -> dict[str, Any]:
@@ -409,6 +461,7 @@ def get_system_status_payload() -> dict[str, Any]:
             "key_id": kp.key_id,
             "status": "OPERATIONAL",
         },
+        "metaverse": get_metaverse_orchestrator().get_latest_status(),
         "events_count": len(get_event_bus().get_history()),
     }
 
@@ -437,6 +490,26 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.wfile.write(payload)
         elif self.path == "/api/status":
             payload = json.dumps(get_system_status_payload()).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self._send_cors_headers()
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+        elif self.path == "/api/metaverse/status":
+            orch = get_metaverse_orchestrator()
+            payload = json.dumps(orch.get_latest_status()).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self._send_cors_headers()
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+        elif self.path == "/api/metaverse/slices":
+            from sovereign_dc.metaverse.slicing import NetworkSlicingManager
+
+            mgr = NetworkSlicingManager()
+            payload = json.dumps(mgr.get_summary()).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self._send_cors_headers()
@@ -557,6 +630,42 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 "success": True,
                 "bundle_id": bundle.bundle_id,
                 "queued_bundles": router.get_queue_stats().get("queued_bundle_count", 1),
+            }
+            payload = json.dumps(res).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self._send_cors_headers()
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        elif self.path == "/api/metaverse/optimize":
+            orch = get_metaverse_orchestrator()
+            cycles = int(req_data.get("cycles", 1))
+            traces = orch.run_cycles(count=cycles, deterministic=True)
+            res = {
+                "success": True,
+                "cycles_executed": len(traces),
+                "uav_position": orch.uav_position,
+                "latest_trace": traces[-1].to_dict() if traces else None,
+            }
+            payload = json.dumps(res).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self._send_cors_headers()
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        elif self.path == "/api/metaverse/emergency-stop":
+            orch = get_metaverse_orchestrator()
+            if orch.is_emergency_stopped:
+                orch.resume_operation()
+            else:
+                orch.trigger_emergency_stop()
+            res = {
+                "success": True,
+                "emergency_stopped": orch.is_emergency_stopped,
             }
             payload = json.dumps(res).encode("utf-8")
             self.send_response(200)
