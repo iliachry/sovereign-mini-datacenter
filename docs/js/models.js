@@ -8,7 +8,8 @@ import * as THREE from 'three';
 import TWEEN from 'tween';
 import { get as getMaterial } from './materials.js';
 
-let mainGroup, rackGroup, computeGroup, powerGroup, coolingGroup, solarGroup, spaceGroup;
+let mainGroup, rackGroup, computeGroup, powerGroup, coolingGroup, solarGroup, spaceGroup, metaverseGroup;
+let uavGroup, uavRotors = [];
 let doorPivot, doorOpen = false;
 let interactiveObjects = [];
 let fanBlades = [];
@@ -561,9 +562,6 @@ function buildSpaceTerminal() {
 
   spaceGroup.add(termMount);
 }
-
-let uavGroup;
-let uavRotors = [];
 
 function buildMetaverseSystem() {
   // 1. Autonomous 5G UAV Drone
