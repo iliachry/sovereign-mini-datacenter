@@ -1,0 +1,1024 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>SMDC-Agri - Pitch Deck (BRITE / IFS Awards 2026)</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap');
+
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+
+  @page {
+    size: 297mm 210mm; /* A4 Landscape */
+    margin: 0;
+  }
+
+  html, body {
+    width: 297mm;
+    margin: 0;
+    padding: 0;
+    background-color: #060911;
+    color: #e2e8f0;
+    font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .slide {
+    width: 297mm;
+    height: 210mm;
+    max-height: 210mm;
+    position: relative;
+    page-break-after: always;
+    page-break-inside: avoid;
+    padding: 10mm 16mm 8mm 16mm;
+    overflow: hidden;
+    background: radial-gradient(circle at 85% 15%, rgba(16, 185, 129, 0.08) 0%, transparent 40%),
+                radial-gradient(circle at 15% 85%, rgba(6, 182, 212, 0.08) 0%, transparent 40%),
+                #070a13;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+  }
+
+  .slide:last-child {
+    page-break-after: avoid;
+  }
+
+  /* Slide Header */
+  .slide-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    padding-bottom: 6px;
+    margin-bottom: 10px;
+  }
+
+  .slide-title-group h2 {
+    font-size: 21px;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+    color: #ffffff;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .slide-title-group h2 span.accent {
+    color: #10b981;
+  }
+
+  .slide-title-group p.subtitle {
+    font-size: 11.5px;
+    color: #94a3b8;
+    margin-top: 2px;
+    font-weight: 500;
+  }
+
+  .slide-badge {
+    background: rgba(16, 185, 129, 0.12);
+    border: 1px solid rgba(16, 185, 129, 0.3);
+    color: #10b981;
+    font-size: 9.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    padding: 3px 10px;
+    border-radius: 9999px;
+  }
+
+  /* Slide Footer */
+  .slide-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    padding-top: 5px;
+    font-size: 9px;
+    color: #64748b;
+    font-weight: 500;
+  }
+
+  .slide-footer span.logo-brand {
+    font-weight: 700;
+    color: #10b981;
+    letter-spacing: 0.5px;
+  }
+
+  /* Slide Content Area */
+  .slide-body {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 10px;
+  }
+
+  /* Visual Images & Strictly Uncropped Frames */
+  .visual-frame {
+    position: relative;
+    border-radius: 10px;
+    overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: #020617;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+    aspect-ratio: 16 / 9;
+    width: 100%;
+  }
+
+  .visual-frame img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
+  }
+
+  .visual-caption {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    padding: 4px 8px;
+    background: linear-gradient(180deg, transparent 0%, rgba(0, 0, 0, 0.85) 100%);
+    font-size: 9px;
+    color: #cbd5e1;
+    font-weight: 600;
+    text-align: center;
+  }
+
+  /* Diagram Flow Components */
+  .flow-container {
+    display: flex;
+    align-items: stretch;
+    gap: 8px;
+    width: 100%;
+  }
+
+  .flow-step {
+    flex: 1;
+    background: rgba(15, 23, 42, 0.7);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    position: relative;
+  }
+
+  .flow-step.step-red {
+    border-color: rgba(244, 63, 94, 0.35);
+    background: rgba(244, 63, 94, 0.06);
+  }
+
+  .flow-step.step-amber {
+    border-color: rgba(245, 158, 11, 0.35);
+    background: rgba(245, 158, 11, 0.06);
+  }
+
+  .flow-step.step-green {
+    border-color: rgba(16, 185, 129, 0.35);
+    background: rgba(16, 185, 129, 0.06);
+  }
+
+  .flow-step.step-cyan {
+    border-color: rgba(6, 182, 212, 0.35);
+    background: rgba(6, 182, 212, 0.06);
+  }
+
+  .flow-step-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 4px;
+  }
+
+  .flow-step-number {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    font-size: 9px;
+    font-weight: 800;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  .step-green .flow-step-number { background: rgba(16, 185, 129, 0.25); color: #34d399; }
+  .step-cyan .flow-step-number { background: rgba(6, 182, 212, 0.25); color: #38bdf8; }
+  .step-amber .flow-step-number { background: rgba(245, 158, 11, 0.25); color: #fbbf24; }
+  .step-red .flow-step-number { background: rgba(244, 63, 94, 0.25); color: #fb7185; }
+
+  .flow-step-title {
+    font-size: 11.5px;
+    font-weight: 700;
+    color: #ffffff;
+  }
+
+  .flow-step-desc {
+    font-size: 10px;
+    color: #94a3b8;
+    line-height: 1.4;
+  }
+
+  .flow-step-desc strong {
+    color: #cbd5e1;
+  }
+
+  .flow-arrow {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #64748b;
+    font-size: 16px;
+    font-weight: 800;
+    flex-shrink: 0;
+  }
+
+  /* Cards & Layout Grids */
+  .card {
+    background: rgba(15, 23, 42, 0.65);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    padding: 10px 14px;
+  }
+
+  .card.highlight-green {
+    border-left: 3px solid #10b981;
+    background: linear-gradient(90deg, rgba(16, 185, 129, 0.08) 0%, rgba(15, 23, 42, 0.65) 100%);
+  }
+
+  .card.highlight-cyan {
+    border-left: 3px solid #06b6d4;
+    background: linear-gradient(90deg, rgba(6, 182, 212, 0.08) 0%, rgba(15, 23, 42, 0.65) 100%);
+  }
+
+  .card.highlight-amber {
+    border-left: 3px solid #f59e0b;
+    background: linear-gradient(90deg, rgba(245, 158, 11, 0.08) 0%, rgba(15, 23, 42, 0.65) 100%);
+  }
+
+  .card.highlight-red {
+    border-left: 3px solid #f43f5e;
+    background: linear-gradient(90deg, rgba(244, 63, 94, 0.08) 0%, rgba(15, 23, 42, 0.65) 100%);
+  }
+
+  .grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+
+  .grid-3 {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 10px;
+  }
+
+  .grid-4 {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+  }
+
+  /* Stat Callout Boxes */
+  .stat-box {
+    background: rgba(15, 23, 42, 0.75);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    padding: 8px 12px;
+    text-align: center;
+  }
+
+  .stat-value {
+    font-size: 20px;
+    font-weight: 800;
+    color: #10b981;
+    font-family: 'JetBrains Mono', monospace;
+    letter-spacing: -0.5px;
+  }
+
+  .stat-value.cyan { color: #38bdf8; }
+  .stat-value.amber { color: #fbbf24; }
+  .stat-value.red { color: #fb7185; }
+
+  .stat-label {
+    font-size: 9.5px;
+    color: #94a3b8;
+    margin-top: 2px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  /* Tags & Badges */
+  .tag {
+    display: inline-block;
+    padding: 2px 7px;
+    border-radius: 4px;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  .tag-green { background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3); }
+  .tag-cyan { background: rgba(6, 182, 212, 0.15); color: #38bdf8; border: 1px solid rgba(6, 182, 212, 0.3); }
+  .tag-amber { background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.3); }
+
+  /* Table Styling */
+  .deck-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 10.5px;
+  }
+
+  .deck-table th {
+    background: rgba(15, 23, 42, 0.85);
+    color: #cbd5e1;
+    text-align: left;
+    padding: 7px 10px;
+    border-bottom: 2px solid rgba(255, 255, 255, 0.12);
+    font-weight: 700;
+    text-transform: uppercase;
+    font-size: 9px;
+    letter-spacing: 0.5px;
+  }
+
+  .deck-table td {
+    padding: 6px 10px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    color: #94a3b8;
+  }
+
+  .deck-table tr:hover td {
+    background: rgba(255, 255, 255, 0.02);
+  }
+
+  .deck-table tr.highlight-row td {
+    background: rgba(16, 185, 129, 0.08);
+    color: #ffffff;
+    font-weight: 600;
+    border-top: 1px solid rgba(16, 185, 129, 0.3);
+    border-bottom: 1px solid rgba(16, 185, 129, 0.3);
+  }
+
+  /* Cover Specifics */
+  .cover-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+    align-items: center;
+    flex: 1;
+  }
+
+  .cover-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(16, 185, 129, 0.12);
+    border: 1px solid rgba(16, 185, 129, 0.35);
+    color: #34d399;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    padding: 4px 12px;
+    border-radius: 9999px;
+    margin-bottom: 12px;
+  }
+
+  .cover-title {
+    font-size: 42px;
+    font-weight: 800;
+    color: #ffffff;
+    letter-spacing: -1.2px;
+    line-height: 1.08;
+    margin-bottom: 10px;
+  }
+
+  .cover-title span.glow {
+    color: #34d399;
+  }
+
+  .cover-subtitle {
+    font-size: 13.5px;
+    color: #94a3b8;
+    line-height: 1.45;
+    font-weight: 500;
+    margin-bottom: 16px;
+  }
+
+  .cover-meta-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px 12px;
+    font-size: 10.5px;
+    color: #64748b;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    padding-top: 12px;
+  }
+
+  .cover-meta-grid div strong {
+    color: #cbd5e1;
+  }
+</style>
+</head>
+<body>
+
+<!-- ==================== SLIDE 1: COVER ==================== -->
+<div class="slide">
+  <div class="cover-grid">
+    <div>
+      <div class="cover-badge">
+        <span>☀️</span> IFS Awards 2026 · Challenge Solution Proposal · BRITE Solar
+      </div>
+      <h1 class="cover-title">
+        <span class="glow">SMDC-Agri</span>
+      </h1>
+      <p class="cover-subtitle">
+        Integrating Agri-PV Systems in Weak Rural Grids via Behind-The-Meter Sovereign Edge Compute &amp; Dynamic Load Shedding
+      </p>
+    </div>
+
+    <div>
+      <div class="visual-frame">
+        <img src="figures/agripv_greenhouse.jpg" alt="Agri-PV Greenhouse with Sovereign Mini Datacenter">
+        <div class="visual-caption">
+          Agri-PV Greenhouse with Semi-Transparent Solar Glass &amp; Sovereign Edge Datacenter
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="slide-footer">
+    <span class="logo-brand">SMDC-Agri</span>
+    <span>IFS Awards 2026</span>
+    <span>Slide 01 / 08</span>
+  </div>
+</div>
+
+<!-- ==================== SLIDE 2: THE PROBLEM ==================== -->
+<div class="slide">
+  <div class="slide-header">
+    <div class="slide-title-group">
+      <h2>The Rural Grid Bottleneck for <span class="accent">Agri-PV Expansion</span></h2>
+      <p class="subtitle">Why high-potential agrivoltaic projects face grid connection refusal, severe curtailment, and stalled licensing</p>
+    </div>
+    <div class="slide-badge">1. The Challenge</div>
+  </div>
+
+  <div class="slide-body">
+    <!-- Visual Grid Failure Flowchart -->
+    <div class="flow-container" style="margin-bottom: 6px;">
+      <div class="flow-step step-green">
+        <div class="flow-step-header">
+          <span class="flow-step-number">1</span>
+          <span class="flow-step-title">☀️ Solar Surplus</span>
+        </div>
+        <div class="flow-step-desc">
+          BRITE PanePower glass generates peak midday power at the greenhouse.
+        </div>
+      </div>
+
+      <div class="flow-arrow">➔</div>
+
+      <div class="flow-step step-amber">
+        <div class="flow-step-header">
+          <span class="flow-step-number">2</span>
+          <span class="flow-step-title">⚡ Feeder Overvoltage</span>
+        </div>
+        <div class="flow-step-desc">
+          Long rural distribution lines exceed thermal limits (<strong>V &gt; 1.10 p.u.</strong>).
+        </div>
+      </div>
+
+      <div class="flow-arrow">➔</div>
+
+      <div class="flow-step step-red">
+        <div class="flow-step-header">
+          <span class="flow-step-number">3</span>
+          <span class="flow-step-title">🛑 Inverter Tripping</span>
+        </div>
+        <div class="flow-step-desc">
+          DSOs force <strong>20%–45% curtailment</strong> to prevent grid collapse.
+        </div>
+      </div>
+
+      <div class="flow-arrow">➔</div>
+
+      <div class="flow-step step-red">
+        <div class="flow-step-header">
+          <span class="flow-step-number">4</span>
+          <span class="flow-step-title">⏳ Stalled Projects</span>
+        </div>
+        <div class="flow-step-desc">
+          <strong>2–5 year grid queues</strong> and strict zero-export connection bans.
+        </div>
+      </div>
+    </div>
+
+    <!-- The Agri-PV Paradox: Visual Contrast -->
+    <div class="grid-2">
+      <div class="card highlight-green">
+        <h3 style="font-size: 12px; margin-bottom: 3px; color: #34d399;">🌱 Clean Energy Ambition</h3>
+        <p style="font-size: 10.5px; line-height: 1.4; color: #cbd5e1;">
+          Greenhouses offer massive dual-use surface area for semi-transparent BIPV solar glass. Clean power can be harvested without consuming valuable agricultural land or impacting crop growth.
+        </p>
+      </div>
+
+      <div class="card highlight-red">
+        <h3 style="font-size: 12px; margin-bottom: 3px; color: #fb7185;">⚠️ Rural Grid Reality</h3>
+        <p style="font-size: 10.5px; line-height: 1.4; color: #cbd5e1;">
+          Rural distribution grids in Greece and Southern Europe lack transmission capacity. Upgrading substations takes 5+ years, resulting in outright grid connection rejections for farmers.
+        </p>
+      </div>
+    </div>
+
+    <!-- 3 Core Bottleneck Metrics -->
+    <div class="grid-3">
+      <div class="stat-box">
+        <div class="stat-value red">42%</div>
+        <div class="stat-label">Peak Midday Solar Curtailed</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-value amber">2 – 5 Yrs</div>
+        <div class="stat-label">Grid Interconnection Queue</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-value cyan">0 kW</div>
+        <div class="stat-label">DSO Export Limit in Weak Feeders</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="slide-footer">
+    <span class="logo-brand">SMDC-Agri</span>
+    <span>IFS Awards 2026</span>
+    <span>Slide 02 / 08</span>
+  </div>
+</div>
+
+<!-- ==================== SLIDE 3: THE SOLUTION ==================== -->
+<div class="slide">
+  <div class="slide-header">
+    <div class="slide-title-group">
+      <h2>The Core Innovation: <span class="accent">"Compute as a Virtual Battery"</span></h2>
+      <p class="subtitle">Transforming stranded solar kilowatt-hours into on-premise AI intelligence in sub-100 milliseconds</p>
+    </div>
+    <div class="slide-badge">2. The Solution</div>
+  </div>
+
+  <div class="slide-body">
+    <!-- 4-Stage Horizontal Energy-to-Compute Pipeline Diagram -->
+    <div class="flow-container" style="margin-bottom: 6px;">
+      <div class="flow-step step-green">
+        <div class="flow-step-header">
+          <span class="flow-step-number">1</span>
+          <span class="flow-step-title">Solar Harvest</span>
+        </div>
+        <div class="flow-step-desc">
+          BRITE PanePower glass generates peak midday clean energy surplus.
+        </div>
+      </div>
+
+      <div class="flow-arrow" style="color: #10b981;">➔</div>
+
+      <div class="flow-step step-cyan">
+        <div class="flow-step-header">
+          <span class="flow-step-number">2</span>
+          <span class="flow-step-title">Overvoltage Sense</span>
+        </div>
+        <div class="flow-step-desc">
+          Sentinel OS detects voltage rise at the PCC in <strong>&lt; 100ms</strong>.
+        </div>
+      </div>
+
+      <div class="flow-arrow" style="color: #06b6d4;">➔</div>
+
+      <div class="flow-step step-amber">
+        <div class="flow-step-header">
+          <span class="flow-step-number">3</span>
+          <span class="flow-step-title">Dynamic Absorption</span>
+        </div>
+        <div class="flow-step-desc">
+          GPU compute power throttles dynamically from <strong>30W to 450W</strong>.
+        </div>
+      </div>
+
+      <div class="flow-arrow" style="color: #f59e0b;">➔</div>
+
+      <div class="flow-step step-green">
+        <div class="flow-step-header">
+          <span class="flow-step-number">4</span>
+          <span class="flow-step-title">Value Creation</span>
+        </div>
+        <div class="flow-step-desc">
+          <strong>0% curtailment</strong> + high-margin AI tokens (€0.25–€0.75/kWh).
+        </div>
+      </div>
+    </div>
+
+    <!-- Virtual Battery Value Comparison -->
+    <div class="card highlight-green">
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <span style="font-size: 12px; font-weight: 700; color: #ffffff;">💡 Why Compute Outperforms Chemical Batteries (BESS) Alone:</span>
+        <span class="tag tag-green">Zero Degradation · Immediate Digital Revenue</span>
+      </div>
+      <p style="font-size: 10.5px; line-height: 1.4; color: #cbd5e1; margin-top: 4px;">
+        Chemical batteries suffer from high upfront CapEx, finite charge cycle degradation, and fire risk. <strong>SMDC-Agri</strong> absorbs stranded power behind the meter into computing work—yielding <strong>10× higher economic productivity per kWh</strong> while guaranteeing 100% compliance with DSO zero-export limits.
+      </p>
+    </div>
+
+    <!-- 4 KPI Metrics -->
+    <div class="grid-4">
+      <div class="stat-box">
+        <div class="stat-value">&lt; 100ms</div>
+        <div class="stat-label">Load Step Response</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-value cyan">&lt; 2%</div>
+        <div class="stat-label">Solar Curtailment Rate</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-value amber">&gt; 95%</div>
+        <div class="stat-label">Self-Consumption Rate</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-value green">4.2 Yrs</div>
+        <div class="stat-label">Payback Period (vs. 8.5 Yrs)</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="slide-footer">
+    <span class="logo-brand">SMDC-Agri</span>
+    <span>IFS Awards 2026</span>
+    <span>Slide 03 / 08</span>
+  </div>
+</div>
+
+<!-- ==================== SLIDE 4: ARCHITECTURE & DGX SPARK ==================== -->
+<div class="slide">
+  <div class="slide-header">
+    <div class="slide-title-group">
+      <h2>Architecture &amp; <span class="accent">Zero-CapEx Validation Engine</span></h2>
+      <p class="subtitle">Validating sub-second dynamic load shedding on in-house DGX Spark hardware without equipment purchasing</p>
+    </div>
+    <div class="slide-badge">3. Technical Architecture</div>
+  </div>
+
+  <div class="slide-body">
+    <div class="grid-2" style="align-items: center; gap: 16px;">
+      <!-- Left: Strictly Uncropped 16:9 Hardware Render -->
+      <div class="visual-frame">
+        <img src="figures/smdc_hardware_render.jpg" alt="Sovereign Mini Datacenter 9U Enclosure">
+        <div class="visual-caption">
+          Sovereign Mini Datacenter: 9U Rugged Chassis / Liquid-Cooled Industrial Micro-Datacenter
+        </div>
+      </div>
+
+      <!-- Right: 3-Tier Architecture Diagram -->
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <div class="card highlight-green" style="padding: 8px 12px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px;">
+            <span style="font-size: 11.5px; font-weight: 700; color: #ffffff;">Tier 1: Power &amp; Thermal Plane</span>
+            <span class="tag tag-green">Hardware Layer</span>
+          </div>
+          <p style="font-size: 10px; color: #cbd5e1; line-height: 1.35;">
+            Direct DC coupling with BRITE PanePower glass + 48V LiFePO4 buffer + closed-loop liquid cooling rejected into greenhouse thermal mass.
+          </p>
+        </div>
+
+        <div class="card highlight-cyan" style="padding: 8px 12px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px;">
+            <span style="font-size: 11.5px; font-weight: 700; color: #ffffff;">Tier 2: Sentinel OS Orchestrator</span>
+            <span class="tag tag-cyan">Real-Time Shedding</span>
+          </div>
+          <p style="font-size: 10px; color: #cbd5e1; line-height: 1.35;">
+            Hardware priority enforcement: guarantees <strong>L₀ Life Support</strong> (irrigation, ventilation) while dynamically throttling <strong>L₂–L₄ AI compute</strong>.
+          </p>
+        </div>
+
+        <div class="card highlight-amber" style="padding: 8px 12px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px;">
+            <span style="font-size: 11.5px; font-weight: 700; color: #ffffff;">Tier 3: In-House DGX Spark Platform</span>
+            <span class="tag tag-amber">Zero-CapEx Validation</span>
+          </div>
+          <p style="font-size: 10px; color: #cbd5e1; line-height: 1.35;">
+            Hardware-in-the-Loop (HIL) emulation with real PanePower I-V curves, simulating feeder voltage sags and sub-100ms load shedding.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Bottom Validation Highlights -->
+    <div class="grid-3">
+      <div class="stat-box">
+        <div class="stat-value green">€0 CapEx</div>
+        <div class="stat-label">Hardware Validation Spend</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-value cyan">30W ➔ 450W</div>
+        <div class="stat-label">Dynamic Load Range</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-value amber">100%</div>
+        <div class="stat-label">Air-Gapped Sovereign Security</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="slide-footer">
+    <span class="logo-brand">SMDC-Agri</span>
+    <span>IFS Awards 2026</span>
+    <span>Slide 04 / 08</span>
+  </div>
+</div>
+
+<!-- ==================== SLIDE 5: AGRI-TECH WORKLOADS ==================== -->
+<div class="slide">
+  <div class="slide-header">
+    <div class="slide-title-group">
+      <h2>Greenhouse Digital Twin &amp; <span class="accent">Smart Edge AI</span></h2>
+      <p class="subtitle">Complete 3D architecture: real-time canopy computer vision, PAR optimization, and autonomous hydroponics</p>
+    </div>
+    <div class="slide-badge">4. Edge Applications</div>
+  </div>
+
+  <div class="slide-body" style="align-items: center;">
+    <!-- Full 16:9 Strictly Uncropped Architectural Diagram -->
+    <div class="visual-frame" style="max-width: 185mm;">
+      <img src="figures/agripv_architecture_diagram.jpg" alt="3D Greenhouse Digital Twin Architecture">
+      <div class="visual-caption">
+        3D Architectural Cutaway: BRITE Solar Canopy, Edge AI Datacenter, Hydroponics &amp; Multi-Spectral Satellite Mesh
+      </div>
+    </div>
+
+    <!-- 3 High-Impact Edge AI Workload Cards -->
+    <div class="grid-3" style="width: 100%;">
+      <div class="card highlight-cyan">
+        <h3 style="font-size: 11px; color: #38bdf8; margin-bottom: 2px;">🌱 1. Edge Computer Vision</h3>
+        <p style="font-size: 9.5px; color: #cbd5e1; line-height: 1.35;">
+          TensorRT models detect fungal mold, leaf blight, and fruit ripeness locally. Zero cloud egress costs and instant alerts.
+        </p>
+      </div>
+
+      <div class="card highlight-green">
+        <h3 style="font-size: 11px; color: #34d399; margin-bottom: 2px;">☀️ 2. Dynamic PAR Balancing</h3>
+        <p style="font-size: 9.5px; color: #cbd5e1; line-height: 1.35;">
+          Couples live solar radiation with plant photobiology, balancing energy harvest vs. crop Daily Light Integral (DLI).
+        </p>
+      </div>
+
+      <div class="card highlight-amber">
+        <h3 style="font-size: 11px; color: #fbbf24; margin-bottom: 2px;">💧 3. Autonomous Life-Support</h3>
+        <p style="font-size: 9.5px; color: #cbd5e1; line-height: 1.35;">
+          Guarantees un-sheddable power for nutrient dosing, water pumps, and ventilation fans during all weather conditions.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <div class="slide-footer">
+    <span class="logo-brand">SMDC-Agri</span>
+    <span>IFS Awards 2026</span>
+    <span>Slide 05 / 08</span>
+  </div>
+</div>
+
+<!-- ==================== SLIDE 6: OFF-GRID COMMS & RESILIENCE ==================== -->
+<div class="slide">
+  <div class="slide-header">
+    <div class="slide-title-group">
+      <h2>Off-Grid Resilience &amp; <span class="accent">Multi-Spectral Comms</span></h2>
+      <p class="subtitle">Autonomous operation in remote rural regions with zero reliance on public cellular or commercial fiber networks</p>
+    </div>
+    <div class="slide-badge">5. Resilience &amp; Comms</div>
+  </div>
+
+  <div class="slide-body">
+    <!-- 3-Tier Network Failover Schematic -->
+    <div class="flow-container" style="margin-bottom: 6px;">
+      <div class="flow-step step-green">
+        <div class="flow-step-header">
+          <span class="flow-step-number">T1</span>
+          <span class="flow-step-title">10GbE Local Fiber Mesh</span>
+        </div>
+        <div class="flow-step-desc">
+          Normal conditions: ultra-high bandwidth sensor streams and local model synchronization.
+        </div>
+      </div>
+
+      <div class="flow-arrow" style="color: #10b981;">➔</div>
+
+      <div class="flow-step step-cyan">
+        <div class="flow-step-header">
+          <span class="flow-step-number">T2</span>
+          <span class="flow-step-title">Sub-GHz LoRa Mesh</span>
+        </div>
+        <div class="flow-step-desc">
+          <strong>868 MHz · 15km range</strong> · Zero SIM fees. Connects soil sensors, actuators &amp; DSO curtailment signals.
+        </div>
+      </div>
+
+      <div class="flow-arrow" style="color: #06b6d4;">➔</div>
+
+      <div class="flow-step step-amber">
+        <div class="flow-step-header">
+          <span class="flow-step-number">T3</span>
+          <span class="flow-step-title">Space DTN (RFC 9171)</span>
+        </div>
+        <div class="flow-step-desc">
+          LEO satellite store-and-forward. Spools telemetry locally on NVMe and bursts during orbital contact passes.
+        </div>
+      </div>
+    </div>
+
+    <!-- Zero-Blackout Islanding Highlight -->
+    <div class="grid-2">
+      <div class="card highlight-green">
+        <h3 style="font-size: 12px; color: #34d399; margin-bottom: 3px;">🛡️ &lt; 15ms Zero-Blackout Microgrid Islanding</h3>
+        <p style="font-size: 10.5px; color: #cbd5e1; line-height: 1.4;">
+          When weak rural feeders drop or suffer voltage sags, the solid-state transfer switch isolates in &lt;15ms. Greenhouse fans, pumps, and sensors stay operational without losing a single cycle.
+        </p>
+      </div>
+
+      <div class="card highlight-cyan">
+        <h3 style="font-size: 12px; color: #38bdf8; margin-bottom: 3px;">🔐 Air-Gapped Data &amp; Operational Sovereignty</h3>
+        <p style="font-size: 10.5px; color: #cbd5e1; line-height: 1.4;">
+          Post-Quantum Cryptography (NIST FIPS 203/204) secures mesh communications. Agricultural yields, proprietary recipes, and sensor logs never leave the farmer's physical perimeter.
+        </p>
+      </div>
+    </div>
+
+    <!-- Comms Spec Badges -->
+    <div class="grid-3">
+      <div class="stat-box">
+        <div class="stat-value green">868 MHz</div>
+        <div class="stat-label">Zero SIM Fees / LoRa Mesh</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-value cyan">RFC 9171</div>
+        <div class="stat-label">Space BPv7 DTN Spooling</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-value amber">&lt; 15ms</div>
+        <div class="stat-label">Zero-Blackout Islanding</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="slide-footer">
+    <span class="logo-brand">SMDC-Agri</span>
+    <span>IFS Awards 2026</span>
+    <span>Slide 06 / 08</span>
+  </div>
+</div>
+
+<!-- ==================== SLIDE 7: TECHNO-ECONOMICS ==================== -->
+<div class="slide">
+  <div class="slide-header">
+    <div class="slide-title-group">
+      <h2>Quantified Techno-Economics: <span class="accent">3-Year ROI Payback</span></h2>
+      <p class="subtitle">Turning regulatory gridlocks into a high-margin dual-revenue commercial deployment model</p>
+    </div>
+    <div class="slide-badge">6. Business Case</div>
+  </div>
+
+  <div class="slide-body">
+    <table class="deck-table" style="margin-bottom: 6px;">
+      <thead>
+        <tr>
+          <th>Metric / Parameter</th>
+          <th>Standard Agri-PV (Weak Rural Grid)</th>
+          <th style="color: #34d399;">Agri-PV + SMDC-Agri (Behind-the-Meter)</th>
+          <th>Net Advantage / Impact</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Grid Connection Status</strong></td>
+          <td>Denied or delayed by DSO (overvoltage risk)</td>
+          <td style="color: #38bdf8;"><strong>Approved</strong> (Zero-Export / Dynamic Limit compliant)</td>
+          <td>Fast-tracks project licensing</td>
+        </tr>
+        <tr>
+          <td><strong>Peak Solar Curtailment</strong></td>
+          <td>25% – 45% peak midday energy wasted</td>
+          <td style="color: #34d399;"><strong>&lt; 2%</strong> (Absorbed by local AI compute)</td>
+          <td><strong>+35% energy recovery</strong></td>
+        </tr>
+        <tr>
+          <td><strong>Revenue per Curtailed kWh</strong></td>
+          <td>€0.00 / kWh (dumped or curtailed)</td>
+          <td style="color: #34d399;"><strong>€0.25 – €0.75 / kWh</strong> (AI compute productivity)</td>
+          <td><strong>High-margin digital revenue</strong></td>
+        </tr>
+        <tr>
+          <td><strong>Upfront Validation CapEx</strong></td>
+          <td>Uncertain / High Risk</td>
+          <td style="color: #34d399;"><strong>€0</strong> (Utilizes existing DGX Spark testbed)</td>
+          <td><strong>Zero financial barrier for POC</strong></td>
+        </tr>
+        <tr class="highlight-row">
+          <td><strong>Capital Payback Period</strong></td>
+          <td>8.5 – 9.5 Years (curtailment penalty)</td>
+          <td style="color: #34d399;"><strong>3.8 – 4.2 Years</strong> (subsidized by compute)</td>
+          <td><strong>50%+ Faster Capital Payback</strong></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="grid-3">
+      <div class="stat-box">
+        <div class="stat-value green">+€18,400 / yr</div>
+        <div class="stat-label">Added Compute Revenue (250kWp)</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-value cyan">€0 CapEx</div>
+        <div class="stat-label">Validation Hardware Purchase</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-value amber">100%</div>
+        <div class="stat-label">BRITE Glass Compatibility</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="slide-footer">
+    <span class="logo-brand">SMDC-Agri</span>
+    <span>IFS Awards 2026</span>
+    <span>Slide 07 / 08</span>
+  </div>
+</div>
+
+<!-- ==================== SLIDE 8: THE ROADMAP & TEAM ==================== -->
+<div class="slide">
+  <div class="slide-header">
+    <div class="slide-title-group">
+      <h2>The Journey to Impact: <span class="accent">Bootcamp &amp; Validation Roadmap</span></h2>
+      <p class="subtitle">Focused technical co-design and validation milestones with BRITE using our in-house DGX Spark testbed</p>
+    </div>
+    <div class="slide-badge">7. Roadmap &amp; Team</div>
+  </div>
+
+  <div class="slide-body">
+    <!-- Horizontal Milestone Flow -->
+    <div class="grid-2" style="gap: 12px;">
+      <div class="card" style="border: 1.5px solid rgba(255, 255, 255, 0.12); padding: 18px 16px; text-align: center; background: rgba(15, 23, 42, 0.75);">
+        <div style="font-size: 15px; font-weight: 800; color: #38bdf8; margin-bottom: 8px;">
+          Bootcamp Stage
+        </div>
+        <p style="font-size: 11px; line-height: 1.45; color: #cbd5e1; max-width: 95%; margin: 0 auto;">
+          Direct technical co-design with BRITE engineers on PanePower I-V curves, glass specs &amp; DSO constraints.
+        </p>
+      </div>
+
+      <div class="card" style="border: 1.5px solid rgba(255, 255, 255, 0.12); padding: 18px 16px; text-align: center; background: rgba(15, 23, 42, 0.75);">
+        <div style="font-size: 15px; font-weight: 800; color: #38bdf8; margin-bottom: 8px;">
+          Validation Stage
+        </div>
+        <p style="font-size: 11px; line-height: 1.45; color: #cbd5e1; max-width: 95%; margin: 0 auto;">
+          <strong>HIL Validation on DGX Spark:</strong> Sub-100ms dynamic load shedding demonstrated on live testbed.
+        </p>
+      </div>
+    </div>
+
+    <!-- Multidisciplinary Team Grid -->
+    <div class="card highlight-green" style="padding: 10px 14px;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+        <span style="font-size: 12px; font-weight: 700; color: #ffffff;">👥 The Multidisciplinary Engineering Team:</span>
+        <span style="font-size: 10.5px; color: #34d399; font-weight: 600;">Metatopia Studio · Thessaloniki, Greece</span>
+      </div>
+      <p style="font-size: 10.5px; line-height: 1.45; color: #cbd5e1;">
+        <strong>Ilias Chrysovergis</strong> (CEO/CTO, Dipl. ECE AUTh, MSc Imperial College London, PhD cand., Global 1st Microsoft Imagine Cup) · <strong>Archontis Kostis</strong> (Lead Software &amp; Cloud Architect, MSc UoM) · <strong>Elena Vagiannopoulou</strong> (Operations &amp; Materials Lead, BSc Chemistry AUTh) · <strong>Nikos Nikolaidis</strong> (Full Stack &amp; Systems, BSc UoM) · <strong>Stelios Palatidis</strong> (Edge &amp; Mobile Systems, BSc UoM).
+      </p>
+    </div>
+
+    <!-- Contact & Links -->
+    <div class="card" style="text-align: center; background: rgba(16, 185, 129, 0.08); border-color: rgba(16, 185, 129, 0.3); padding: 6px;">
+      <p style="font-size: 10px; color: #cbd5e1;">
+        <strong>Contact:</strong> Ilias Chrysovergis · <span style="color: #34d399;">iliachry.gr</span> · Repository: <span style="color: #38bdf8;">github.com/iliachry/sovereign-mini-datacenter</span>
+      </p>
+    </div>
+  </div>
+
+  <div class="slide-footer">
+    <span class="logo-brand">SMDC-Agri</span>
+    <span>IFS Awards 2026</span>
+    <span>Slide 08 / 08</span>
+  </div>
+</div>
+
+</body>
+</html>
