@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sovereign Mini Datacenter — 3D Infrastructure Digital Twin & NOC Console</title>
+  <meta name="description" content="Open-source, self-powered, solar-backed, liquid-cooled micro-datacenter stack with on-premise AI, space DTN satellite routing, and post-quantum zero-trust mesh.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,300;0,400;0,600;0,700;1,400&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/components.css">
+</head>
+<body>
+
+  <!-- Loading Screen -->
+  <div id="loading-screen">
+    <div class="spinner"></div>
+    <div style="font-family: var(--font-mono); font-size: 13px; color: var(--accent-emerald); font-weight: 700; letter-spacing: 1px;">
+      INITIALIZING DIGITAL TWIN (v1.3.0)...
+    </div>
+  </div>
+
+  <!-- Three.js Viewport -->
+  <div id="canvas-container"></div>
+
+  <!-- Top Glassmorphic Navigation Bar -->
+  <header class="overlay top-navbar glass-panel interactive">
+    <div class="brand-section">
+      <div class="brand-icon">
+        <svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+      </div>
+      <div class="brand-title">
+        <h1>Sovereign Mini Datacenter</h1>
+        <span>9U 19" EIA-310-D · SPACE DTN & SOLAR MICRO-GRID</span>
+      </div>
+    </div>
+
+    <!-- Live Telemetry Ribbon -->
+    <div class="telemetry-ribbon">
+      <div class="telem-pill">
+        <div class="telem-dot"></div>
+        <span class="telem-label">SOLAR:</span>
+        <span class="telem-val" id="hud-solar" style="color:var(--accent-emerald);">1,330 W</span>
+      </div>
+      <div class="telem-pill">
+        <div class="telem-dot amber"></div>
+        <span class="telem-label">BATTERY:</span>
+        <span class="telem-val" id="hud-battery">88.5% (52.8V)</span>
+      </div>
+      <div class="telem-pill">
+        <div class="telem-dot sky"></div>
+        <span class="telem-label">COOLANT:</span>
+        <span class="telem-val" id="hud-coolant" style="color:var(--accent-sky);">31.2°C</span>
+      </div>
+      <div class="telem-pill">
+        <div class="telem-dot purple"></div>
+        <span class="telem-label">SPACE LINK:</span>
+        <span class="telem-val" style="color:var(--accent-purple);">IN CONTACT</span>
+      </div>
+      <div class="telem-pill" id="hud-conn-badge">
+        <div class="telem-dot"></div>
+        <span class="telem-label" style="color:var(--accent-emerald);">LIVE SHADOW:</span>
+        <span class="telem-val">CONNECTING...</span>
+      </div>
+    </div>
+
+    <!-- Actions & Modals Triggers -->
+    <div class="nav-actions">
+      <button class="icon-btn" id="btn-calc">🧮 Sizing</button>
+      <button class="icon-btn" id="btn-investor" style="color:var(--accent-emerald); border-color:rgba(16,185,129,0.4);">💰 ROI Model</button>
+      <button class="icon-btn" id="btn-terminal">💻 Terminal</button>
+      <button class="icon-btn" id="btn-night">🌙 Day/Night</button>
+      <button class="icon-btn" id="btn-thermal">🌡️ Thermal</button>
+      <button class="icon-btn" id="btn-door">🚪 Door</button>
+      <button class="icon-btn" id="btn-tx-space" style="color:var(--accent-purple); border-color:rgba(192,132,252,0.4);">🚀 TX Bundle</button>
+      <button class="icon-btn" id="btn-uav-opt" style="color:var(--accent-emerald); border-color:rgba(16,185,129,0.4);">🎯 SA-PPO</button>
+    </div>
+  </header>
+
+  <!-- Left Subsystem Isolation & Controls Panel -->
+  <aside class="overlay layers-panel glass-panel interactive">
+    <div class="panel-header">
+      <span>Subsystem Focus</span>
+      <span class="badge" style="color:var(--accent-sky);">LAYERS</span>
+    </div>
+
+    <div class="layer-buttons">
+      <button class="layer-btn active" data-layer="all">
+        <span>🌐 Full Infrastructure</span>
+        <span class="badge">ALL</span>
+      </button>
+      <button class="layer-btn" data-layer="space">
+        <span>🛰️ Space & Satellite DTN</span>
+        <span class="badge" style="color:var(--accent-purple);">BPv7</span>
+      </button>
+      <button class="layer-btn" data-layer="compute">
+        <span>🤖 AI Compute & Host</span>
+        <span class="badge" style="color:var(--accent-sky);">DGX</span>
+      </button>
+      <button class="layer-btn" data-layer="power">
+        <span>⚡ Power & LiFePO4</span>
+        <span class="badge" style="color:var(--accent-amber);">48V</span>
+      </button>
+      <button class="layer-btn" data-layer="cooling">
+        <span>💧 Liquid Cooling Loop</span>
+        <span class="badge" style="color:var(--accent-sky);">360mm</span>
+      </button>
+      <button class="layer-btn" data-layer="solar">
+        <span>☀️ Bifacial Solar Array</span>
+        <span class="badge" style="color:var(--accent-emerald);">1.6kW</span>
+      </button>
+      <button class="layer-btn" data-layer="metaverse">
+        <span>📡 5G RAN & UAV Metaverse</span>
+        <span class="badge" style="color:var(--accent-sky);">SA-PPO</span>
+      </button>
+    </div>
+
+    <!-- Exploded Assembly Slider -->
+    <div class="control-slider-group" style="margin-top: 6px;">
+      <div class="slider-label-row">
+        <span>Exploded Assembly</span>
+        <span id="val-explode">0%</span>
+      </div>
+      <input type="range" id="slider-explode" min="0" max="100" value="0">
+    </div>
+
+    <!-- Sun Elevation Slider -->
+    <div class="control-slider-group">
+      <div class="slider-label-row">
+        <span>☀️ Sun Elevation</span>
+        <span id="val-sun" style="color:var(--accent-emerald);">65° (1,486W)</span>
+      </div>
+      <input type="range" id="slider-sun" min="0" max="90" value="65">
+    </div>
+  </aside>
+
+  <!-- Right Component Inspector Panel -->
+  <aside class="overlay inspector-panel glass-panel interactive">
+    <div class="panel-header">
+      <span>Hardware Inspector</span>
+      <span class="badge" style="color:var(--accent-emerald);">LIVE</span>
+    </div>
+
+    <div class="inspector-card" id="inspector-card">
+      <div class="comp-header">
+        <span class="comp-title" id="comp-name">NVIDIA Jetson Orin AGX AI Core 1</span>
+        <span class="comp-badge" id="comp-badge">AI COMPUTE</span>
+      </div>
+      <p class="comp-desc" id="comp-desc">
+        Primary edge accelerator delivering 275 TOPS INT8 AI compute with 64GB unified memory, hosting local Ollama LLMs and Qdrant semantic vector embeddings.
+      </p>
+      <div class="spec-table" id="comp-specs">
+        <!-- Dynamically Populated by HUDManager -->
+      </div>
+    </div>
+
+    <!-- Architecture Overview Card -->
+    <div class="inspector-card">
+      <div class="comp-header">
+        <span class="comp-title">Architecture Summary</span>
+        <span class="comp-badge" style="color:var(--accent-emerald); border-color:var(--accent-emerald);">BOM ~$10.6K</span>
+      </div>
+      <div class="spec-table">
+        <div class="spec-row"><span class="spec-key">AI Compute</span><span class="spec-val" style="color:var(--accent-emerald);">2x DGX (550 TOPS)</span></div>
+        <div class="spec-row"><span class="spec-key">Space Link</span><span class="spec-val" style="color:var(--accent-purple);">BPv7 DTN Array</span></div>
+        <div class="spec-row"><span class="spec-key">Storage</span><span class="spec-val">8 TB NVMe RAID-1</span></div>
+        <div class="spec-row"><span class="spec-key">Battery Bank</span><span class="spec-val" style="color:var(--accent-amber);">10.24 kWh LiFePO4</span></div>
+        <div class="spec-row"><span class="spec-key">Solar PV</span><span class="spec-val" style="color:var(--accent-emerald);">1,640W Monocrystalline</span></div>
+        <div class="spec-row"><span class="spec-key">Cooling</span><span class="spec-val" style="color:var(--accent-sky);">Dual 360mm Rads</span></div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Bottom Camera Presets Dock -->
+  <nav class="overlay camera-dock glass-panel interactive">
+    <button class="cam-pill active" data-preset="iso">Overview</button>
+    <button class="cam-pill" data-preset="space" style="color:var(--accent-purple);">🛰️ Space Orbit</button>
+    <button class="cam-pill" data-preset="antenna">📡 Phased Array</button>
+    <button class="cam-pill" data-preset="front">Front Rack</button>
+    <button class="cam-pill" data-preset="power">Power Wall</button>
+    <button class="cam-pill" data-preset="solar">Solar Array</button>
+  </nav>
+
+  <!-- Footer Attribution -->
+  <div class="overlay footer-info interactive">
+    Developed by <a href="https://metatopia.gr" target="_blank">Metatopia Studio</a> (Author: <a href="https://iliachry.gr" target="_blank">Ilias Chrysovergis</a>) · Open Source under MIT License · <a href="https://github.com/iliachry/sovereign-mini-datacenter" target="_blank">GitHub</a>
+  </div>
+
+  <!-- ================= MODALS ================= -->
+
+  <!-- 1. Off-Grid Sizing Configurator Modal -->
+  <div class="modal-overlay" id="modal-sizing">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div class="modal-title">
+          <span>🧮 Off-Grid Sizing & Cost Configurator</span>
+        </div>
+        <button class="close-btn modal-close">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="control-slider-group">
+          <div class="slider-label-row"><span>Compute Nodes (DGX):</span><span id="calc-val-nodes">2 Nodes (550 TOPS)</span></div>
+          <input type="range" id="calc-nodes" min="1" max="4" value="2">
+        </div>
+        <div class="control-slider-group">
+          <div class="slider-label-row"><span>Daily GPU Load:</span><span id="calc-val-hours">12 hrs/day</span></div>
+          <input type="range" id="calc-hours" min="2" max="24" step="2" value="12">
+        </div>
+        <div class="control-slider-group">
+          <div class="slider-label-row"><span>LiFePO4 Battery Bank:</span><span id="calc-val-battery" style="color:var(--accent-amber);">10.24 kWh (2x 48V)</span></div>
+          <input type="range" id="calc-battery" min="1" max="4" value="2">
+        </div>
+        <div class="control-slider-group">
+          <div class="slider-label-row"><span>Solar PV Array:</span><span id="calc-val-solar" style="color:var(--accent-emerald);">1,640W (4x 410W)</span></div>
+          <input type="range" id="calc-solar" min="2" max="8" step="2" value="4">
+        </div>
+
+        <div class="metric-grid-4">
+          <div class="metric-box"><div class="metric-box-label">DAILY DRAW</div><div class="metric-box-val" id="calc-res-draw">7.2 kWh</div></div>
+          <div class="metric-box"><div class="metric-box-label">DAILY SOLAR YIELD</div><div class="metric-box-val" id="calc-res-yield" style="color:var(--accent-emerald);">8.5 kWh</div></div>
+          <div class="metric-box"><div class="metric-box-label">ZERO-SUN AUTONOMY</div><div class="metric-box-val" id="calc-res-autonomy" style="color:var(--accent-amber);">28.8 hrs</div></div>
+          <div class="metric-box"><div class="metric-box-label">ESTIMATED BOM</div><div class="metric-box-val" id="calc-res-cost" style="color:var(--accent-sky);">$10,600</div></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary modal-close">Close</button>
+        <button class="btn-primary">📥 Export BOM CSV</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2. Investor ROI & TCO Model Modal -->
+  <div class="modal-overlay" id="modal-investor">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div class="modal-title">
+          <span>💰 Investor ROI & 3-Year TCO Simulator</span>
+        </div>
+        <button class="close-btn modal-close">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="control-slider-group">
+          <div class="slider-label-row"><span>Cloud GPU / AI Spend:</span><span id="roi-val-cloud">$2,500 / mo</span></div>
+          <input type="range" id="roi-cloud-spend" min="500" max="15000" step="250" value="2500">
+        </div>
+        <div class="control-slider-group">
+          <div class="slider-label-row"><span>Grid / Diesel Electricity Rate:</span><span id="roi-val-grid" style="color:var(--accent-amber);">$0.35 / kWh</span></div>
+          <input type="range" id="roi-grid-rate" min="0.15" max="0.85" step="0.05" value="0.35">
+        </div>
+        <div class="control-slider-group">
+          <div class="slider-label-row"><span>Deployed Nodes in Swarm:</span><span id="roi-val-nodes" style="color:var(--accent-sky);">1 Node (Turnkey)</span></div>
+          <input type="range" id="roi-nodes" min="1" max="25" step="1" value="1">
+        </div>
+
+        <div class="metric-grid-4">
+          <div class="metric-box"><div class="metric-box-label">PAYBACK PERIOD</div><div class="metric-box-val" id="roi-res-payback" style="color:var(--accent-emerald);">5.1 Months</div></div>
+          <div class="metric-box"><div class="metric-box-label">3-YEAR NET SAVINGS</div><div class="metric-box-val" id="roi-res-savings" style="color:var(--accent-sky);">$88,336</div></div>
+          <div class="metric-box"><div class="metric-box-label">3-YEAR ROI</div><div class="metric-box-val" id="roi-res-roi" style="color:var(--accent-amber);">278.9%</div></div>
+          <div class="metric-box"><div class="metric-box-label">CO₂ AVOIDED / YEAR</div><div class="metric-box-val" id="roi-res-co2" style="color:var(--accent-purple);">14.2 Tons</div></div>
+        </div>
+
+        <div class="cost-comparison-container">
+          <div style="display:flex; justify-content:space-between; font-family:var(--font-mono); font-size:11px; margin-bottom:4px;">
+            <span style="color:var(--accent-emerald);">🟢 SMDC 3-Yr: <b id="roi-bar-val-smdc">$31.7k</b></span>
+            <span style="color:var(--accent-rose);">🔴 Cloud 3-Yr: <b id="roi-bar-val-cloud">$120.0k</b></span>
+          </div>
+          <div class="cost-bar-track">
+            <div class="cost-bar-smdc" id="roi-bar-smdc" style="width: 26%;">SMDC</div>
+            <div class="cost-bar-cloud" id="roi-bar-cloud" style="width: 74%;">CLOUD</div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary modal-close">Close</button>
+        <button class="btn-primary">📊 Export TCO CSV</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3. Interactive Cyber Terminal Modal -->
+  <div class="modal-overlay" id="modal-terminal">
+    <div class="terminal-card">
+      <div class="modal-header">
+        <div class="modal-title">
+          <span>💻 Sovereign CLI Terminal (smdc v1.3.0)</span>
+        </div>
+        <button class="close-btn modal-close">✕</button>
+      </div>
+      <div class="term-screen" id="term-output">Sovereign Mini Datacenter Interactive Terminal.
+Type '<span class="term-line-cyan">help</span>', '<span class="term-line-cyan">smdc status</span>', '<span class="term-line-cyan">smdc economy wallet</span>', '<span class="term-line-cyan">smdc economy market</span>', '<span class="term-line-cyan">smdc space passes</span>', or '<span class="term-line-cyan">smdc audit</span>'.
+</div>
+      <div class="term-input-row">
+        <span class="term-prompt">smdc$</span>
+        <input type="text" id="term-cmd-input" class="term-input-field" placeholder="Type command and press Enter...">
+      </div>
+    </div>
+  </div>
+
+  <!-- ES Module Import Map (Three.js r128, TWEEN, OrbitControls via CDN ESM builds) -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.module.js",
+      "three/examples/jsm/controls/OrbitControls.js": "https://cdn.jsdelivr.net/npm/three@0.128.0/examples/jsm/controls/OrbitControls.js",
+      "tween": "https://cdn.jsdelivr.net/npm/@tweenjs/tween.js@18.6.4/dist/tween.esm.js"
+    }
+  }
+  </script>
+
+  <!-- Single ES Module Entry Point -->
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
