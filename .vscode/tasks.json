@@ -1,0 +1,122 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Fast Check (Lint + Types + Fast Tests)",
+      "type": "shell",
+      "command": "uv tool run ruff format src/ tests/ && uv tool run ruff check src/ tests/ && uv tool run mypy --ignore-missing-imports src/sovereign_dc && uv run pytest -o addopts=\"\" tests/",
+      "windows": {
+        "command": "powershell -ExecutionPolicy Bypass -File .\\scripts\\dev.ps1 check"
+      },
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      },
+      "problemMatcher": ["$mypy"]
+    },
+    {
+      "label": "Run Fast Tests (No Coverage)",
+      "type": "shell",
+      "command": "uv run pytest -o addopts=\"\" tests/",
+      "group": "test",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "Run Full Test Suite (Coverage >=85%)",
+      "type": "shell",
+      "command": "uv run pytest tests/ --cov=sovereign_dc --cov-fail-under=85",
+      "group": "test",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "Run Quality Gates Pipeline",
+      "type": "shell",
+      "command": "powershell -ExecutionPolicy Bypass -File .\\scripts\\quality_gate.ps1",
+      "linux": {
+        "command": "bash scripts/quality_gate.sh"
+      },
+      "group": "test",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "Format Code with Ruff",
+      "type": "shell",
+      "command": "uv tool run ruff format src/ tests/ && uv tool run ruff check --fix src/ tests/",
+      "presentation": {
+        "reveal": "silent"
+      }
+    },
+    {
+      "label": "Static Type Check (Mypy)",
+      "type": "shell",
+      "command": "uv tool run mypy --ignore-missing-imports src/sovereign_dc",
+      "problemMatcher": ["$mypy"],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "Run SMDC Doctor",
+      "type": "shell",
+      "command": "uv run python -m sovereign_dc.cli doctor",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "focus": true
+      }
+    },
+    {
+      "label": "Launch Operations Dashboard (Port 8080)",
+      "type": "shell",
+      "command": "uv run python -m sovereign_dc.cli dashboard --port 8080",
+      "isBackground": true,
+      "presentation": {
+        "reveal": "always",
+        "panel": "new"
+      }
+    },
+    {
+      "label": "Serve 3D Digital Twin (Port 8088)",
+      "type": "shell",
+      "command": "uv run python -m sovereign_dc.cli docs --serve --port 8088",
+      "isBackground": true,
+      "presentation": {
+        "reveal": "always",
+        "panel": "new"
+      }
+    },
+    {
+      "label": "Run 6-Layer Metaverse Simulation",
+      "type": "shell",
+      "command": "uv run python -m sovereign_dc.cli sim run --cycles 5",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "focus": true
+      }
+    },
+    {
+      "label": "Validate Docker Compose Stacks",
+      "type": "shell",
+      "command": "docker compose -f software/docker-compose.yml config --quiet",
+      "presentation": {
+        "reveal": "always"
+      }
+    }
+  ]
+}

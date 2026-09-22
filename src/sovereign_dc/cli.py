@@ -475,11 +475,203 @@ def cmd_agent_index(args):
 
 
 def cmd_docs(args):
-    """Prints documentation and 3D digital twin URL."""
+    """Prints documentation URLs or serves local 3D digital twin."""
     print(f"\n{BOLD}Sovereign Mini Datacenter v{__version__}{RESET}")
     print(f"• Repository:  {CYAN}https://github.com/iliachry/sovereign-mini-datacenter{RESET}")
     print(f"• 3D Viewer:   {GREEN}https://iliachry.gr/sovereign-mini-datacenter/{RESET}")
     print(f"• Docs & BOM:  {BOLD}hardware/COMPONENTS.md{RESET} & {BOLD}hardware/WIRING_DIAGRAM.md{RESET}\n")
+
+    if getattr(args, "serve", False):
+        import functools
+        import http.server
+        import socketserver
+        import webbrowser
+        from pathlib import Path
+
+        port = getattr(args, "port", 8088) or 8088
+        docs_dir = Path(get_project_root()) / "docs"
+
+        if not docs_dir.exists():
+            print(f"  {RED}✖ Docs directory not found at {docs_dir}{RESET}\n")
+            return
+
+        handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(docs_dir))
+        url = f"http://localhost:{port}/index.html"
+        print(f"  {GREEN}●{RESET} Serving 3D Digital Twin at: {CYAN}{url}{RESET}")
+        print(f"  Press {BOLD}Ctrl+C{RESET} to stop server.\n")
+
+        if not getattr(args, "no_browser", False):
+            try:
+                webbrowser.open(url)
+            except Exception:
+                pass
+
+        try:
+            with socketserver.TCPServer(("", port), handler) as httpd:
+                httpd.serve_forever()
+        except KeyboardInterrupt:
+            print(f"\n  {YELLOW}3D Digital Twin server stopped.{RESET}\n")
+        except OSError as e:
+            print(f"  {RED}✖ Could not bind to port {port}: {e}{RESET}\n")
+
+
+def cmd_doctor(args):
+    """Executes pre-flight system diagnostics and development environment readiness checks."""
+    import shutil
+    import socket
+
+    print(f"\n{BOLD}{CYAN}=== Sovereign Mini Datacenter — Pre-Flight System Diagnostics ==={RESET}\n")
+
+    checks_passed = 0
+    total_checks = 0
+
+    def print_check(name: str, passed: bool, detail: str = "", fix: str = "") -> None:
+        nonlocal checks_passed, total_checks
+        total_checks += 1
+        if passed:
+            checks_passed += 1
+            print(f"  [{GREEN}PASS{RESET}] {BOLD}{name:<32}{RESET} {GREEN}✔{RESET} {detail}")
+        else:
+            print(f"  [{YELLOW}WARN{RESET}] {BOLD}{name:<32}{RESET} {YELLOW}○{RESET} {detail}")
+            if fix:
+                print(f"         {CYAN}↳ Remediation:{RESET} {fix}")
+
+    # 1. Python Runtime
+    py_ver = sys.version_info
+    py_ok = py_ver >= (3, 11)
+    print_check(
+        "Python Runtime (>=3.11)",
+        py_ok,
+        f"Python {py_ver.major}.{py_ver.minor}.{py_ver.micro}",
+        "Install Python 3.11 or newer",
+    )
+
+    # 2. Virtual Environment
+    in_venv = sys.prefix != getattr(sys, "base_prefix", sys.prefix)
+    print_check(
+        "Virtual Environment Active",
+        in_venv,
+        f"{sys.prefix}",
+        "Run 'uv sync' and activate virtual environment (.venv)",
+    )
+
+    # 3. uv Package Manager
+    uv_bin = shutil.which("uv")
+    print_check(
+        "uv Package Manager",
+        bool(uv_bin),
+        f"{uv_bin}" if uv_bin else "Not installed",
+        "Install uv: https://github.com/astral-sh/uv",
+    )
+
+    # 4. Git Repository & Pre-Commit
+    is_git = os.path.exists(os.path.join(get_project_root(), ".git"))
+    has_precommit = os.path.exists(os.path.join(get_project_root(), ".git", "hooks", "pre-commit"))
+    print_check(
+        "Git Repository & Hooks",
+        is_git and has_precommit,
+        "Pre-commit hook installed"
+        if has_precommit
+        else ("Git repo detected, no hooks" if is_git else "Not a git repo"),
+        "Run 'uv run pre-commit install'",
+    )
+
+    # 5. Environment File
+    env_file = os.path.join(get_project_root(), "software", ".env")
+    has_env = os.path.exists(env_file)
+    print_check(
+        "Environment Config (.env)",
+        has_env,
+        "software/.env found" if has_env else "software/.env missing",
+        "Copy software/env.example to software/.env",
+    )
+
+    # 6. Docker Engine
+    docker_bin = shutil.which("docker")
+    docker_running = False
+    if docker_bin:
+        try:
+            docker_res = subprocess.run(["docker", "info"], capture_output=True, timeout=3)
+            docker_running = docker_res.returncode == 0
+        except Exception:
+            docker_running = False
+    print_check(
+        "Docker Engine & Daemon",
+        docker_running,
+        "Docker daemon active"
+        if docker_running
+        else ("Docker CLI present but daemon not running" if docker_bin else "Docker not installed"),
+        "Start Docker Desktop or systemd docker.service",
+    )
+
+    # 7. Hardware Acceleration (GPU / Jetson)
+    gpu_detected = False
+    gpu_name = "CPU Only"
+    if shutil.which("nvidia-smi"):
+        try:
+            gpu_res = subprocess.run(
+                ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+                capture_output=True,
+                text=True,
+                timeout=2,
+            )
+            if gpu_res.returncode == 0 and gpu_res.stdout.strip():
+                gpu_detected = True
+                gpu_name = gpu_res.stdout.strip().split("\n")[0]
+        except Exception:
+            pass
+    elif os.path.exists("/sys/devices/platform/host1x"):
+        gpu_detected = True
+        gpu_name = "NVIDIA Tegra Jetson Orin"
+
+    print_check(
+        "Hardware Acceleration",
+        gpu_detected,
+        gpu_name,
+        "NVIDIA drivers or Jetson Orin required for hardware GPU inference",
+    )
+
+    # 8. OpenSCAD 3D Modeling
+    scad_bin = shutil.which("openscad")
+    print_check(
+        "OpenSCAD (CAD Verification)",
+        bool(scad_bin),
+        f"{scad_bin}" if scad_bin else "Not installed (optional for CAD compilation)",
+        "Install OpenSCAD to compile 3D models locally",
+    )
+
+    # 9. Local Service Ports & Endpoints
+    def check_port_open(port: int) -> bool:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(0.3)
+            return s.connect_ex(("127.0.0.1", port)) == 0
+
+    dashboard_active = check_port_open(8080)
+    twin_active = check_port_open(8088)
+    ollama_active = check_port_open(11434)
+    qdrant_active = check_port_open(6333)
+    telem_active = check_port_open(9101)
+
+    print(f"\n  {BOLD}Local Service Endpoints & Ports:{RESET}")
+    print(
+        f"    • Operations Dashboard (Port 8080):  {GREEN if dashboard_active else YELLOW}{'ACTIVE (http://localhost:8080)' if dashboard_active else 'INACTIVE (Launch with smdc dashboard)'}{RESET}"
+    )
+    print(
+        f"    • 3D Digital Twin (Port 8088):       {GREEN if twin_active else YELLOW}{'ACTIVE (http://localhost:8088)' if twin_active else 'INACTIVE (Launch with smdc docs --serve)'}{RESET}"
+    )
+    print(
+        f"    • Prometheus Exporter (Port 9101):   {GREEN if telem_active else YELLOW}{'ACTIVE (http://localhost:9101/metrics)' if telem_active else 'INACTIVE (Launch with smdc telemetry)'}{RESET}"
+    )
+    print(
+        f"    • Ollama Local LLM (Port 11434):     {GREEN if ollama_active else YELLOW}{'ONLINE' if ollama_active else 'OFFLINE (Start with ollama serve)'}{RESET}"
+    )
+    print(
+        f"    • Qdrant Vector DB (Port 6333):      {GREEN if qdrant_active else YELLOW}{'ONLINE' if qdrant_active else 'OFFLINE (Start via docker compose)'}{RESET}"
+    )
+
+    print(
+        f"\n{BOLD}Diagnostic Summary:{RESET} {GREEN}{checks_passed}/{total_checks}{RESET} core environment checks passed.\n"
+    )
 
 
 def cmd_benchmark(args):
@@ -1553,6 +1745,12 @@ def main():
     p_status = subparsers.add_parser("status", help="Show datacenter status & live telemetry")
     p_status.set_defaults(func=cmd_status)
 
+    # Doctor (Pre-flight System & Dev Diagnostics)
+    p_doctor = subparsers.add_parser(
+        "doctor", help="Inspect local environment readiness, dependencies, and service ports"
+    )
+    p_doctor.set_defaults(func=cmd_doctor)
+
     # Bootstrap Provisioner
     p_bootstrap = subparsers.add_parser(
         "bootstrap", help="Autonomous DGX/Jetson power-up hardware, mesh & service provisioner"
@@ -1730,7 +1928,10 @@ def main():
     p_econ.set_defaults(func=cmd_economy_wallet)
 
     # Docs
-    p_docs = subparsers.add_parser("docs", help="Show 3D viewer and documentation URLs")
+    p_docs = subparsers.add_parser("docs", help="Show 3D viewer and documentation URLs, or serve locally")
+    p_docs.add_argument("--serve", "-s", action="store_true", help="Launch local HTTP server for 3D Digital Twin")
+    p_docs.add_argument("--port", type=int, default=8088, help="Port to serve 3D Digital Twin on (default: 8088)")
+    p_docs.add_argument("--no-browser", action="store_true", help="Do not automatically open default web browser")
     p_docs.set_defaults(func=cmd_docs)
 
     # Dashboard

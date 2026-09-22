@@ -1,0 +1,70 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Python: Current Test File",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "pytest",
+      "args": ["-v", "-o", "addopts=", "${file}"],
+      "console": "integratedTerminal",
+      "justMyCode": true
+    },
+    {
+      "name": "SMDC: Doctor Diagnostics",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "sovereign_dc.cli",
+      "args": ["doctor"],
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "SMDC: System Status",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "sovereign_dc.cli",
+      "args": ["status"],
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "SMDC: Operations Dashboard",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "sovereign_dc.cli",
+      "args": ["dashboard", "--port", "8080"],
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "SMDC: Serve 3D Digital Twin",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "sovereign_dc.cli",
+      "args": ["docs", "--serve", "--port", "8088"],
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "SMDC: Demo Sandbox",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "sovereign_dc.cli",
+      "args": ["demo", "--steps", "3", "--no-delay"],
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "SMDC: Metaverse Simulation (Algorithm 1)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "sovereign_dc.cli",
+      "args": ["sim", "run", "--cycles", "5"],
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "SMDC: RL Benchmark (SA-PPO vs MD-PPO)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "sovereign_dc.cli",
+      "args": ["sim", "benchmark", "--episodes", "5", "--steps", "10"],
+      "console": "integratedTerminal"
+    }
+  ]
+}

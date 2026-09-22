@@ -408,6 +408,35 @@ smdc mesh consensus --nodes 4
 
 ---
 
+## 🛠️ Developer Automation & Quality Gates
+
+A unified developer task runner, fast inner-loop test suite, and pre-flight environment inspector:
+
+```bash
+# 1. One-shot developer environment bootstrap
+./scripts/setup_dev.sh            # Linux / macOS / WSL
+.\scripts\setup_dev.ps1           # Windows PowerShell
+
+# 2. Run system pre-flight readiness diagnostics
+smdc doctor
+
+# 3. Serve 3D WebGL Digital Twin locally (Port 8088) with auto-browser launch
+smdc docs --serve --port 8088
+
+# 4. Cross-Platform Developer Task Runner
+make check                        # Linux/macOS: format + lint + types + fast tests
+.\scripts\dev.ps1 check           # Windows: format + lint + types + fast tests
+
+make test-fast                    # Fast tests without coverage
+make test-subsystem SUB=cli       # Target specific subsystem tests
+make serve-twin                   # Serve 3D Digital Twin locally
+make dashboard                    # Launch Web Operations Dashboard
+```
+
+> **💡 IDE Integration**: Native `.vscode/tasks.json` maps `Ctrl+Shift+B` to `Fast Check (Lint + Types + Fast Tests)`. Pre-configured `launch.json` debug profiles are included for `smdc doctor`, `smdc dashboard`, `smdc demo`, and active Pytest test files.
+
+---
+
 ## ☸️ Kubernetes & GitOps Deployment (Helm / K3s / Talos)
 
 Deploy the Sovereign stack onto edge Kubernetes clusters (K3s, Talos, MicroK8s):

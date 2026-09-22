@@ -147,3 +147,32 @@ def test_smdc_dashboard_cli_help():
     assert res.returncode == 0
     assert "--port" in res.stdout
     assert "--no-browser" in res.stdout
+
+
+def test_smdc_doctor_cli():
+    res = subprocess.run(
+        [sys.executable, "-m", "sovereign_dc.cli", "doctor"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=ENV,
+    )
+    assert res.returncode == 0
+    assert "Pre-Flight System Diagnostics" in res.stdout
+    assert "Python Runtime" in res.stdout
+    assert "Diagnostic Summary" in res.stdout
+
+
+def test_smdc_docs_cli_help():
+    res = subprocess.run(
+        [sys.executable, "-m", "sovereign_dc.cli", "docs", "--help"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=ENV,
+    )
+    assert res.returncode == 0
+    assert "--serve" in res.stdout
+    assert "--port" in res.stdout

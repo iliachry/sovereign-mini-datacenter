@@ -1,0 +1,9 @@
+{
+  "recommendations": [
+    "ms-python.python",
+    "charliermarsh.ruff",
+    "matangover.mypy",
+    "ms-azuretools.vscode-docker",
+    "openscad.openscad-formatter"
+  ]
+}
