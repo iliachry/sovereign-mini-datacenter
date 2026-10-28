@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 from sovereign_dc.hal.gpu import GPUInfo, detect_gpus
 from sovereign_dc.hal.power import PowerReading, _parse_prometheus_metrics, read_power
 from sovereign_dc.hal.storage import StorageInfo, detect_storage
-from sovereign_dc.hal.thermal import ThermalReading, read_thermal
+from sovereign_dc.hal.thermal import ThermalReading, read_linux_thermal_zones, read_thermal
 
 
 class TestGPUDetection:
@@ -66,6 +66,21 @@ class TestGPUDetection:
                 gpus = detect_gpus()
                 assert len(gpus) == 1
                 assert gpus[0].memory_mb == "Unknown"
+
+    def test_detect_gpus_unified_memory_fallback(self):
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "NVIDIA GB10, [N/A]\n"
+        with (
+            patch("shutil.which", return_value="/usr/bin/nvidia-smi"),
+            patch("subprocess.run", return_value=mock_result),
+            patch("pathlib.Path.exists", return_value=True),
+            patch("pathlib.Path.read_text", return_value="MemTotal:       127533392 kB\n"),
+        ):
+            gpus = detect_gpus(simulation=False)
+            assert len(gpus) == 1
+            assert gpus[0].name == "NVIDIA GB10"
+            assert gpus[0].memory_mb == "124544"
 
 
 class TestPowerReading:
@@ -171,6 +186,21 @@ class TestThermalReading:
         with patch("urllib.request.urlopen", side_effect=ConnectionError("Connection refused")):
             with pytest.raises(ConnectionError):
                 read_thermal(simulation=False)
+
+    def test_read_linux_thermal_zones(self, tmp_path):
+        z0 = tmp_path / "thermal_zone0"
+        z0.mkdir()
+        (z0 / "type").write_text("acpitz\n")
+        (z0 / "temp").write_text("58500\n")
+        mock_res = MagicMock(returncode=0, stdout="44\n")
+        with (
+            patch("sovereign_dc.hal.thermal.Path", return_value=tmp_path),
+            patch("shutil.which", return_value="/usr/bin/nvidia-smi"),
+            patch("subprocess.run", return_value=mock_res),
+        ):
+            zones = read_linux_thermal_zones()
+            assert zones["thermal_zone0:acpitz"] == 58.5
+            assert zones["gpu0:nvidia"] == 44.0
 
 
 class TestStorageDetection:

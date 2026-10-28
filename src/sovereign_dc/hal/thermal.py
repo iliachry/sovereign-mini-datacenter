@@ -9,11 +9,41 @@ Reads temperature data from:
 from __future__ import annotations
 
 import logging
+import shutil
+import subprocess
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from pathlib import Path
 
 logger = logging.getLogger("HAL.Thermal")
+
+
+def read_linux_thermal_zones() -> dict[str, float]:
+    """Read native Linux sysfs thermal zones and NVIDIA GPU temperature if available."""
+    readings: dict[str, float] = {}
+    thermal_root = Path("/sys/class/thermal")
+    if thermal_root.exists():
+        for zone in sorted(thermal_root.glob("thermal_zone*")):
+            try:
+                ztype = (zone / "type").read_text(encoding="utf-8").strip()
+                raw_milli = int((zone / "temp").read_text(encoding="utf-8").strip())
+                readings[f"{zone.name}:{ztype}"] = round(raw_milli / 1000.0, 2)
+            except Exception as e:
+                logger.debug("Thermal zone read skipped: %s", e)
+    if shutil.which("nvidia-smi"):
+        try:
+            res = subprocess.run(
+                ["nvidia-smi", "--query-gpu=temperature.gpu", "--format=csv,noheader,nounits"],
+                capture_output=True,
+                text=True,
+                timeout=3,
+            )
+            if res.returncode == 0 and res.stdout.strip():
+                readings["gpu0:nvidia"] = float(res.stdout.strip().splitlines()[0].strip())
+        except Exception:
+            pass
+    return readings
 
 
 @dataclass

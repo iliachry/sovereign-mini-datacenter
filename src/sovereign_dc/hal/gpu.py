@@ -10,8 +10,24 @@ import logging
 import shutil
 import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 
 logger = logging.getLogger("HAL.GPU")
+
+
+def _read_unified_memory_mb() -> str:
+    """Resolve unified memory capacity from /proc/meminfo for Grace Blackwell / Jetson SoCs."""
+    try:
+        meminfo = Path("/proc/meminfo")
+        if meminfo.exists():
+            for line in meminfo.read_text(encoding="utf-8").splitlines():
+                if line.startswith("MemTotal:"):
+                    parts = line.split()
+                    if len(parts) >= 2 and parts[1].isdigit():
+                        return str(int(parts[1]) // 1024)
+    except Exception:
+        pass
+    return "[N/A]"
 
 
 @dataclass
@@ -47,6 +63,8 @@ def detect_gpus(simulation: bool = True) -> list[GPUInfo]:
                     parts = line.split(",")
                     name = parts[0].strip()
                     mem = parts[1].strip() if len(parts) > 1 else "Unknown"
+                    if mem in ("[N/A]", "N/A", "[Not Supported]"):
+                        mem = _read_unified_memory_mb()
                     gpus.append(GPUInfo(name=name, memory_mb=mem))
                 logger.info("Detected %d NVIDIA GPU(s) via nvidia-smi", len(gpus))
                 return gpus

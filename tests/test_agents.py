@@ -41,6 +41,20 @@ def test_gitlab_query_ollama_failure():
         assert "unavailable" in res.lower()
 
 
+def test_gitlab_query_openai_sglang_success(monkeypatch):
+    monkeypatch.setenv("OPENAI_BASE_URL", "http://127.0.0.1:8001/v1")
+    monkeypatch.setenv("OLLAMA_CODE_MODEL", "qwen3.6-35b-a3b")
+    mock_resp = MagicMock()
+    mock_resp.read.return_value = json.dumps({"choices": [{"message": {"content": "SGLang Blackwell LGTM."}}]}).encode(
+        "utf-8"
+    )
+    mock_resp.__enter__.return_value = mock_resp
+
+    with patch("urllib.request.urlopen", return_value=mock_resp):
+        res = query_ollama("Review this code")
+        assert "SGLang Blackwell LGTM." in res
+
+
 def test_gitlab_review_code_diff_dry_run(caplog):
     caplog.set_level(logging.INFO)
     with patch("sovereign_dc.agents.gitlab_reviewer.query_ollama", return_value="Security LGTM."):

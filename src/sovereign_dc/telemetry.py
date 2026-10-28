@@ -54,6 +54,7 @@ def get_telemetry_metrics():
     # Apply fault overrides
     if "soc" in fault_overrides:
         soc_percent = float(fault_overrides["soc"])
+        load_shedding = 1.0 if soc_percent < 20.0 else 0.0
     if "temp" in fault_overrides:
         coolant_temp_celsius = float(fault_overrides["temp"])
         rack_inlet_celsius = coolant_temp_celsius - 8.0

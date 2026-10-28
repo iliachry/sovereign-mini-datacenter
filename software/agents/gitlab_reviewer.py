@@ -16,11 +16,34 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [GitLabReviewer] %(m
 GITLAB_URL = os.getenv("GITLAB_API_URL", "http://gitlab/api/v4")
 GITLAB_TOKEN = os.getenv("GITLAB_API_TOKEN", "")
 OLLAMA_URL = os.getenv("OLLAMA_BASE_URL", "http://ollama:11434")
+OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "")
 REVIEW_MODEL = os.getenv("OLLAMA_CODE_MODEL", "qwen2.5-coder:7b")
 
 
 def query_ollama(prompt: str) -> str:
-    """Generates code review comments via local Ollama LLM."""
+    """Generates code review comments via local Ollama LLM or OpenAI-compatible SGLang endpoint."""
+    openai_base = os.getenv("OPENAI_BASE_URL", OPENAI_BASE_URL).rstrip("/")
+    if openai_base:
+        url = f"{openai_base}/chat/completions" if openai_base.endswith("/v1") else f"{openai_base}/v1/chat/completions"
+        payload = json.dumps(
+            {
+                "model": os.getenv("OLLAMA_CODE_MODEL", REVIEW_MODEL),
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.2,
+                "max_tokens": 512,
+                "chat_template_kwargs": {"enable_thinking": False},
+            }
+        ).encode("utf-8")
+        req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                msg = data.get("choices", [{}])[0].get("message", {})
+                return str(msg.get("content") or msg.get("reasoning_content") or "No review output.")
+        except Exception as e:
+            logging.error(f"OpenAI/SGLang review generation failed: {e}")
+            return f"Local LLM review unavailable: {e}"
+
     url = f"{OLLAMA_URL}/api/generate"
     payload = json.dumps(
         {"model": REVIEW_MODEL, "prompt": prompt, "stream": False, "options": {"temperature": 0.2}}
