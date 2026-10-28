@@ -1,3 +1,9 @@
+# Autonomous Local AI Agents overlay.
+#
+# Relative paths below are resolved against the Compose project directory,
+# which is `software/` when this file is merged with the core stack
+# (`./setup.sh --with-agents`). To run it standalone, pin the project directory:
+#   docker compose --project-directory software -f software/agents/docker-compose.agents.yml up -d
 services:
   knowledge-indexer:
     image: python:3.11-alpine
@@ -5,7 +11,7 @@ services:
     restart: unless-stopped
     working_dir: /app
     volumes:
-      - .:/app
+      - ./agents:/app:ro
       - ${NEXTCLOUD_DATA_PATH:-nextcloud_data}:/data/documents:ro
     environment:
       - OLLAMA_BASE_URL=http://ollama:11434
@@ -22,7 +28,7 @@ services:
     restart: unless-stopped
     working_dir: /app
     volumes:
-      - .:/app
+      - ./agents:/app:ro
     environment:
       - GITLAB_API_URL=http://gitlab/api/v4
       - GITLAB_API_TOKEN=${GITLAB_REVIEWER_TOKEN:-}
@@ -38,7 +44,7 @@ services:
     restart: unless-stopped
     working_dir: /app
     volumes:
-      - .:/app
+      - ./agents:/app:ro
     environment:
       - PROMETHEUS_URL=http://prometheus:9090
       - POWER_EXPORTER_URL=http://power-exporter:9101/metrics
@@ -48,8 +54,8 @@ services:
 
 networks:
   sovereign_net:
-    external: true
+    name: software_sovereign_net
 
 volumes:
   nextcloud_data:
-    external: true
+    name: software_nextcloud_data

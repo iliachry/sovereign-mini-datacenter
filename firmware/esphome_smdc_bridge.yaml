@@ -14,10 +14,15 @@ wifi:
 logger:
   baud_rate: 0
 
+# Home Assistant native API (encrypted). Generate a key with:
+#   openssl rand -base64 32
 api:
+  encryption:
+    key: !secret api_encryption_key
 
 ota:
   - platform: esphome
+    password: !secret ota_password
 
 # Prometheus metrics endpoint on port 80/metrics
 prometheus:
@@ -66,7 +71,7 @@ display:
           it.printf(0, 0, id(font_title), "STATUS");
           if (id(wifi_connected).state) {
             it.printf(0, 16, id(font_body), "WiFi: ONLINE");
-            it.printf(0, 28, id(font_body), "RSSI: %.0f dBm", id(wifi_signal).state);
+            it.printf(0, 28, id(font_body), "RSSI: %.0f dBm", id(wifi_rssi).state);
           } else {
             it.printf(0, 16, id(font_body), "WiFi: OFFLINE");
           }
@@ -85,13 +90,6 @@ font:
     id: font_body
     size: 10
 
-# OLED page cycling interval
-interval:
-  - interval: 5s
-    then:
-      - display.page.show_next: oled_display
-      - component.update: oled_display
-
 # Status LED (GPIO2 - built-in blue LED)
 light:
   - platform: status_led
@@ -102,6 +100,73 @@ light:
 one_wire:
   - platform: gpio
     pin: GPIO4
+
+# Victron VE.Direct text-protocol UART (19200 8N1, optoisolated).
+# Pinout matches firmware/esp32_telemetry_bridge.ino (RX=GPIO16, TX=GPIO17).
+uart:
+  - id: uart_ve_direct
+    rx_pin: GPIO16
+    tx_pin: GPIO17
+    baud_rate: 19200
+    rx_buffer_size: 512
+
+globals:
+  # Accumulates one VE.Direct line (LABEL<TAB>VALUE) between newlines.
+  - id: ve_line
+    type: std::string
+    restore_value: false
+    initial_value: '""'
+
+# VE.Direct parser (replaces the removed ESPHome `platform: custom` sensor).
+# Runs every 100 ms, drains the UART RX buffer and publishes parsed fields to
+# the standard template sensors declared below.
+interval:
+  - interval: 100ms
+    then:
+      - lambda: |-
+          auto publish = [](const std::string &label, const std::string &value) {
+            const float v = atof(value.c_str());
+            if (label == "V") {
+              id(battery_voltage).publish_state(v / 1000.0f);       // mV  -> V
+            } else if (label == "I") {
+              id(battery_current).publish_state(v / 1000.0f);       // mA  -> A
+            } else if (label == "PPV") {
+              id(solar_power).publish_state(v);                     // W
+            } else if (label == "SOC") {
+              id(battery_soc).publish_state(v / 10.0f);             // ‰   -> %
+            } else if (label == "VPV") {
+              id(solar_voltage).publish_state(v / 1000.0f);         // mV  -> V
+            } else if (label == "H20") {
+              id(solar_yield_today).publish_state(v * 10.0f);       // 0.01 kWh -> Wh
+            }
+          };
+
+          uint8_t byte;
+          while (id(uart_ve_direct).available() && id(uart_ve_direct).read_byte(&byte)) {
+            if (byte == '\n') {
+              std::string &line = id(ve_line);
+              // Strip a trailing carriage return, if present.
+              if (!line.empty() && line.back() == '\r') {
+                line.pop_back();
+              }
+              const size_t tab = line.find('\t');
+              if (tab != std::string::npos && tab > 0) {
+                publish(line.substr(0, tab), line.substr(tab + 1));
+              }
+              line.clear();
+            } else if (id(ve_line).size() < 128) {
+              id(ve_line).push_back(static_cast<char>(byte));
+            } else {
+              // Oversized frame (e.g. desynchronised HEX mode) — discard.
+              id(ve_line).clear();
+            }
+          }
+
+  # OLED page cycling
+  - interval: 5s
+    then:
+      - display.page.show_next: oled_display
+      - component.update: oled_display
 
 sensor:
   - platform: dallas_temp
@@ -118,34 +183,65 @@ sensor:
     unit_of_measurement: "°C"
     accuracy_decimals: 2
 
-  # Victron VE.Direct MPPT Parser
-  - platform: custom
-    lambda: |-
-      auto ve = new VEDirectCustomSensor();
-      App.register_component(ve);
-      return {ve->voltage_sensor, ve->current_sensor, ve->solar_power_sensor, ve->soc_sensor};
-    sensors:
-      - name: "Battery Voltage"
-        id: battery_voltage
-        unit_of_measurement: "V"
-        accuracy_decimals: 2
-      - name: "Battery Current"
-        id: battery_current
-        unit_of_measurement: "A"
-        accuracy_decimals: 2
-      - name: "Solar Harvest Power"
-        id: solar_power
-        unit_of_measurement: "W"
-        accuracy_decimals: 0
-      - name: "Battery SoC"
-        id: battery_soc
-        unit_of_measurement: "%"
-        accuracy_decimals: 1
+  # Victron VE.Direct MPPT fields (published by the UART parser interval above)
+  - platform: template
+    name: "Battery Voltage"
+    id: battery_voltage
+    unit_of_measurement: "V"
+    device_class: voltage
+    state_class: measurement
+    accuracy_decimals: 2
+    update_interval: never
+
+  - platform: template
+    name: "Battery Current"
+    id: battery_current
+    unit_of_measurement: "A"
+    device_class: current
+    state_class: measurement
+    accuracy_decimals: 2
+    update_interval: never
+
+  - platform: template
+    name: "Solar Harvest Power"
+    id: solar_power
+    unit_of_measurement: "W"
+    device_class: power
+    state_class: measurement
+    accuracy_decimals: 0
+    update_interval: never
+
+  - platform: template
+    name: "Battery SoC"
+    id: battery_soc
+    unit_of_measurement: "%"
+    device_class: battery
+    state_class: measurement
+    accuracy_decimals: 1
+    update_interval: never
+
+  - platform: template
+    name: "Solar Array Voltage"
+    id: solar_voltage
+    unit_of_measurement: "V"
+    device_class: voltage
+    state_class: measurement
+    accuracy_decimals: 2
+    update_interval: never
+
+  - platform: template
+    name: "Solar Yield Today"
+    id: solar_yield_today
+    unit_of_measurement: "Wh"
+    device_class: energy
+    state_class: total_increasing
+    accuracy_decimals: 0
+    update_interval: never
 
   # WiFi Signal Strength
   - platform: wifi_signal
     name: "WiFi Signal"
-    id: wifi_signal
+    id: wifi_rssi
     update_interval: 30s
 
   # Uptime Sensor

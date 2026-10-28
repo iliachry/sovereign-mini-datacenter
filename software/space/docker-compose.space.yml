@@ -1,8 +1,15 @@
+# Space Communications (RFC 9171 DTN + SGP4 orbital tracking) overlay.
+#
+# Relative paths below are resolved against the Compose project directory,
+# which is `software/` when this file is merged with the core stack
+# (`./setup.sh --with-space`). To run it standalone, pin the project directory:
+#   docker compose --project-directory software -f software/space/docker-compose.space.yml up -d
 services:
   space-node:
     build:
-      context: .
+      context: ./space
       dockerfile: Dockerfile
+    image: sovereign/space-node:latest
     container_name: sovereign_space_node
     restart: unless-stopped
     ports:
@@ -29,4 +36,4 @@ volumes:
 
 networks:
   sovereign_net:
-    external: true
+    name: software_sovereign_net

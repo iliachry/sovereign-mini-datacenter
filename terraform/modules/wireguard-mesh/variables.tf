@@ -13,9 +13,9 @@ variable "listen_port" {
 variable "nodes" {
   description = "Map of mesh node definitions"
   type = map(object({
-    mesh_ip           = string
-    endpoint          = optional(string)
-    allowed_ips       = optional(list(string), ["10.42.0.0/16"])
+    mesh_ip              = string
+    endpoint             = optional(string)
+    allowed_ips          = optional(list(string), ["10.42.0.0/16"])
     persistent_keepalive = optional(number, 25)
   }))
   default = {

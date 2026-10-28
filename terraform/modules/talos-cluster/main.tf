@@ -9,39 +9,41 @@ data "talos_client_configuration" "this" {
 }
 
 data "talos_machine_configuration" "controlplane" {
-  cluster_name     = var.cluster_name
-  cluster_endpoint = var.cluster_endpoint
-  machine_type     = "controlplane"
-  machine_secrets  = talos_machine_secrets.this.machine_secrets
-  talos_version    = var.talos_version
+  for_each = var.control_plane_nodes
+
+  cluster_name       = var.cluster_name
+  cluster_endpoint   = var.cluster_endpoint
+  machine_type       = "controlplane"
+  machine_secrets    = talos_machine_secrets.this.machine_secrets
+  talos_version      = var.talos_version
   kubernetes_version = var.kubernetes_version
-  docs             = false
-  examples         = false
+  docs               = false
+  examples           = false
 
   config_patches = [
     yamlencode({
       machine = {
         install = {
-          disk = values(var.control_plane_nodes)[0].install_disk
+          disk = each.value.install_disk
         }
         network = {
-          hostname = values(var.control_plane_nodes)[0].hostname
+          hostname    = each.value.hostname
           nameservers = var.nameservers
         }
         systemDiskEncryption = var.enable_luks_encryption ? {
           state = {
             provider = "luks2"
-            keys = [{ nodeID = {}, slot = 0 }]
+            keys     = [{ nodeID = {}, slot = 0 }]
           }
           ephemeral = {
             provider = "luks2"
-            keys = [{ nodeID = {}, slot = 0 }]
+            keys     = [{ nodeID = {}, slot = 0 }]
           }
         } : null
         sysctls = {
-          "net.ipv4.ip_forward"          = "1"
-          "net.ipv4.tcp_syncookies"      = "1"
-          "kernel.randomize_va_space"    = "2"
+          "net.ipv4.ip_forward"       = "1"
+          "net.ipv4.tcp_syncookies"   = "1"
+          "kernel.randomize_va_space" = "2"
         }
       }
       cluster = {
@@ -91,16 +93,16 @@ data "talos_machine_configuration" "worker" {
         systemDiskEncryption = var.enable_luks_encryption ? {
           state = {
             provider = "luks2"
-            keys = [{ nodeID = {}, slot = 0 }]
+            keys     = [{ nodeID = {}, slot = 0 }]
           }
           ephemeral = {
             provider = "luks2"
-            keys = [{ nodeID = {}, slot = 0 }]
+            keys     = [{ nodeID = {}, slot = 0 }]
           }
         } : null
         nodeLabels = each.value.has_gpu ? {
           "smdc.io/gpu-accelerator" = "true"
-          "nvidia.com/gpu.present"   = "true"
+          "nvidia.com/gpu.present"  = "true"
         } : {}
       }
     })
@@ -111,7 +113,7 @@ resource "talos_machine_configuration_apply" "controlplane" {
   for_each = var.control_plane_nodes
 
   client_configuration        = talos_machine_secrets.this.client_configuration
-  machine_configuration_input = data.talos_machine_configuration.controlplane.machine_configuration
+  machine_configuration_input = data.talos_machine_configuration.controlplane[each.key].machine_configuration
   node                        = each.value.ip
 }
 

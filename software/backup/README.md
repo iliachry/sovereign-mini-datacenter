@@ -28,6 +28,16 @@ Add to root crontab (`sudo crontab -e`):
 0 3 * * * /bin/bash /path/to/sovereign-mini-datacenter/software/backup/backup.sh >> /var/log/sovereign-backup.log 2>&1
 ```
 
+### Run as a Containerized Daemon
+`docker-compose.backup.yml` ships a `sovereign_backup` container that executes `backup.sh`
+on a loop (default every 24 h, tunable via `BACKUP_INTERVAL_SECONDS` in `.env`) against
+read-only mounts of every core-stack volume:
+```bash
+./software/setup.sh --with-backup
+# or standalone:
+docker compose --project-directory software -f software/backup/docker-compose.backup.yml up -d
+```
+
 ---
 
 ## ?? Disaster Recovery

@@ -1,14 +1,16 @@
+{{- if .Values.ai.enabled }}
 apiVersion: v1
 kind: Service
 metadata:
   name: {{ include "sovereign-stack.fullname" . }}-ollama
   labels:
     {{- include "sovereign-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ai-cluster
 spec:
   type: ClusterIP
   ports:
     - port: 11434
-      targetPort: 11434
+      targetPort: http-ollama
       protocol: TCP
       name: http-ollama
   selector:
@@ -21,16 +23,19 @@ metadata:
   name: {{ include "sovereign-stack.fullname" . }}-qdrant
   labels:
     {{- include "sovereign-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ai-cluster
 spec:
   type: ClusterIP
   ports:
     - port: 6333
-      targetPort: 6333
+      targetPort: http-qdrant
       protocol: TCP
       name: http-qdrant
   selector:
     {{- include "sovereign-stack.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: ai-cluster
+{{- end }}
+{{- if .Values.telemetry.enabled }}
 ---
 apiVersion: v1
 kind: Service
@@ -38,13 +43,95 @@ metadata:
   name: {{ include "sovereign-stack.fullname" . }}-power-exporter
   labels:
     {{- include "sovereign-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: telemetry
 spec:
   type: ClusterIP
   ports:
-    - port: 9101
-      targetPort: 9101
+    - port: {{ .Values.telemetry.powerExporter.port }}
+      targetPort: metrics
       protocol: TCP
       name: metrics
   selector:
     {{- include "sovereign-stack.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: telemetry
+{{- end }}
+{{- if .Values.core.openWebUI.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "sovereign-stack.fullname" . }}-open-webui
+  labels:
+    {{- include "sovereign-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: open-webui
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.core.openWebUI.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "sovereign-stack.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: open-webui
+{{- end }}
+{{- if .Values.core.vaultwarden.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "sovereign-stack.fullname" . }}-vaultwarden
+  labels:
+    {{- include "sovereign-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: vaultwarden
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.core.vaultwarden.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "sovereign-stack.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: vaultwarden
+{{- end }}
+{{- if .Values.core.nextcloud.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "sovereign-stack.fullname" . }}-nextcloud
+  labels:
+    {{- include "sovereign-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nextcloud
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.core.nextcloud.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "sovereign-stack.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: nextcloud
+{{- end }}
+{{- if .Values.space.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "sovereign-stack.fullname" . }}-dtn-node
+  labels:
+    {{- include "sovereign-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dtn-node
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.space.dtnNode.port }}
+      targetPort: metrics
+      protocol: TCP
+      name: metrics
+  selector:
+    {{- include "sovereign-stack.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: dtn-node
+{{- end }}

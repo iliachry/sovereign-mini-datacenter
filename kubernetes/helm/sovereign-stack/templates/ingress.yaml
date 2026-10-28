@@ -1,0 +1,48 @@
+{{- if .Values.ingress.enabled }}
+{{- $fullname := include "sovereign-stack.fullname" . }}
+{{- $hosts := list }}
+{{- if .Values.core.openWebUI.enabled }}
+{{- $hosts = append $hosts (dict "host" (include "sovereign-stack.host" (dict "sub" .Values.ingress.hosts.openWebUI "root" .)) "service" (printf "%s-open-webui" $fullname) "port" .Values.core.openWebUI.service.port) }}
+{{- end }}
+{{- if .Values.core.vaultwarden.enabled }}
+{{- $hosts = append $hosts (dict "host" (include "sovereign-stack.host" (dict "sub" .Values.ingress.hosts.vaultwarden "root" .)) "service" (printf "%s-vaultwarden" $fullname) "port" .Values.core.vaultwarden.service.port) }}
+{{- end }}
+{{- if .Values.core.nextcloud.enabled }}
+{{- $hosts = append $hosts (dict "host" (include "sovereign-stack.host" (dict "sub" .Values.ingress.hosts.nextcloud "root" .)) "service" (printf "%s-nextcloud" $fullname) "port" .Values.core.nextcloud.service.port) }}
+{{- end }}
+{{- if $hosts }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $fullname }}
+  labels:
+    {{- include "sovereign-stack.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - secretName: {{ .Values.ingress.tls.secretName }}
+      hosts:
+        {{- range $hosts }}
+        - {{ .host | quote }}
+        {{- end }}
+  {{- end }}
+  rules:
+    {{- range $hosts }}
+    - host: {{ .host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .service }}
+                port:
+                  number: {{ .port }}
+    {{- end }}
+{{- end }}
+{{- end }}

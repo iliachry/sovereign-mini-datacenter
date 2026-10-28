@@ -4,19 +4,20 @@ Sovereign Mini Datacenter - Energy-Aware Datacenter Sentinel Copilot
 Optimizes background AI jobs, model fine-tuning, and batch vectorization based on solar yield.
 """
 
-import os
-import sys
-import time
 import logging
-import urllib.request
+import math
+import os
+import time
 import urllib.error
+import urllib.request
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [SentinelCopilot] %(message)s")
 
 PROMETHEUS_URL = os.getenv("PROMETHEUS_URL", "http://prometheus:9090")
 POWER_EXPORTER_URL = os.getenv("POWER_EXPORTER_URL", "http://power-exporter:9101/metrics")
 
-def get_telemetry():
+
+def get_telemetry() -> dict[str, float]:
     try:
         req = urllib.request.Request(POWER_EXPORTER_URL, headers={"User-Agent": "sentinel-copilot"})
         with urllib.request.urlopen(req, timeout=3) as resp:
@@ -29,10 +30,53 @@ def get_telemetry():
                         metrics[parts[0]] = float(parts[1])
             return metrics
     except Exception as e:
-        logging.warning(f"Could not reach power exporter: {e}")
+        logging.warning("Could not reach power exporter: %s", e)
         return {}
 
-def run_copilot():
+
+def get_solar_forecast() -> float:
+    """Returns a mocked 4-hour forward prediction of solar yield (Watts) based on time of day."""
+    # In a real scenario, this would query Open-Meteo or local atmospheric models.
+    hour = (time.time() / 3600) % 24
+    future_hour = (hour + 4.0) % 24
+
+    # Simple bell curve for daylight between 6am and 8pm (20:00)
+    if 6 <= future_hour <= 20:
+        daylight = max(0.0, math.sin(math.pi * (future_hour - 6) / 14))
+        return daylight * 1500.0  # Max 1500W predicted
+    return 0.0
+
+
+def set_mode(mode: str) -> None:
+    """Writes the current mode to a shared state file and dispatches event."""
+    level_map = {
+        "NORMAL": 0,
+        "SOLAR_SURPLUS_COMPUTE": 0,
+        "ECO_PRESERVATION": 2,
+        "CRITICAL_SHEDDING": 3,
+    }
+    level = level_map.get(mode, 2 if "ECO" in mode or "SHED" in mode else 0)
+    try:
+        from sovereign_dc.events import Event, EventType, get_event_bus
+
+        get_event_bus().publish(
+            Event(
+                event_type=EventType.LOAD_SHEDDING_CHANGED,
+                source="sentinel_copilot",
+                payload={"mode": mode, "level": level},
+            )
+        )
+    except Exception as e:
+        logging.debug("Event bus notification notice: %s", e)
+
+    try:
+        with open("/tmp/sovereign_mode", "w") as f:
+            f.write(mode)
+    except Exception as e:
+        logging.warning("Failed to write mode state: %s", e)
+
+
+def run_copilot() -> None:
     logging.info("Starting Energy-Aware Datacenter Sentinel Copilot...")
     current_mode = "NORMAL"
 
@@ -41,20 +85,43 @@ def run_copilot():
         soc = metrics.get("sovereign_battery_soc_percent", 85.0)
         solar = metrics.get("sovereign_solar_pv_power_watts", 1000.0)
 
-        if soc < 25.0:
+        forecast = get_solar_forecast()
+
+        # Predictive load shedding:
+        # If battery is currently somewhat okay (e.g. < 40%) but forecast is very low (e.g. night time),
+        # preemptively shed load to preserve battery through the night.
+        is_critical = soc < 25.0
+        is_predicted_critical = soc < 40.0 and forecast < 100.0
+
+        if is_critical or is_predicted_critical:
             if current_mode != "ECO_PRESERVATION":
                 current_mode = "ECO_PRESERVATION"
-                logging.warning(f"⚡ Sentinel Trigger: Battery SoC at {soc:.1f}%. Throttling non-essential AI batch jobs to conserve power!")
+                set_mode(current_mode)
+                reason = (
+                    f"Battery SoC at {soc:.1f}%"
+                    if is_critical
+                    else f"Predictive (SoC {soc:.1f}%, Forecast {forecast:.0f}W)"
+                )
+                logging.warning(
+                    "⚡ Sentinel Trigger: %s. Throttling non-essential AI batch jobs to conserve power!", reason
+                )
         elif solar > 1000.0 and soc > 75.0:
             if current_mode != "SOLAR_SURPLUS_COMPUTE":
                 current_mode = "SOLAR_SURPLUS_COMPUTE"
-                logging.info(f"☀️ Solar Surplus ({solar:.0f}W, {soc:.1f}% SoC): Unlocking full GPU compute capacity for model training & batch vectorization.")
+                set_mode(current_mode)
+                logging.info(
+                    "☀️ Solar Surplus (%.0fW, %.1f%% SoC): Unlocking full GPU compute capacity for model training & batch vectorization.",
+                    solar,
+                    soc,
+                )
         else:
             if current_mode != "NORMAL":
                 current_mode = "NORMAL"
-                logging.info(f"Nominal operating conditions ({solar:.0f}W, {soc:.1f}% SoC).")
+                set_mode(current_mode)
+                logging.info("Nominal operating conditions (%.0fW, %.1f%% SoC, Forecast %.0fW).", solar, soc, forecast)
 
         time.sleep(30)
+
 
 if __name__ == "__main__":
     run_copilot()

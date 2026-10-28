@@ -44,24 +44,36 @@ core:
       tag: main
     service:
       port: 8080
+    # Leave empty to auto-generate a random key on first install (persisted via lookup).
+    secretKey: ""
 
   vaultwarden:
     enabled: true
     image:
       repository: vaultwarden/server
       tag: latest
+    service:
+      port: 80
     persistence:
       enabled: true
       size: 5Gi
+    signupsAllowed: false
+    # Leave empty to auto-generate a random admin token on first install.
+    adminToken: ""
 
   nextcloud:
     enabled: true
     image:
       repository: nextcloud
       tag: 29-apache
+    service:
+      port: 80
     persistence:
       enabled: true
       size: 200Gi
+    adminUser: admin
+    # Leave empty to auto-generate a random admin password on first install.
+    adminPassword: ""
 
 # Micro-Grid & Telemetry
 telemetry:
@@ -77,8 +89,16 @@ telemetry:
 space:
   enabled: true
   dtnNode:
+    image:
+      repository: ghcr.io/iliachry/sovereign-space-node
+      tag: latest
+      pullPolicy: IfNotPresent
     port: 9102
     localEid: "dtn://smdc-node-01.space"
+    groundStation:
+      name: "Sovereign-Ground-01"
+      latitude: "37.9838"
+      longitude: "23.7275"
     persistence:
       enabled: true
       size: 10Gi
@@ -93,6 +113,11 @@ ingress:
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
+  # Hostnames are prefixed onto global.domain (e.g. ai.sovereign.local)
+  hosts:
+    openWebUI: ai
+    vaultwarden: vault
+    nextcloud: cloud
   tls:
     enabled: true
     secretName: sovereign-tls-cert

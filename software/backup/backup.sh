@@ -39,7 +39,9 @@ log "Starting volume backup snapshot..."
 
 TAG="sovereign-automated-$(date +%Y%m%d_%H%M%S)"
 
-# List of paths or volumes to back up
+# List of paths or volumes to back up.
+# /data is where docker-compose.backup.yml mounts the read-only service volumes
+# when this script runs inside the sovereign_backup container.
 BACKUP_PATHS=(
     "${ROOT_DIR}/docker-compose.yml"
     "${ROOT_DIR}/.env"
@@ -48,6 +50,7 @@ BACKUP_PATHS=(
     "${ROOT_DIR}/mailcow"
     "${ROOT_DIR}/vpn"
     "/var/lib/docker/volumes"
+    "/data"
 )
 
 EXISTING_PATHS=()

@@ -4,23 +4,36 @@ Sovereign Mini Datacenter - Autonomous Document & Knowledge Base Indexer
 Extracts, chunks, embeds via local Ollama, and indexes into Qdrant for Open-WebUI RAG.
 """
 
-import os
-import sys
-import time
-import json
 import hashlib
+import json
 import logging
-import urllib.request
+import os
+import time
 import urllib.error
-from typing import List, Dict, Any
+import urllib.request
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [KnowledgeIndexer] %(message)s")
 
 OLLAMA_URL = os.getenv("OLLAMA_BASE_URL", "http://ollama:11434")
 QDRANT_URL = os.getenv("QDRANT_BASE_URL", "http://qdrant:6333")
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "nomic-embed-text")
+DEFAULT_EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "nomic-embed-text")
+ECO_EMBEDDING_MODEL = os.getenv("ECO_EMBEDDING_MODEL", "all-minilm")
 COLLECTION_NAME = "sovereign_knowledge"
 WATCH_DIR = os.getenv("DOCS_WATCH_DIR", "/data/documents")
+
+
+def get_current_model() -> str:
+    """Reads the current Sentinel mode and returns the appropriate embedding model."""
+    try:
+        if os.path.exists("/tmp/sovereign_mode"):
+            with open("/tmp/sovereign_mode") as f:
+                mode = f.read().strip()
+            if mode == "ECO_PRESERVATION":
+                return ECO_EMBEDDING_MODEL
+    except Exception as e:
+        logging.warning(f"Failed to read sovereign mode: {e}")
+    return DEFAULT_EMBEDDING_MODEL
+
 
 def ensure_qdrant_collection():
     """Creates the Qdrant collection if it does not exist."""
@@ -42,16 +55,19 @@ def ensure_qdrant_collection():
     except Exception as e:
         logging.warning(f"Qdrant not reachable yet: {e}")
 
-def get_embedding(text: str) -> List[float]:
+
+def get_embedding(text: str) -> list[float]:
     """Generates embedding vector via local Ollama API."""
     url = f"{OLLAMA_URL}/api/embeddings"
-    payload = json.dumps({"model": EMBEDDING_MODEL, "prompt": text}).encode("utf-8")
+    current_model = get_current_model()
+    payload = json.dumps({"model": current_model, "prompt": text}).encode("utf-8")
     req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=10) as resp:
         data = json.loads(resp.read().decode("utf-8"))
         return data.get("embedding", [0.0] * 768)
 
-def chunk_text(text: str, chunk_size: int = 500, overlap: int = 50) -> List[str]:
+
+def chunk_text(text: str, chunk_size: int = 500, overlap: int = 50) -> list[str]:
     """Splits document text into overlapping token windows."""
     words = text.split()
     chunks = []
@@ -62,44 +78,58 @@ def chunk_text(text: str, chunk_size: int = 500, overlap: int = 50) -> List[str]
         i += chunk_size - overlap
     return chunks
 
+
 def index_file(filepath: str) -> None:
-    """Reads, chunks, and indexes a file into Qdrant."""
+    """Chunks and embeds a document, then stores vectors in Qdrant."""
     try:
-        with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+        with open(filepath, encoding="utf-8", errors="ignore") as f:
             content = f.read()
 
         chunks = chunk_text(content)
         points = []
+
         for idx, chunk in enumerate(chunks):
             point_id = int(hashlib.md5(f"{filepath}-{idx}".encode()).hexdigest()[:8], 16)
             vector = get_embedding(chunk)
-            points.append({
-                "id": point_id,
-                "vector": vector,
-                "payload": {
-                    "filename": os.path.basename(filepath),
-                    "path": filepath,
-                    "chunk_index": idx,
-                    "text": chunk,
-                },
-            })
+            points.append(
+                {
+                    "id": point_id,
+                    "vector": vector,
+                    "payload": {
+                        "source": os.path.basename(filepath),
+                        "path": filepath,
+                        "chunk_index": idx,
+                        "text": chunk,
+                        "indexed_at": time.time(),
+                    },
+                }
+            )
 
         if points:
             url = f"{QDRANT_URL}/collections/{COLLECTION_NAME}/points"
             payload = json.dumps({"points": points}).encode("utf-8")
             req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="PUT")
-            with urllib.request.urlopen(req, timeout=10) as resp:
+            with urllib.request.urlopen(req, timeout=10):
                 logging.info(f"Indexed {len(points)} chunks from '{os.path.basename(filepath)}'.")
     except Exception as e:
         logging.error(f"Failed to index {filepath}: {e}")
 
+
 def run_worker():
+    logging.info("Starting Autonomous Knowledge Indexer Worker...")
     ensure_qdrant_collection()
-    logging.info(f"Watching directory {WATCH_DIR} for sovereign knowledge updates...")
+    os.makedirs(WATCH_DIR, exist_ok=True)
+
     indexed_files = set()
+    last_mode = get_current_model()
 
     while True:
         try:
+            current_mode = get_current_model()
+            if current_mode != last_mode:
+                logging.info(f"🔄 Swapping AI Model due to Sentinel mode change: {last_mode} -> {current_mode}")
+                last_mode = current_mode
+
             for root, _, files in os.walk(WATCH_DIR):
                 for f in files:
                     if f.endswith((".md", ".txt", ".csv", ".json", ".py", ".sh")):
@@ -113,6 +143,7 @@ def run_worker():
         except Exception as e:
             logging.error(f"Indexer loop error: {e}")
         time.sleep(30)
+
 
 # Backward compatibility alias
 process_file = index_file

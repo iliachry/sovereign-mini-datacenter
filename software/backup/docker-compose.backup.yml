@@ -1,3 +1,9 @@
+# Restic encrypted backup daemon overlay.
+#
+# Relative paths below are resolved against the Compose project directory,
+# which is `software/` when this file is merged with the core stack
+# (`./setup.sh --with-backup`). To run it standalone, pin the project directory:
+#   docker compose --project-directory software -f software/backup/docker-compose.backup.yml up -d
 networks:
   sovereign_net:
     name: software_sovereign_net
@@ -10,41 +16,57 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
-        echo "Starting Sovereign Restic Backup Daemon..."
+        echo "Starting Sovereign Restic Backup Daemon (interval: $${BACKUP_INTERVAL_SECONDS}s)..."
+        apk add --no-cache bash >/dev/null 2>&1 || true
         while true; do
-          sleep 86400 &
-          wait $$!
+          bash /backup.sh || echo "[WARN] Backup run failed; retrying after $${BACKUP_INTERVAL_SECONDS}s"
+          sleep "$${BACKUP_INTERVAL_SECONDS}"
         done
     environment:
+      - BACKUP_INTERVAL_SECONDS=${BACKUP_INTERVAL_SECONDS:-86400}
       - RESTIC_REPOSITORY=${RESTIC_REPOSITORY:-/backups}
       - RESTIC_PASSWORD=${RESTIC_PASSWORD:-changeme_sovereign_backup_key}
       - AWS_ACCESS_KEY_ID=${RESTIC_S3_KEY:-}
       - AWS_SECRET_ACCESS_KEY=${RESTIC_S3_SECRET:-}
       - RESTIC_COMPRESSION=auto
     volumes:
+      - ./backup/backup.sh:/backup.sh:ro
       - backup_storage:/backups
-      - software_traefik_certs:/data/traefik_certs:ro
-      - software_webui_data:/data/webui_data:ro
-      - software_gitlab_data:/data/gitlab_data:ro
-      - software_gitlab_config:/data/gitlab_config:ro
-      - software_openproject_data:/data/openproject_data:ro
-      - software_nextcloud_data:/data/nextcloud_data:ro
-      - software_vaultwarden_data:/data/vaultwarden_data:ro
-      - software_grafana_data:/data/grafana_data:ro
-      - software_prometheus_data:/data/prometheus_data:ro
-      - software_qdrant_data:/data/qdrant_data:ro
+      - traefik_certs:/data/traefik_certs:ro
+      - webui_data:/data/webui_data:ro
+      - gitlab_data:/data/gitlab_data:ro
+      - gitlab_config:/data/gitlab_config:ro
+      - openproject_data:/data/openproject_data:ro
+      - nextcloud_data:/data/nextcloud_data:ro
+      - vaultwarden_data:/data/vaultwarden_data:ro
+      - grafana_data:/data/grafana_data:ro
+      - prometheus_data:/data/prometheus_data:ro
+      - qdrant_data:/data/qdrant_data:ro
     networks:
       - sovereign_net
 
+# Volume keys match software/docker-compose.yml so that, when merged, Compose
+# resolves them to the very same named volumes. Standalone, they bind to the
+# existing volumes created by the core stack (project name "software").
 volumes:
   backup_storage:
-  software_traefik_certs:
-  software_webui_data:
-  software_gitlab_data:
-  software_gitlab_config:
-  software_openproject_data:
-  software_nextcloud_data:
-  software_vaultwarden_data:
-  software_grafana_data:
-  software_prometheus_data:
-  software_qdrant_data:
+  traefik_certs:
+    name: software_traefik_certs
+  webui_data:
+    name: software_webui_data
+  gitlab_data:
+    name: software_gitlab_data
+  gitlab_config:
+    name: software_gitlab_config
+  openproject_data:
+    name: software_openproject_data
+  nextcloud_data:
+    name: software_nextcloud_data
+  vaultwarden_data:
+    name: software_vaultwarden_data
+  grafana_data:
+    name: software_grafana_data
+  prometheus_data:
+    name: software_prometheus_data
+  qdrant_data:
+    name: software_qdrant_data

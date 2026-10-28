@@ -18,4 +18,4 @@ services:
 
 networks:
   sovereign_net:
-    external: true
+    name: software_sovereign_net

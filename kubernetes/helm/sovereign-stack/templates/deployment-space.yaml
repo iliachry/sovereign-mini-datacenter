@@ -1,0 +1,85 @@
+{{- if .Values.space.enabled }}
+{{- $fullname := include "sovereign-stack.fullname" . }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullname }}-dtn-node
+  labels:
+    {{- include "sovereign-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dtn-node
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "sovereign-stack.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: dtn-node
+  template:
+    metadata:
+      labels:
+        {{- include "sovereign-stack.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: dtn-node
+    spec:
+      containers:
+        - name: dtn-node
+          image: "{{ .Values.space.dtnNode.image.repository }}:{{ .Values.space.dtnNode.image.tag }}"
+          imagePullPolicy: {{ .Values.space.dtnNode.image.pullPolicy }}
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.space.dtnNode.port }}
+              protocol: TCP
+          env:
+            - name: SPACE_EXPORTER_PORT
+              value: {{ .Values.space.dtnNode.port | quote }}
+            - name: DTN_LOCAL_EID
+              value: {{ .Values.space.dtnNode.localEid | quote }}
+            - name: DTN_DB_PATH
+              value: "/var/spool/dtn/bundles.db"
+            - name: GROUND_STATION_NAME
+              value: {{ .Values.space.dtnNode.groundStation.name | quote }}
+            - name: GROUND_STATION_LAT
+              value: {{ .Values.space.dtnNode.groundStation.latitude | quote }}
+            - name: GROUND_STATION_LON
+              value: {{ .Values.space.dtnNode.groundStation.longitude | quote }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: metrics
+            initialDelaySeconds: 5
+            periodSeconds: 15
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: metrics
+            initialDelaySeconds: 20
+            periodSeconds: 30
+          volumeMounts:
+            - name: dtn-spool
+              mountPath: /var/spool/dtn
+      volumes:
+        - name: dtn-spool
+          {{- if .Values.space.dtnNode.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ $fullname }}-dtn-spool-pvc
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+{{- if .Values.space.dtnNode.persistence.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $fullname }}-dtn-spool-pvc
+  labels:
+    {{- include "sovereign-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dtn-node
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: {{ .Values.global.storageClass }}
+  resources:
+    requests:
+      storage: {{ .Values.space.dtnNode.persistence.size }}
+{{- end }}
+{{- end }}

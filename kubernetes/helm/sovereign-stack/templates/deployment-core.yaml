@@ -1,0 +1,258 @@
+{{- $fullname := include "sovereign-stack.fullname" . }}
+{{- $secretName := printf "%s-core-secrets" $fullname }}
+{{- if .Values.core.openWebUI.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullname }}-open-webui
+  labels:
+    {{- include "sovereign-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: open-webui
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "sovereign-stack.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: open-webui
+  template:
+    metadata:
+      labels:
+        {{- include "sovereign-stack.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: open-webui
+    spec:
+      containers:
+        - name: open-webui
+          image: "{{ .Values.core.openWebUI.image.repository }}:{{ .Values.core.openWebUI.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: OLLAMA_BASE_URL
+              value: "http://{{ $fullname }}-ollama:11434"
+            - name: VECTOR_DB
+              value: "qdrant"
+            - name: QDRANT_URI
+              value: "http://{{ $fullname }}-qdrant:6333"
+            - name: WEBUI_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: webui-secret-key
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 30
+          volumeMounts:
+            - name: webui-data
+              mountPath: /app/backend/data
+      volumes:
+        - name: webui-data
+          persistentVolumeClaim:
+            claimName: {{ $fullname }}-webui-pvc
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $fullname }}-webui-pvc
+  labels:
+    {{- include "sovereign-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: open-webui
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: {{ .Values.global.storageClass }}
+  resources:
+    requests:
+      storage: 5Gi
+{{- end }}
+{{- if .Values.core.vaultwarden.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullname }}-vaultwarden
+  labels:
+    {{- include "sovereign-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: vaultwarden
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "sovereign-stack.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: vaultwarden
+  template:
+    metadata:
+      labels:
+        {{- include "sovereign-stack.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: vaultwarden
+    spec:
+      containers:
+        - name: vaultwarden
+          image: "{{ .Values.core.vaultwarden.image.repository }}:{{ .Values.core.vaultwarden.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 80
+              protocol: TCP
+          env:
+            - name: DOMAIN
+              value: "https://{{ include "sovereign-stack.host" (dict "sub" .Values.ingress.hosts.vaultwarden "root" .) }}"
+            - name: SIGNUPS_ALLOWED
+              value: {{ .Values.core.vaultwarden.signupsAllowed | quote }}
+            - name: INVITATIONS_ALLOWED
+              value: "true"
+            - name: LOG_LEVEL
+              value: "warn"
+            - name: ADMIN_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: vaultwarden-admin-token
+          readinessProbe:
+            httpGet:
+              path: /alive
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          livenessProbe:
+            httpGet:
+              path: /alive
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          volumeMounts:
+            - name: vaultwarden-data
+              mountPath: /data
+      volumes:
+        - name: vaultwarden-data
+          {{- if .Values.core.vaultwarden.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ $fullname }}-vaultwarden-pvc
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+{{- if .Values.core.vaultwarden.persistence.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $fullname }}-vaultwarden-pvc
+  labels:
+    {{- include "sovereign-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: vaultwarden
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: {{ .Values.global.storageClass }}
+  resources:
+    requests:
+      storage: {{ .Values.core.vaultwarden.persistence.size }}
+{{- end }}
+{{- end }}
+{{- if .Values.core.nextcloud.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullname }}-nextcloud
+  labels:
+    {{- include "sovereign-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nextcloud
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "sovereign-stack.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: nextcloud
+  template:
+    metadata:
+      labels:
+        {{- include "sovereign-stack.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: nextcloud
+    spec:
+      containers:
+        - name: nextcloud
+          image: "{{ .Values.core.nextcloud.image.repository }}:{{ .Values.core.nextcloud.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 80
+              protocol: TCP
+          env:
+            - name: NEXTCLOUD_TRUSTED_DOMAINS
+              value: {{ include "sovereign-stack.host" (dict "sub" .Values.ingress.hosts.nextcloud "root" .) | quote }}
+            - name: OVERWRITEPROTOCOL
+              value: "https"
+            - name: OVERWRITEHOST
+              value: {{ include "sovereign-stack.host" (dict "sub" .Values.ingress.hosts.nextcloud "root" .) | quote }}
+            - name: NEXTCLOUD_ADMIN_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: nextcloud-admin-user
+            - name: NEXTCLOUD_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: nextcloud-admin-password
+          readinessProbe:
+            httpGet:
+              path: /status.php
+              port: http
+              httpHeaders:
+                - name: Host
+                  value: {{ include "sovereign-stack.host" (dict "sub" .Values.ingress.hosts.nextcloud "root" .) | quote }}
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          livenessProbe:
+            httpGet:
+              path: /status.php
+              port: http
+              httpHeaders:
+                - name: Host
+                  value: {{ include "sovereign-stack.host" (dict "sub" .Values.ingress.hosts.nextcloud "root" .) | quote }}
+            initialDelaySeconds: 120
+            periodSeconds: 30
+          volumeMounts:
+            - name: nextcloud-data
+              mountPath: /var/www/html
+      volumes:
+        - name: nextcloud-data
+          {{- if .Values.core.nextcloud.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ $fullname }}-nextcloud-pvc
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+{{- if .Values.core.nextcloud.persistence.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $fullname }}-nextcloud-pvc
+  labels:
+    {{- include "sovereign-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nextcloud
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: {{ .Values.global.storageClass }}
+  resources:
+    requests:
+      storage: {{ .Values.core.nextcloud.persistence.size }}
+{{- end }}
+{{- end }}
