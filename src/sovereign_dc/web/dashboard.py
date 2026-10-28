@@ -8,11 +8,15 @@ Provides an ultra-portable, zero-external-dependency HTTP server hosting:
 
 from __future__ import annotations
 
+import hmac
 import json
 import logging
+import os
+import threading
 import time
 import webbrowser
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler
+from http.server import ThreadingHTTPServer as HTTPServer
 from typing import Any
 
 from sovereign_dc import __version__
@@ -22,7 +26,7 @@ from sovereign_dc.hal.power import read_power
 from sovereign_dc.hal.storage import detect_storage
 from sovereign_dc.hal.thermal import read_thermal
 from sovereign_dc.mesh.consensus import RaftCluster
-from sovereign_dc.security.pqc import PQCAlgorithm, PQCSigner
+from sovereign_dc.security.pqc import PQCAlgorithm, get_node_pqc_keypair
 from sovereign_dc.space.dtn.router import DTNRouter
 from sovereign_dc.space.orbital.propagator import GroundStation
 from sovereign_dc.space.orbital.tle_updater import get_active_satellites
@@ -339,6 +343,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
 
 # Global Digital Shadow Hardware State (Synchronized across all connected 3D Twins)
+_HARDWARE_LOCK = threading.RLock()
 _HARDWARE_STATE: dict[str, Any] = {
     "door_open": False,
     "pdu_outlets": [True, True, True, True, True, True, True, True],
@@ -347,23 +352,49 @@ _HARDWARE_STATE: dict[str, Any] = {
 }
 
 _METAVERSE_ORCH: Any = None
+_RAFT_CLUSTER: RaftCluster | None = None
+_RAFT_LEADER: str | None = None
+_MAX_POST_BODY_BYTES = 1_048_576  # 1 MiB cap for control POST payloads
+
+
+def _get_state_dir() -> str:
+    """Returns a user-private directory (0o700) for dashboard wallet & ledger state."""
+    base_dir = os.environ.get("SMDC_STATE_DIR") or os.path.expanduser("~/.smdc")
+    try:
+        os.makedirs(base_dir, mode=0o700, exist_ok=True)
+        os.chmod(base_dir, 0o700)
+        return base_dir
+    except OSError:
+        import tempfile
+
+        fallback = os.path.join(tempfile.gettempdir(), f"smdc-{os.getuid()}")
+        os.makedirs(fallback, mode=0o700, exist_ok=True)
+        return fallback
+
+
+def _get_raft_state() -> tuple[RaftCluster, str]:
+    """Returns cached Raft cluster instance and current leader."""
+    global _RAFT_CLUSTER, _RAFT_LEADER
+    with _HARDWARE_LOCK:
+        if _RAFT_CLUSTER is None or _RAFT_LEADER is None:
+            _RAFT_CLUSTER = RaftCluster(["smdc-node-01", "smdc-node-02", "smdc-node-03"])
+            _RAFT_LEADER = _RAFT_CLUSTER.step_election("smdc-node-01") or "smdc-node-01"
+        return _RAFT_CLUSTER, _RAFT_LEADER
 
 
 def get_metaverse_orchestrator():
     """Returns singleton instance of MetaverseOrchestrator."""
     global _METAVERSE_ORCH
-    if _METAVERSE_ORCH is None:
-        from sovereign_dc.metaverse.engine import MetaverseOrchestrator
+    with _HARDWARE_LOCK:
+        if _METAVERSE_ORCH is None:
+            from sovereign_dc.metaverse.engine import MetaverseOrchestrator
 
-        _METAVERSE_ORCH = MetaverseOrchestrator()
-    return _METAVERSE_ORCH
+            _METAVERSE_ORCH = MetaverseOrchestrator()
+        return _METAVERSE_ORCH
 
 
 def get_system_status_payload() -> dict[str, Any]:
     """Assembles unified live system status JSON for REST API and dashboard."""
-    import os
-    import tempfile
-
     from sovereign_dc.economy.ledger import Ledger
     from sovereign_dc.economy.market import ComputeMarket
     from sovereign_dc.economy.wallet import NodeWallet
@@ -377,7 +408,14 @@ def get_system_status_payload() -> dict[str, Any]:
     base_rpm = 1800
     temp_factor = max(0.0, (thermal.coolant_celsius - 25.0) * 80.0)
     load_factor = (power.system_load_watts / 600.0) * 800.0
-    _HARDWARE_STATE["fan_rpm"] = int(min(4800, base_rpm + temp_factor + load_factor))
+    with _HARDWARE_LOCK:
+        _HARDWARE_STATE["fan_rpm"] = int(min(4800, base_rpm + temp_factor + load_factor))
+        hw_snapshot = {
+            "door_open": _HARDWARE_STATE["door_open"],
+            "pdu_outlets": list(_HARDWARE_STATE["pdu_outlets"]),
+            "fan_rpm": _HARDWARE_STATE["fan_rpm"],
+            "last_bundle_tx": _HARDWARE_STATE["last_bundle_tx"],
+        }
 
     # Space satellite calculation
     satellites = get_active_satellites()
@@ -388,23 +426,25 @@ def get_system_status_payload() -> dict[str, Any]:
     router = DTNRouter(db_path=cfg.dtn_db_path)
     dtn_stats = router.get_queue_stats()
 
-    signer = PQCSigner(PQCAlgorithm.ML_DSA_65)
-    kp = signer.generate_keypair()
+    kp = get_node_pqc_keypair(PQCAlgorithm.ML_DSA_65)
+    cluster, leader = _get_raft_state()
 
-    cluster = RaftCluster(["smdc-node-01", "smdc-node-02", "smdc-node-03"])
-    leader = cluster.step_election("smdc-node-01")
+    # Economy and wallet status stored in private state directory
+    state_dir = _get_state_dir()
+    wallet_path = os.path.join(state_dir, "smdc_dashboard_wallet.json")
+    db_path = os.path.join(state_dir, "smdc_dashboard_ledger.db")
+    with _HARDWARE_LOCK:
+        if not os.path.exists(wallet_path):
+            wallet = NodeWallet.create(node_id=cfg.node_id)
+            wallet.save_to_file(wallet_path)
+            ledger = Ledger(db_path=db_path)
+            ledger.mint(wallet.address, 100.0, memo="DASHBOARD_GENESIS")
+        else:
+            wallet = NodeWallet.load_from_file(wallet_path)
+            ledger = Ledger(db_path=db_path)
 
-    # Economy and wallet status
-    wallet_path = os.path.join(tempfile.gettempdir(), "smdc_dashboard_wallet.json")
-    db_path = os.path.join(tempfile.gettempdir(), "smdc_dashboard_ledger.db")
-    if not os.path.exists(wallet_path):
-        wallet = NodeWallet.create(node_id=cfg.node_id)
-        wallet.save_to_file(wallet_path)
-        ledger = Ledger(db_path=db_path)
-        ledger.mint(wallet.address, 100.0, memo="DASHBOARD_GENESIS")
-    else:
-        wallet = NodeWallet.load_from_file(wallet_path)
-        ledger = Ledger(db_path=db_path)
+        balance_credits = ledger.get_balance(wallet.address)
+        recent_tx_count = len(ledger.get_history(limit=50))
 
     market = ComputeMarket()
     mult, status_desc = market.get_dynamic_multiplier(power.battery_soc, power.solar_watts)
@@ -433,12 +473,7 @@ def get_system_status_payload() -> dict[str, Any]:
             "free_gb": storage.free_gb,
             "usage_percent": round(storage.usage_percent, 1),
         },
-        "hardware": {
-            "door_open": _HARDWARE_STATE["door_open"],
-            "pdu_outlets": _HARDWARE_STATE["pdu_outlets"],
-            "fan_rpm": _HARDWARE_STATE["fan_rpm"],
-            "last_bundle_tx": _HARDWARE_STATE["last_bundle_tx"],
-        },
+        "hardware": hw_snapshot,
         "space": {
             "next_satellite": satellites[0].name if satellites else "N/A",
             "next_pass_seconds": next_sec,
@@ -450,11 +485,11 @@ def get_system_status_payload() -> dict[str, Any]:
         },
         "economy": {
             "wallet_address": wallet.address,
-            "balance_credits": ledger.get_balance(wallet.address),
+            "balance_credits": balance_credits,
             "algorithm": wallet.keypair.algorithm.value,
             "energy_multiplier": mult,
             "energy_state": status_desc,
-            "recent_transactions_count": len(ledger.get_history(limit=50)),
+            "recent_transactions_count": recent_tx_count,
         },
         "pqc": {
             "algorithm": PQCAlgorithm.ML_DSA_65.value,
@@ -470,9 +505,21 @@ class DashboardHandler(BaseHTTPRequestHandler):
     """HTTP Request Handler for Sovereign Operations Dashboard & REST APIs."""
 
     def _send_cors_headers(self) -> None:
-        self.send_header("Access-Control-Allow-Origin", "*")
+        cors_origin = os.environ.get("SMDC_CORS_ORIGIN", "*")
+        self.send_header("Access-Control-Allow-Origin", cors_origin)
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
+    def _check_post_auth(self) -> bool:
+        """Verifies bearer token on POST endpoints when SMDC_DASHBOARD_TOKEN is set."""
+        expected_token = os.environ.get("SMDC_DASHBOARD_TOKEN", "").strip()
+        if not expected_token:
+            return True
+        auth_header = str(self.headers.get("Authorization", ""))
+        if not auth_header.startswith("Bearer "):
+            return False
+        provided = auth_header[len("Bearer ") :].strip()
+        return hmac.compare_digest(provided, expected_token)
 
     def do_OPTIONS(self) -> None:
         self.send_response(204)
@@ -545,10 +592,35 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.end_headers()
 
     def do_POST(self) -> None:
-        content_length = int(self.headers.get("Content-Length", 0))
-        body = self.rfile.read(content_length).decode("utf-8") if content_length > 0 else "{}"
+        if not self._check_post_auth():
+            err_payload = json.dumps({"success": False, "error": "Unauthorized"}).encode("utf-8")
+            self.send_response(401)
+            self.send_header("Content-Type", "application/json")
+            self._send_cors_headers()
+            self.send_header("Content-Length", str(len(err_payload)))
+            self.end_headers()
+            self.wfile.write(err_payload)
+            return
+
+        try:
+            content_length = int(self.headers.get("Content-Length", 0))
+        except (TypeError, ValueError):
+            self.send_response(400)
+            self._send_cors_headers()
+            self.end_headers()
+            return
+
+        if content_length < 0 or content_length > _MAX_POST_BODY_BYTES:
+            self.send_response(413 if content_length > _MAX_POST_BODY_BYTES else 400)
+            self._send_cors_headers()
+            self.end_headers()
+            return
+
+        body = self.rfile.read(content_length).decode("utf-8", errors="replace") if content_length > 0 else "{}"
         try:
             req_data = json.loads(body) if body else {}
+            if not isinstance(req_data, dict):
+                req_data = {}
         except Exception:
             req_data = {}
 
@@ -556,17 +628,20 @@ class DashboardHandler(BaseHTTPRequestHandler):
             # Toggle or explicitly set rack door state
             from sovereign_dc.events import Event
 
-            target_state = req_data.get("open", not _HARDWARE_STATE["door_open"])
-            _HARDWARE_STATE["door_open"] = bool(target_state)
+            with _HARDWARE_LOCK:
+                target_state = req_data.get("open", not _HARDWARE_STATE["door_open"])
+                _HARDWARE_STATE["door_open"] = bool(target_state)
+                door_open_val = _HARDWARE_STATE["door_open"]
+
             get_event_bus().publish(
                 Event(
                     event_type="hardware.door.changed",
                     source="dashboard",
-                    payload={"open": _HARDWARE_STATE["door_open"]},
+                    payload={"open": door_open_val},
                 )
             )
 
-            res = {"success": True, "door_open": _HARDWARE_STATE["door_open"]}
+            res = {"success": True, "door_open": door_open_val}
             payload = json.dumps(res).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -579,18 +654,26 @@ class DashboardHandler(BaseHTTPRequestHandler):
             from sovereign_dc.events import Event
 
             outlet_idx = int(req_data.get("outlet", 0))
-            if 0 <= outlet_idx < len(_HARDWARE_STATE["pdu_outlets"]):
-                new_state = req_data.get("state", not _HARDWARE_STATE["pdu_outlets"][outlet_idx])
-                _HARDWARE_STATE["pdu_outlets"][outlet_idx] = bool(new_state)
+            outlet_changed = False
+            outlet_state = False
+            with _HARDWARE_LOCK:
+                if 0 <= outlet_idx < len(_HARDWARE_STATE["pdu_outlets"]):
+                    new_state = req_data.get("state", not _HARDWARE_STATE["pdu_outlets"][outlet_idx])
+                    _HARDWARE_STATE["pdu_outlets"][outlet_idx] = bool(new_state)
+                    outlet_state = _HARDWARE_STATE["pdu_outlets"][outlet_idx]
+                    outlet_changed = True
+                outlets_snapshot = list(_HARDWARE_STATE["pdu_outlets"])
+
+            if outlet_changed:
                 get_event_bus().publish(
                     Event(
                         event_type="hardware.pdu.outlet_changed",
                         source="dashboard",
-                        payload={"outlet": outlet_idx, "state": _HARDWARE_STATE["pdu_outlets"][outlet_idx]},
+                        payload={"outlet": outlet_idx, "state": outlet_state},
                     )
                 )
 
-            res = {"success": True, "pdu_outlets": _HARDWARE_STATE["pdu_outlets"]}
+            res = {"success": True, "pdu_outlets": outlets_snapshot}
             payload = json.dumps(res).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -606,18 +689,19 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
             cfg = get_config()
             router = DTNRouter(db_path=cfg.dtn_db_path)
-            bundle_payload = req_data.get("payload", f"STATUS_TELEMETRY_{int(time.time())}").encode("utf-8")
+            bundle_payload = str(req_data.get("payload", f"STATUS_TELEMETRY_{int(time.time())}")).encode("utf-8")
             priority_val = int(req_data.get("priority", 2))
             bundle_prio = BundlePriority.EXPEDITED if priority_val >= 2 else BundlePriority.NORMAL
 
             bundle = Bundle(
                 source_eid=cfg.node_id,
-                destination_eid=req_data.get("destination", "dtn://ground-station-alpha.earth/telemetry"),
+                destination_eid=str(req_data.get("destination", "dtn://ground-station-alpha.earth/telemetry")),
                 payload=bundle_payload,
                 priority=bundle_prio,
             )
             router.queue_bundle(bundle)
-            _HARDWARE_STATE["last_bundle_tx"] = time.time()
+            with _HARDWARE_LOCK:
+                _HARDWARE_STATE["last_bundle_tx"] = time.time()
             get_event_bus().publish(
                 Event(
                     event_type="space.dtn.bundle_queued",
@@ -641,7 +725,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
         elif self.path == "/api/metaverse/optimize":
             orch = get_metaverse_orchestrator()
-            cycles = int(req_data.get("cycles", 1))
+            raw_cycles = int(req_data.get("cycles", 1))
+            cycles = max(1, min(raw_cycles, 100))
             traces = orch.run_cycles(count=cycles, deterministic=True)
             res = {
                 "success": True,

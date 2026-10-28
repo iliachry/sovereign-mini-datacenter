@@ -28,3 +28,20 @@ uv.lock
 deploy/volumes/
 deploy/data/
 *.log
+
+# Tooling & IDE Caches
+.ruff_cache/
+.mypy_cache/
+.swm/
+*.smdc-app
+*.smdc-app.sig
+
+# Terraform / OpenTofu State & Credentials
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+_output/
+kubeconfig
+talosconfig

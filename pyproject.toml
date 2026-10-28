@@ -7,7 +7,7 @@ name = "sovereign-dc"
 version = "1.4.0"
 description = "Sovereign Mini Datacenter — Self-Powered Micro-Grid, AI Cluster, Delay-Tolerant Space Comms & Autonomous Agents"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [
     { name = "Ilias Chrysovergis", email = "ilias@metatopia.gr" },
@@ -47,14 +47,17 @@ classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: System :: Systems Administration",
 ]
-dependencies = []
+dependencies = [
+    "cryptography>=42.0.0",
+    "dilithium-py>=1.4.0",
+    "kyber-py>=1.2.0",
+    "pyyaml>=6.0",
+]
 
 [project.optional-dependencies]
 test = [

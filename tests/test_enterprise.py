@@ -313,6 +313,27 @@ class TestEnterpriseManager(unittest.TestCase):
         # Verify: L2 job resumed
         self.assertEqual(self.manager.get_runtime_state("retrain-job").status, AppStatus.RUNNING)
 
+        # Simulate Sentinel Copilot string mode payload ("ECO_PRESERVATION" -> L2)
+        self.event_bus.publish(
+            Event(
+                event_type="load_shedding.changed",
+                source="sentinel_copilot",
+                payload={"mode": "ECO_PRESERVATION"},
+            )
+        )
+        self.assertEqual(self.manager.get_runtime_state("retrain-job").status, AppStatus.PAUSED)
+        self.assertEqual(self.manager.get_runtime_state("crit-telem").status, AppStatus.RUNNING)
+
+        # Simulate recovery via string mode ("NORMAL" -> L0)
+        self.event_bus.publish(
+            Event(
+                event_type="load_shedding.changed",
+                source="sentinel_copilot",
+                payload={"mode": "NORMAL"},
+            )
+        )
+        self.assertEqual(self.manager.get_runtime_state("retrain-job").status, AppStatus.RUNNING)
+
     def test_telemetry_event_ingestion(self) -> None:
         manifest = AppManifest(name="Sensor Node", app_id="sensor-node", entrypoint="python3 sensor.py")
         self.registry.register_app(manifest)

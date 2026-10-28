@@ -270,9 +270,9 @@ def read_metaverse_slices_resource() -> str:
 
 def read_enterprise_apps_resource() -> str:
     """Returns a JSON string snapshot of all registered enterprise applications."""
-    from sovereign_dc.enterprise.manager import EnterpriseManager
+    from sovereign_dc.mcp.tools import get_enterprise_manager
 
-    manager = EnterpriseManager()
+    manager = get_enterprise_manager()
     states = manager.list_runtime_states()
     return json.dumps(
         {

@@ -51,6 +51,7 @@ class MLPNetwork:
         # Xavier/He normal weight initializations
         self.weights: list[list[list[float]]] = []
         self.biases: list[list[float]] = []
+        self.last_hidden: list[float] = []
 
         for i in range(len(self.layer_sizes) - 1):
             fan_in = self.layer_sizes[i]
@@ -67,6 +68,8 @@ class MLPNetwork:
         num_layers = len(self.weights)
 
         for l_idx in range(num_layers):
+            if l_idx == num_layers - 1:
+                self.last_hidden = list(curr)
             w = self.weights[l_idx]
             b = self.biases[l_idx]
             fan_in = len(w)
@@ -108,6 +111,8 @@ class SceneAwarePPO:
         clip_ratio: float = 0.2,
         seed: int = 111,
     ) -> None:
+        self.learning_rate_policy = learning_rate_policy
+        self.learning_rate_value = learning_rate_value
         self.gamma = gamma
         self.clip_ratio = clip_ratio
         self.policy_net = MLPNetwork(input_dim=20, output_dim=6, is_value_net=False, seed=seed)
@@ -210,15 +215,28 @@ class SceneAwarePPO:
         mean_adv = sum(advs) / max(len(advs), 1)
         value_loss = sum(a * a for a in advs) / max(len(advs), 1)
 
-        # Apply gradient update to output layer weights
+        # Apply PPO clipped policy and value network gradient updates
         for t in self.buffer:
             probs = self.policy_net.forward(t.state)
             act_prob = max(probs[t.action], 1e-6)
-            grad = (1.0 - act_prob) * t.advantage * 0.001
-            # Adjust weights
+            clipped_adv = max(-self.clip_ratio, min(self.clip_ratio, t.advantage))
+            grad_scale = (1.0 - act_prob) * clipped_adv * self.learning_rate_policy
             out_w = self.policy_net.weights[-1]
+            hidden = self.policy_net.last_hidden
             for i in range(len(out_w)):
-                out_w[i][t.action] += grad
+                h_val = hidden[i] if i < len(hidden) else 1.0
+                out_w[i][t.action] += grad_scale * h_val
+            self.policy_net.biases[-1][t.action] += grad_scale
+
+            # Update critic (value network) output weights toward TD target
+            self.value_net.forward(t.state)
+            val_w = self.value_net.weights[-1]
+            val_hidden = self.value_net.last_hidden
+            val_grad = max(-1.0, min(1.0, t.advantage)) * self.learning_rate_value
+            for i in range(len(val_w)):
+                vh_val = val_hidden[i] if i < len(val_hidden) else 1.0
+                val_w[i][0] += val_grad * vh_val
+            self.value_net.biases[-1][0] += val_grad
 
         self.buffer.clear()
         self.training_episodes += 1

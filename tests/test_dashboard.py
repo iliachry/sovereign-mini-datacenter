@@ -144,6 +144,34 @@ class TestDashboardHandler:
 
         handler.send_response.assert_called_with(404)
 
+    def test_post_auth_token_enforcement(self, monkeypatch):
+        monkeypatch.setenv("SMDC_DASHBOARD_TOKEN", "secret-ops-token")
+
+        # Missing Authorization header -> 401
+        h1 = self._make_handler("/api/control/rack-door")
+        h1.rfile = io.BytesIO(b'{"open": true}')
+        h1.headers = {"Content-Length": "14"}
+        h1.do_POST()
+        h1.send_response.assert_called_with(401)
+
+        # Valid Authorization header -> 200
+        h2 = self._make_handler("/api/control/rack-door")
+        h2.rfile = io.BytesIO(b'{"open": true}')
+        h2.headers = {"Content-Length": "14", "Authorization": "Bearer secret-ops-token"}
+        h2.do_POST()
+        h2.send_response.assert_called_with(200)
+
+    def test_post_invalid_and_oversized_content_length(self):
+        h_bad = self._make_handler("/api/control/rack-door")
+        h_bad.headers = {"Content-Length": "not-an-int"}
+        h_bad.do_POST()
+        h_bad.send_response.assert_called_with(400)
+
+        h_huge = self._make_handler("/api/control/rack-door")
+        h_huge.headers = {"Content-Length": str(5 * 1024 * 1024)}
+        h_huge.do_POST()
+        h_huge.send_response.assert_called_with(413)
+
     def test_log_message_suppression(self):
         handler = self._make_handler("/")
         handler.log_message("GET / 200")  # Should not raise or print

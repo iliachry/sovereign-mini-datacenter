@@ -26,6 +26,7 @@ class PowerReading:
     battery_voltage: float = 52.8
     system_load_watts: float = 280.0
     load_shedding_active: bool = False
+    is_simulated: bool = False
 
     @property
     def net_power(self) -> float:
@@ -67,6 +68,7 @@ def read_power(
                 battery_voltage=53.2,
                 system_load_watts=280.0,
                 load_shedding_active=False,
+                is_simulated=True,
             )
         logger.warning("Power exporter unavailable and simulation disabled: %s", e)
         raise

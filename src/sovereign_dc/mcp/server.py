@@ -34,12 +34,19 @@ class MCPServer:
 
     def handle_request(self, request: dict[str, Any]) -> dict[str, Any] | None:
         """Processes a single JSON-RPC 2.0 request or notification."""
+        if not isinstance(request, dict):
+            return self._error_response(None, -32600, "Invalid Request: Expected JSON object")
+
         # Check for JSON-RPC version
         req_id = request.get("id")
         method = request.get("method")
         params = request.get("params", {})
+        if params is None:
+            params = {}
+        elif not isinstance(params, dict):
+            return self._error_response(req_id, -32602, "Invalid params: Expected JSON object")
 
-        if not method:
+        if not method or not isinstance(method, str):
             return self._error_response(req_id, -32600, "Invalid Request: Missing 'method'")
 
         # 1. Initialize Handshake
@@ -95,6 +102,10 @@ class MCPServer:
         if method == "tools/call":
             tool_name = params.get("name")
             tool_args = params.get("arguments", {})
+            if tool_args is None:
+                tool_args = {}
+            elif not isinstance(tool_args, dict):
+                return self._error_response(req_id, -32602, "Invalid arguments: Expected JSON object")
 
             if not tool_name or tool_name not in self.tools:
                 return self._error_response(req_id, -32601, f"Tool '{tool_name}' not found")
@@ -198,6 +209,10 @@ class MCPServer:
         if method == "prompts/get":
             prompt_name = params.get("name")
             prompt_args = params.get("arguments", {})
+            if prompt_args is None:
+                prompt_args = {}
+            elif not isinstance(prompt_args, dict):
+                return self._error_response(req_id, -32602, "Invalid arguments: Expected JSON object")
 
             if not prompt_name or prompt_name not in self.prompts:
                 return self._error_response(req_id, -32601, f"Prompt '{prompt_name}' not found")

@@ -83,6 +83,20 @@ class TestMCPServerProtocol(unittest.TestCase):
         self.assertIn("error", res)
         self.assertEqual(res["error"]["code"], -32601)
 
+    def test_invalid_non_dict_params_and_arguments(self) -> None:
+        res_list_params = self.server.handle_request({"jsonrpc": "2.0", "id": 102, "method": "ping", "params": [1, 2]})
+        self.assertEqual(res_list_params["error"]["code"], -32602)
+
+        res_bad_args = self.server.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 103,
+                "method": "tools/call",
+                "params": {"name": "get_telemetry", "arguments": "not-a-dict"},
+            }
+        )
+        self.assertEqual(res_bad_args["error"]["code"], -32602)
+
 
 class TestMCPTools(unittest.TestCase):
     """Tests all 10 MCP Tools and their handlers."""

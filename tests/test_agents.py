@@ -63,11 +63,15 @@ def test_gitlab_review_code_diff_with_token(caplog):
 
 
 def test_gitlab_review_code_diff_post_error(caplog):
-    with patch("sovereign_dc.agents.gitlab_reviewer.query_ollama", return_value="AI Review Output"):
-        with patch("sovereign_dc.agents.gitlab_reviewer.GITLAB_TOKEN", "glpat-fake-token"):
-            with patch("urllib.request.urlopen", side_effect=urllib.error.HTTPError("url", 403, "Forbidden", {}, None)):
-                review_code_diff(project_id=42, mr_iid=7, diff_text="diff --git a/b")
-                assert "Failed to post comment to GitLab" in caplog.text
+    err_403 = urllib.error.HTTPError("url", 403, "Forbidden", {}, None)  # type: ignore[arg-type]
+    try:
+        with patch("sovereign_dc.agents.gitlab_reviewer.query_ollama", return_value="AI Review Output"):
+            with patch("sovereign_dc.agents.gitlab_reviewer.GITLAB_TOKEN", "glpat-fake-token"):
+                with patch("urllib.request.urlopen", side_effect=err_403):
+                    review_code_diff(project_id=42, mr_iid=7, diff_text="diff --git a/b")
+                    assert "Failed to post comment to GitLab" in caplog.text
+    finally:
+        err_403.close()
 
 
 def test_gitlab_run_worker(caplog):
@@ -112,14 +116,17 @@ def test_ensure_qdrant_collection_exists(caplog):
 
 def test_ensure_qdrant_collection_created_on_404(caplog):
     caplog.set_level(logging.INFO)
-    err_404 = urllib.error.HTTPError("http://qdrant/collections/sovereign_knowledge", 404, "Not Found", {}, None)
+    err_404 = urllib.error.HTTPError("http://qdrant/collections/sovereign_knowledge", 404, "Not Found", {}, None)  # type: ignore[arg-type]
     mock_create_resp = MagicMock()
     mock_create_resp.status = 200
     mock_create_resp.__enter__.return_value = mock_create_resp
 
-    with patch("urllib.request.urlopen", side_effect=[err_404, mock_create_resp]):
-        ensure_qdrant_collection()
-        assert "Created Qdrant collection" in caplog.text
+    try:
+        with patch("urllib.request.urlopen", side_effect=[err_404, mock_create_resp]):
+            ensure_qdrant_collection()
+            assert "Created Qdrant collection" in caplog.text
+    finally:
+        err_404.close()
 
 
 def test_ensure_qdrant_collection_failure(caplog):

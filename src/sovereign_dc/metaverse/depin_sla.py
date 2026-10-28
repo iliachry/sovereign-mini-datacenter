@@ -82,11 +82,11 @@ class DePINSLAValidator:
 
     def verify_sensor_signature(self, sensor_id: str, payload_bytes: bytes, signature_hex: str) -> bool:
         """Verifies ECDSA / cryptographic attestation signature on IoT sensor data."""
-        if not signature_hex:
+        if not signature_hex or len(signature_hex) < 16:
             return False
-        # Deterministic simulation of ECDSA signature check
+        # Deterministic verification of sensor attestation digest prefix
         expected_digest = hashlib.sha256(sensor_id.encode() + payload_bytes).hexdigest()
-        return signature_hex.startswith(expected_digest[:8]) or len(signature_hex) >= 16
+        return signature_hex.lower().startswith(expected_digest[:16])
 
     def evaluate_uav_position_sla(
         self,

@@ -1,11 +1,11 @@
 """Post-Quantum Cryptography (PQC) Security Engine.
 
 Implements NIST FIPS 204 (ML-DSA / Dilithium) and FIPS 203 (ML-KEM / Kyber)
-compliant cryptographic abstractions for RFC 9171 / RFC 9172 (BPSec) DTN bundle
+cryptographic operations for RFC 9171 / RFC 9172 (BPSec) DTN bundle
 signing, mesh consensus authentication, and zero-trust key encapsulation.
 
-Provides a robust, zero-external-dependency implementation using SHA3-256/SHAKE256
-and constant-time lattice/hash primitives.
+Backed by pure-Python lattice implementations (`dilithium-py` for FIPS 204 ML-DSA
+and `kyber-py` for FIPS 203 ML-KEM) over Module-LWE / Module-SIS polynomial rings.
 """
 
 from __future__ import annotations
@@ -14,10 +14,12 @@ import base64
 import hashlib
 import hmac
 import json
-import secrets
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
+
+from dilithium_py.ml_dsa import ML_DSA_65, ML_DSA_87
+from kyber_py.ml_kem import ML_KEM_768, ML_KEM_1024
 
 
 class PQCAlgorithm(StrEnum):
@@ -27,7 +29,7 @@ class PQCAlgorithm(StrEnum):
     ML_DSA_87 = "ML-DSA-87"  # FIPS 204 (Dilithium5 equivalent, Category 5)
     ML_KEM_768 = "ML-KEM-768"  # FIPS 203 (Kyber768 equivalent, Category 3)
     ML_KEM_1024 = "ML-KEM-1024"  # FIPS 203 (Kyber1024 equivalent, Category 5)
-    SPHINCS_PLUS = "SLH-DSA-SHA2-256s"  # FIPS 205 (Stateless Hash-Based)
+    SPHINCS_PLUS = "SLH-DSA-SHA2-256s"  # FIPS 205 alias (routed via ML-DSA-87)
 
 
 @dataclass(frozen=True)
@@ -59,78 +61,64 @@ class PQCKeyPair:
 
 
 class PQCSigner:
-    """Post-Quantum Digital Signature Engine (FIPS 204 / ML-DSA).
+    """Post-Quantum Digital Signature Engine (NIST FIPS 204 / ML-DSA).
 
     Signs and verifies arbitrary messages, Raft consensus log entries, and
-    RFC 9171 DTN Space Bundles using post-quantum deterministic lattice/hash constructions.
+    RFC 9171 DTN Space Bundles using Module-Lattice Digital Signature Standard
+    (ML-DSA-65 and ML-DSA-87).
     """
 
     def __init__(self, algorithm: PQCAlgorithm = PQCAlgorithm.ML_DSA_65) -> None:
         self.algorithm = algorithm
-        self._key_len = 32 if algorithm == PQCAlgorithm.ML_DSA_65 else 64
-        self._sig_len = 64 if algorithm == PQCAlgorithm.ML_DSA_65 else 128
+        if algorithm == PQCAlgorithm.ML_DSA_65:
+            self._impl: Any = ML_DSA_65
+            self._key_len = 1952
+            self._sk_len = 4032
+            self._sig_len = 3309
+        else:
+            self._impl = ML_DSA_87
+            self._key_len = 2592
+            self._sk_len = 4896
+            self._sig_len = 4627
 
-    def generate_keypair(self) -> PQCKeyPair:
-        """Generates a new Post-Quantum signing keypair."""
-        seed = secrets.token_bytes(self._key_len)
-        h = hashlib.shake_256()
-        h.update(b"SMDC-PQC-ML-DSA-PUBKEY-DERIVATION:")
-        h.update(self.algorithm.value.encode("utf-8"))
-        h.update(seed)
-        pubkey = h.digest(self._key_len)
+    def generate_keypair(self, seed: bytes | None = None) -> PQCKeyPair:
+        """Generates a new Post-Quantum ML-DSA signing keypair."""
+        if seed is not None:
+            digest = hashlib.shake_256(b"SMDC-ML-DSA-KEYGEN-SEED:" + seed).digest(32)
+            pubkey, privkey = self._impl._keygen_internal(digest)
+        else:
+            pubkey, privkey = self._impl.keygen()
 
         key_id = hashlib.sha256(pubkey).hexdigest()[:16]
         return PQCKeyPair(
             algorithm=self.algorithm,
             public_key=pubkey,
-            private_key=seed,
+            private_key=privkey,
             key_id=f"pqc-{self.algorithm.value.lower()}-{key_id}",
         )
 
     def sign(self, message: bytes, private_key: bytes) -> bytes:
-        """Signs a message using the private key.
+        """Signs a message using the ML-DSA private key.
 
-        Produces a constant-size post-quantum signature incorporating message digest,
-        domain separator, and randomized lattice salt.
+        Raises ValueError if the private key length does not match FIPS 204 specifications.
         """
-        # Derive corresponding public key from private seed
-        h_pub = hashlib.shake_256()
-        h_pub.update(b"SMDC-PQC-ML-DSA-PUBKEY-DERIVATION:")
-        h_pub.update(self.algorithm.value.encode("utf-8"))
-        h_pub.update(private_key)
-        pubkey = h_pub.digest(self._key_len)
-
-        salt = secrets.token_bytes(16)
-        h = hashlib.shake_256()
-        h.update(b"SMDC-PQC-ML-DSA-SIG:")
-        h.update(self.algorithm.value.encode("utf-8"))
-        h.update(pubkey)
-        h.update(salt)
-        h.update(message)
-
-        core_sig = h.digest(self._sig_len - 16)
-        return salt + core_sig
+        if len(private_key) != self._sk_len:
+            raise ValueError(
+                f"Invalid {self.algorithm.value} private key length: expected {self._sk_len}, got {len(private_key)}"
+            )
+        return bytes(self._impl.sign(private_key, message))
 
     def verify(self, message: bytes, signature: bytes, public_key: bytes) -> bool:
-        """Verifies a signature against a public key.
+        """Verifies an ML-DSA signature against a public key.
 
-        Returns True if the signature is authentic and unaltered, False otherwise.
+        Returns True if and only if the lattice signature is mathematically valid.
         """
         if len(signature) != self._sig_len or len(public_key) != self._key_len:
             return False
-
-        salt = signature[:16]
-        provided_sig = signature[16:]
-
-        h = hashlib.shake_256()
-        h.update(b"SMDC-PQC-ML-DSA-SIG:")
-        h.update(self.algorithm.value.encode("utf-8"))
-        h.update(public_key)
-        h.update(salt)
-        h.update(message)
-        expected_sig = h.digest(self._sig_len - 16)
-
-        return hmac.compare_digest(provided_sig, expected_sig)
+        try:
+            return bool(self._impl.verify(public_key, message, signature))
+        except Exception:
+            return False
 
     def sign_bundle(self, bundle_dict: dict[str, Any], keypair: PQCKeyPair) -> dict[str, Any]:
         """Signs an RFC 9171 DTN Space Bundle, appending a BPSec (RFC 9172) signature block."""
@@ -156,17 +144,27 @@ class PQCSigner:
         }
         return signed_bundle
 
-    def verify_bundle(self, signed_bundle_dict: dict[str, Any]) -> bool:
-        """Verifies the BPSec Post-Quantum signature block on an RFC 9171 DTN bundle."""
+    def verify_bundle(
+        self,
+        signed_bundle_dict: dict[str, Any],
+        trusted_public_key: bytes | None = None,
+    ) -> bool:
+        """Verifies the BPSec Post-Quantum signature block on an RFC 9171 DTN bundle.
+
+        If ``trusted_public_key`` is supplied, requires the bundle's key to match the
+        pinned trust anchor before verifying the ML-DSA signature.
+        """
         bpsec = signed_bundle_dict.get("bpsec")
         if not isinstance(bpsec, dict):
             return False
 
         try:
-            sig = base64.b64decode(bpsec["sig_b64"])
-            pubkey = base64.b64decode(bpsec["pubkey_b64"])
+            sig = base64.b64decode(bpsec["sig_b64"], validate=True)
+            pubkey = base64.b64decode(bpsec["pubkey_b64"], validate=True)
             alg_name = bpsec["alg"]
             if alg_name != self.algorithm.value:
+                return False
+            if trusted_public_key is not None and not hmac.compare_digest(pubkey, trusted_public_key):
                 return False
 
             canonical_payload = json.dumps(
@@ -186,83 +184,70 @@ class PQCSigner:
 
 
 class PQCKEM:
-    """Post-Quantum Key Encapsulation Mechanism (FIPS 203 / ML-KEM).
+    """Post-Quantum Key Encapsulation Mechanism (NIST FIPS 203 / ML-KEM).
 
-    Enables establishing 256-bit symmetric encryption keys between sovereign nodes
-    and satellite ground stations secure against quantum cryptanalysis.
+    Establishes 256-bit symmetric encryption keys between sovereign nodes
+    and satellite ground stations using Module-Lattice Key Encapsulation
+    (ML-KEM-768 and ML-KEM-1024).
     """
 
     def __init__(self, algorithm: PQCAlgorithm = PQCAlgorithm.ML_KEM_768) -> None:
         self.algorithm = algorithm
-        self._key_len = 32 if algorithm == PQCAlgorithm.ML_KEM_768 else 64
-        self._ct_len = 48 if algorithm == PQCAlgorithm.ML_KEM_768 else 80
+        if algorithm == PQCAlgorithm.ML_KEM_768:
+            self._impl: Any = ML_KEM_768
+            self._key_len = 1184
+            self._dk_len = 2400
+            self._ct_len = 1088
+        else:
+            self._impl = ML_KEM_1024
+            self._key_len = 1568
+            self._dk_len = 3168
+            self._ct_len = 1568
 
     def generate_keypair(self) -> PQCKeyPair:
         """Generates an ML-KEM Post-Quantum encapsulation keypair."""
-        seed = secrets.token_bytes(self._key_len)
-        h = hashlib.shake_256()
-        h.update(b"SMDC-PQC-ML-KEM-PUBKEY:")
-        h.update(self.algorithm.value.encode("utf-8"))
-        h.update(seed)
-        pubkey = h.digest(self._key_len)
-
-        key_id = hashlib.sha256(pubkey).hexdigest()[:16]
+        ek, dk = self._impl.keygen()
+        key_id = hashlib.sha256(ek).hexdigest()[:16]
         return PQCKeyPair(
             algorithm=self.algorithm,
-            public_key=pubkey,
-            private_key=seed,
+            public_key=ek,
+            private_key=dk,
             key_id=f"kem-{self.algorithm.value.lower()}-{key_id}",
         )
 
     def encapsulate(self, recipient_public_key: bytes) -> tuple[bytes, bytes]:
-        """Encapsulates a shared secret under the recipient's public key.
+        """Encapsulates a 256-bit shared secret under the recipient's ML-KEM public key.
 
         Returns:
             Tuple of (ciphertext, 256-bit shared_secret_key).
         """
-        ephemeral = secrets.token_bytes(32)
-        iv = secrets.token_bytes(16)
-        h_mask = hashlib.shake_256()
-        h_mask.update(b"SMDC-PQC-ML-KEM-MASK:")
-        h_mask.update(recipient_public_key)
-        h_mask.update(iv)
-        mask = h_mask.digest(32)
-
-        masked_ephemeral = bytes(a ^ b for a, b in zip(ephemeral, mask, strict=False))
-        ciphertext = iv + masked_ephemeral
-
-        # Derive symmetric shared secret
-        h_ss = hashlib.sha3_256()
-        h_ss.update(b"SMDC-PQC-ML-KEM-SS:")
-        h_ss.update(recipient_public_key)
-        h_ss.update(ciphertext)
-        h_ss.update(ephemeral)
-        shared_secret = h_ss.digest()
-
-        return ciphertext, shared_secret
+        if len(recipient_public_key) != self._key_len:
+            raise ValueError(
+                f"Invalid {self.algorithm.value} encapsulation key length: "
+                f"expected {self._key_len}, got {len(recipient_public_key)}"
+            )
+        shared_secret, ciphertext = self._impl.encaps(recipient_public_key)
+        return bytes(ciphertext), bytes(shared_secret)
 
     def decapsulate(self, ciphertext: bytes, recipient_private_key: bytes) -> bytes:
-        """Decapsulates the shared secret using recipient's private key."""
-        h_pk = hashlib.shake_256()
-        h_pk.update(b"SMDC-PQC-ML-KEM-PUBKEY:")
-        h_pk.update(self.algorithm.value.encode("utf-8"))
-        h_pk.update(recipient_private_key)
-        pubkey = h_pk.digest(self._key_len)
+        """Decapsulates the 256-bit shared secret using recipient's ML-KEM private key."""
+        if len(ciphertext) != self._ct_len:
+            raise ValueError(
+                f"Invalid {self.algorithm.value} ciphertext length: expected {self._ct_len}, got {len(ciphertext)}"
+            )
+        if len(recipient_private_key) != self._dk_len:
+            raise ValueError(
+                f"Invalid {self.algorithm.value} decapsulation key length: "
+                f"expected {self._dk_len}, got {len(recipient_private_key)}"
+            )
+        return bytes(self._impl.decaps(recipient_private_key, ciphertext))
 
-        iv = ciphertext[:16]
-        masked_ephemeral = ciphertext[16:48]
 
-        h_mask = hashlib.shake_256()
-        h_mask.update(b"SMDC-PQC-ML-KEM-MASK:")
-        h_mask.update(pubkey)
-        h_mask.update(iv)
-        mask = h_mask.digest(32)
+_CACHED_NODE_KEYPAIRS: dict[PQCAlgorithm, PQCKeyPair] = {}
 
-        ephemeral = bytes(a ^ b for a, b in zip(masked_ephemeral, mask, strict=False))
 
-        h_ss = hashlib.sha3_256()
-        h_ss.update(b"SMDC-PQC-ML-KEM-SS:")
-        h_ss.update(pubkey)
-        h_ss.update(ciphertext)
-        h_ss.update(ephemeral)
-        return h_ss.digest()
+def get_node_pqc_keypair(algorithm: PQCAlgorithm = PQCAlgorithm.ML_DSA_65) -> PQCKeyPair:
+    """Returns a process-cached PQC keypair for status/telemetry attestation without per-request churn."""
+    if algorithm not in _CACHED_NODE_KEYPAIRS:
+        _CACHED_NODE_KEYPAIRS[algorithm] = PQCSigner(algorithm).generate_keypair()
+    return _CACHED_NODE_KEYPAIRS[algorithm]

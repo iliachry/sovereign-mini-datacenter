@@ -23,6 +23,7 @@ class ThermalReading:
     coolant_celsius: float
     rack_inlet_celsius: float
     rack_exhaust_celsius: float
+    is_simulated: bool = False
 
     @property
     def thermal_delta(self) -> float:
@@ -73,6 +74,7 @@ def read_thermal(
                 coolant_celsius=28.0,
                 rack_inlet_celsius=22.0,
                 rack_exhaust_celsius=30.0,
+                is_simulated=True,
             )
         logger.warning("Thermal exporter unavailable and simulation disabled: %s", e)
         raise

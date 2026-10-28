@@ -32,6 +32,38 @@ class MCPTool:
     handler: Callable[[dict[str, Any]], dict[str, Any]]
 
 
+_ENTERPRISE_MANAGER: Any = None
+
+
+def get_enterprise_manager() -> Any:
+    """Returns process-wide EnterpriseManager singleton for MCP tools and resources."""
+    global _ENTERPRISE_MANAGER
+    if _ENTERPRISE_MANAGER is None:
+        from sovereign_dc.enterprise.manager import EnterpriseManager
+
+        _ENTERPRISE_MANAGER = EnterpriseManager()
+    return _ENTERPRISE_MANAGER
+
+
+def reset_enterprise_manager() -> None:
+    """Resets cached EnterpriseManager singleton (used in test suites)."""
+    global _ENTERPRISE_MANAGER
+    _ENTERPRISE_MANAGER = None
+
+
+def _get_mcp_state_dir() -> str:
+    """Returns a user-private directory (0o700) for MCP wallet and ledger state."""
+    base_dir = os.environ.get("SMDC_STATE_DIR") or os.path.expanduser("~/.smdc")
+    try:
+        os.makedirs(base_dir, mode=0o700, exist_ok=True)
+        os.chmod(base_dir, 0o700)
+        return base_dir
+    except OSError:
+        fallback = os.path.join(tempfile.gettempdir(), f"smdc-{os.getuid()}")
+        os.makedirs(fallback, mode=0o700, exist_ok=True)
+        return fallback
+
+
 # --- Tool Handlers ---
 
 
@@ -113,6 +145,8 @@ def tool_get_system_status(params: dict[str, Any]) -> dict[str, Any]:
 
 def tool_set_load_shedding(params: dict[str, Any]) -> dict[str, Any]:
     """Sets or adjusts the hardware load shedding state."""
+    from sovereign_dc.events import Event, EventType, get_event_bus
+
     level = str(params.get("level", "L0")).upper()
     valid_levels = ["L0", "L1", "L2", "L3", "L4"]
     if level not in valid_levels:
@@ -128,6 +162,17 @@ def tool_set_load_shedding(params: dict[str, Any]) -> dict[str, Any]:
         "L3": "All GPU workloads halted; critical networking and BMS monitoring only",
         "L4": "Emergency load shed; non-essential outlets powered down via PDU",
     }
+
+    # Ensure enterprise manager is subscribed and publish load shedding event
+    get_enterprise_manager()
+    numeric_level = int(level[1])
+    get_event_bus().publish(
+        Event(
+            event_type=EventType.LOAD_SHEDDING_CHANGED,
+            source="mcp",
+            payload={"level": numeric_level, "mode": level},
+        )
+    )
 
     return {
         "success": True,
@@ -167,8 +212,10 @@ def tool_get_wallet_balances(params: dict[str, Any]) -> dict[str, Any]:
     from sovereign_dc.economy.wallet import AddressType, NodeWallet
 
     cfg = get_config()
-    wallet_path = os.path.join(tempfile.gettempdir(), "smdc_mcp_wallet.json")
-    db_path = os.path.join(tempfile.gettempdir(), "smdc_mcp_ledger.db")
+    state_dir = _get_mcp_state_dir()
+    wallet_path = os.path.join(state_dir, "smdc_mcp_wallet.json")
+    pqc_wallet_path = os.path.join(state_dir, "smdc_mcp_pqc_wallet.json")
+    db_path = os.path.join(state_dir, "smdc_mcp_ledger.db")
 
     if not os.path.exists(wallet_path):
         wallet_ed = NodeWallet.create(node_id=cfg.node_id, algorithm=AddressType.ED25519)
@@ -179,7 +226,12 @@ def tool_get_wallet_balances(params: dict[str, Any]) -> dict[str, Any]:
         wallet_ed = NodeWallet.load_from_file(wallet_path)
         ledger = Ledger(db_path=db_path)
 
-    wallet_pqc = NodeWallet.create(node_id=cfg.node_id, algorithm=AddressType.ML_DSA_87)
+    if not os.path.exists(pqc_wallet_path):
+        wallet_pqc = NodeWallet.create(node_id=cfg.node_id, algorithm=AddressType.ML_DSA_87)
+        wallet_pqc.save_to_file(pqc_wallet_path)
+    else:
+        wallet_pqc = NodeWallet.load_from_file(pqc_wallet_path)
+
     balance = ledger.get_balance(wallet_ed.address)
 
     return {
@@ -242,8 +294,8 @@ def tool_predict_satellite_passes(params: dict[str, Any]) -> dict[str, Any]:
     from sovereign_dc.space.orbital.tle_updater import get_active_satellites
 
     cfg = get_config()
-    hours = float(params.get("duration_hours", 12.0))
-    min_elev = float(params.get("min_elevation_deg", 10.0))
+    hours = max(0.1, min(float(params.get("duration_hours", 12.0)), 168.0))
+    min_elev = max(0.0, min(float(params.get("min_elevation_deg", 10.0)), 90.0))
 
     satellites = get_active_satellites()
     gs = GroundStation(cfg.ground_station_name, cfg.ground_station_lat, cfg.ground_station_lon)
@@ -280,7 +332,7 @@ def tool_predict_satellite_passes(params: dict[str, Any]) -> dict[str, Any]:
 def tool_query_knowledge_indexer(params: dict[str, Any]) -> dict[str, Any]:
     """Performs semantic RAG search across sovereign datacenter technical documentation."""
     query = str(params.get("query", "solar power management")).lower()
-    limit = int(params.get("limit", 3))
+    limit = max(1, min(int(params.get("limit", 3)), 50))
 
     cwd = os.getcwd()
     doc_files = glob.glob(os.path.join(cwd, "*.md")) + glob.glob(os.path.join(cwd, "hardware", "*.md"))
@@ -647,9 +699,7 @@ def get_mcp_tools() -> list[MCPTool]:
 
 def tool_list_enterprise_apps(params: dict[str, Any]) -> dict[str, Any]:
     """Lists all registered enterprise applications and live runtime states."""
-    from sovereign_dc.enterprise.manager import EnterpriseManager
-
-    manager = EnterpriseManager()
+    manager = get_enterprise_manager()
     states = manager.list_runtime_states()
     return {
         "count": len(states),
@@ -659,11 +709,9 @@ def tool_list_enterprise_apps(params: dict[str, Any]) -> dict[str, Any]:
 
 def tool_manage_enterprise_app(params: dict[str, Any]) -> dict[str, Any]:
     """Controls application lifecycle (start, stop, restart, pause, resume)."""
-    from sovereign_dc.enterprise.manager import EnterpriseManager
-
     app_id = str(params.get("app_id", ""))
     action = str(params.get("action", "start"))
-    manager = EnterpriseManager()
+    manager = get_enterprise_manager()
 
     if action == "start":
         success, msg = manager.start_app(app_id)
@@ -728,7 +776,7 @@ def tool_run_metaverse_sim_cycle(params: dict[str, Any]) -> dict[str, Any]:
     """Executes multi-layer metaverse simulation cycles (Algorithm 1: SA-PPO, Sionna Ray-Tracing, 5G Slicing, DePIN SLA)."""
     from sovereign_dc.metaverse.engine import MetaverseOrchestrator
 
-    cycles = int(params.get("cycles", 1))
+    cycles = max(1, min(int(params.get("cycles", 1)), 100))
     deterministic = bool(params.get("deterministic", True))
     seed = int(params.get("seed", 111))
 

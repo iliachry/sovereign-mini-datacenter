@@ -81,6 +81,16 @@ class TestPQCSigner:
         signer = PQCSigner(PQCAlgorithm.ML_DSA_65)
         assert signer.verify(b"msg", b"short_sig", b"short_pk") is False
 
+    def test_verify_rejects_public_key_forged_shake256_signature(self):
+        """Regression test for SEC-01: forged SHAKE256(pk || msg) must be rejected."""
+        import hashlib
+
+        signer = PQCSigner(PQCAlgorithm.ML_DSA_65)
+        kp = signer.generate_keypair()
+        msg = b"FORGED_COMMAND"
+        forged_sig = hashlib.shake_256(kp.public_key + msg).digest(signer._sig_len)
+        assert signer.verify(msg, forged_sig, kp.public_key) is False
+
 
 class TestPQCBPSecBundleSigning:
     """Test RFC 9172 BPSec DTN Bundle Signing and Verification."""
@@ -105,6 +115,11 @@ class TestPQCBPSecBundleSigning:
 
         # Verify authentic bundle
         assert signer.verify_bundle(signed_bundle) is True
+        assert signer.verify_bundle(signed_bundle, trusted_public_key=keypair.public_key) is True
+
+        # Reject if caller pins a different trusted public key
+        other_kp = signer.generate_keypair()
+        assert signer.verify_bundle(signed_bundle, trusted_public_key=other_kp.public_key) is False
 
     def test_verify_dtn_bundle_tampered_payload(self):
         signer = PQCSigner(PQCAlgorithm.ML_DSA_65)
@@ -160,3 +175,9 @@ class TestPQCKEM:
         shared_secret_recipient = kem.decapsulate(ciphertext, recipient_kp.private_key)
         assert len(shared_secret_recipient) == 32
         assert isinstance(shared_secret_recipient, bytes)
+        assert shared_secret_sender == shared_secret_recipient
+
+        # Decapsulating with a wrong private key must not yield the sender's shared secret
+        wrong_kp = kem.generate_keypair()
+        wrong_secret = kem.decapsulate(ciphertext, wrong_kp.private_key)
+        assert wrong_secret != shared_secret_sender

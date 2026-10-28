@@ -49,6 +49,13 @@ def get_solar_forecast() -> float:
 
 def set_mode(mode: str) -> None:
     """Writes the current mode to a shared state file and dispatches event."""
+    level_map = {
+        "NORMAL": 0,
+        "SOLAR_SURPLUS_COMPUTE": 0,
+        "ECO_PRESERVATION": 2,
+        "CRITICAL_SHEDDING": 3,
+    }
+    level = level_map.get(mode, 2 if "ECO" in mode or "SHED" in mode else 0)
     try:
         from sovereign_dc.events import Event, EventType, get_event_bus
 
@@ -56,7 +63,7 @@ def set_mode(mode: str) -> None:
             Event(
                 event_type=EventType.LOAD_SHEDDING_CHANGED,
                 source="sentinel_copilot",
-                payload={"mode": mode},
+                payload={"mode": mode, "level": level},
             )
         )
     except Exception as e:

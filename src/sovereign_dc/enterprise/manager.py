@@ -10,6 +10,7 @@ import hashlib
 import json
 import logging
 import tarfile
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -17,7 +18,7 @@ from typing import Any
 
 from sovereign_dc.enterprise.registry import EnterpriseRegistry
 from sovereign_dc.enterprise.schema import AppManifest, AppStatus, PowerPriority
-from sovereign_dc.events import Event, SovereignEventBus
+from sovereign_dc.events import Event, SovereignEventBus, get_event_bus
 
 logger = logging.getLogger("smdc.enterprise.manager")
 
@@ -67,7 +68,8 @@ class EnterpriseManager:
         event_bus: SovereignEventBus | None = None,
     ) -> None:
         self.registry = registry or EnterpriseRegistry()
-        self.event_bus = event_bus or SovereignEventBus()
+        self.event_bus = event_bus or get_event_bus()
+        self._lock = threading.RLock()
         self._runtimes: dict[str, AppRuntimeState] = {}
 
         # Initialize runtime states from registry
@@ -85,19 +87,39 @@ class EnterpriseManager:
         except Exception as e:
             logger.warning("Could not subscribe to event bus: %s", e)
 
+    @staticmethod
+    def _extract_shedding_level(payload: dict[str, Any]) -> int:
+        """Normalize load shedding level from integer, L-tier string, or Sentinel mode string."""
+        raw_level = payload.get("level")
+        if isinstance(raw_level, int):
+            return raw_level
+        if isinstance(raw_level, str):
+            cleaned = raw_level.strip().upper().lstrip("L")
+            if cleaned.isdigit():
+                return int(cleaned)
+        mode = str(payload.get("mode", "")).strip().upper()
+        if mode in ("ECO_PRESERVATION", "SHEDDING", "LOW_BATTERY"):
+            return 2
+        if mode in ("CRITICAL_SHEDDING", "EMERGENCY", "CRITICAL"):
+            return 3
+        return 0
+
     def _on_load_shedding_event(self, event: Event) -> None:
         """Handle power load shedding signals and adjust running enterprise workloads."""
-        level = event.payload.get("level", 0)
+        level = self._extract_shedding_level(event.payload)
         logger.info("EnterpriseManager received load shedding signal level %s", level)
 
+        with self._lock:
+            runtime_items = list(self._runtimes.items())
+
         if level >= 2:  # Severe/Low Battery Shedding
-            for app_id, runtime in self._runtimes.items():
+            for app_id, runtime in runtime_items:
                 tier = runtime.manifest.power.tier
                 if tier in [PowerPriority.L2_BACKGROUND, PowerPriority.L3_DEFERRABLE, PowerPriority.L4_IDLE]:
                     if runtime.status == AppStatus.RUNNING:
                         self.pause_app(app_id, reason=f"Load shedding level {level}")
         elif level == 0:  # Nominal / Solar Surplus
-            for app_id, runtime in self._runtimes.items():
+            for app_id, runtime in runtime_items:
                 if runtime.status == AppStatus.PAUSED:
                     self.resume_app(app_id, reason="Solar power recovery (Level 0)")
 
@@ -276,10 +298,10 @@ class EnterpriseManager:
             # Optional NIST FIPS 204 ML-DSA attestation
             if sign_pqc:
                 try:
-                    from sovereign_dc.security.pqc import PQCAlgorithm, PQCSigner
+                    from sovereign_dc.security.pqc import PQCAlgorithm, PQCSigner, get_node_pqc_keypair
 
                     signer = PQCSigner(PQCAlgorithm.ML_DSA_87)
-                    kp = signer.generate_keypair()
+                    kp = get_node_pqc_keypair(PQCAlgorithm.ML_DSA_87)
                     sig = signer.sign(sha256_digest.encode("utf-8"), kp.private_key)
                     metadata["pqc_signature"] = {
                         "algorithm": "NIST-FIPS-204-ML-DSA-87",

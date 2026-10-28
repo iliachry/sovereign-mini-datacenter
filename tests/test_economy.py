@@ -88,6 +88,27 @@ class TestNodeWallet:
         assert loaded.address == wallet.address
         assert loaded.keypair.public_key_hex == wallet.keypair.public_key_hex
 
+    def test_deterministic_seed_and_encrypted_wallet(self, tmp_path) -> None:
+        seed = b"deterministic-test-seed-32-bytes"
+        w1 = NodeWallet.create(node_id="det-node", algorithm=AddressType.ED25519, seed=seed)
+        w2 = NodeWallet.create(node_id="det-node", algorithm=AddressType.ED25519, seed=seed)
+        assert w1.address == w2.address
+        assert w1.keypair.public_key_hex == w2.keypair.public_key_hex
+
+        enc_file = str(tmp_path / "enc_wallet.json")
+        w1.save_to_file(enc_file, password="strong-wallet-passphrase")  # noqa: S106
+
+        # Loading without password or with wrong password must raise ValueError
+        with pytest.raises(ValueError, match="password is required"):
+            NodeWallet.load_from_file(enc_file)
+        with pytest.raises(ValueError, match="Invalid wallet password"):
+            NodeWallet.load_from_file(enc_file, password="wrong-password")  # noqa: S106
+
+        decrypted = NodeWallet.load_from_file(enc_file, password="strong-wallet-passphrase")  # noqa: S106
+        assert decrypted.address == w1.address
+        sig = decrypted.sign_payload(b"HELLO")
+        assert NodeWallet.verify_signature(b"HELLO", sig, decrypted.keypair.public_key_hex)
+
 
 class TestLedgerAndTransactions:
     """Test suite for append-only ledger, transfers, and replay protection."""
@@ -155,6 +176,21 @@ class TestLedgerAndTransactions:
         state = ledger.export_state()
         assert state["total_transactions"] == 3
         assert alice.address in state["balances"]
+
+    def test_in_memory_default_ledger_and_hash_chain_and_negative_fee(self) -> None:
+        ledger = Ledger()  # Default :memory:
+        alice = NodeWallet.create(node_id="alice")
+        bob = NodeWallet.create(node_id="bob")
+
+        ledger.mint(alice.address, 100.0)
+        ledger.transfer(alice, bob.address, 30.0, fee=0.5)
+        assert ledger.get_balance(alice.address) == 69.5
+        assert ledger.get_balance(bob.address) == 30.0
+        assert ledger.verify_chain() is True
+
+        with pytest.raises(ValueError, match="fee cannot be negative"):
+            ledger.transfer(alice, bob.address, 10.0, fee=-5.0)
+        ledger.close()
 
 
 class TestStateChannels:
@@ -303,6 +339,23 @@ class TestSettlementEngine:
         reconciled = SettlementEngine.reconcile_dtn_settlement_bundle(bundle, recip_ledger)
         assert len(reconciled) == 1
         assert reconciled[0].tx_id == tx.tx_id
+        assert recip_ledger.get_balance(bob.address) == 12.50
+
+        # Duplicate reconciliation is idempotent
+        dup = SettlementEngine.reconcile_dtn_settlement_bundle(bundle, recip_ledger)
+        assert len(dup) == 0
+
+        # Forged transaction signature in bundle must be rejected
+        bad_tx = ledger.transfer(alice, bob.address, 5.0)
+        bad_tx.signature = "00" * 64
+        bad_bundle = SettlementEngine.create_dtn_settlement_bundle(
+            source_eid="dtn://node-alpha.space",
+            destination_eid="dtn://node-beta.space",
+            transactions=[bad_tx],
+            wallet=alice,
+        )
+        with pytest.raises(ValueError, match="Rejected invalid or unsigned transaction"):
+            SettlementEngine.reconcile_dtn_settlement_bundle(bad_bundle, recip_ledger)
 
 
 class TestEconomyCLI:

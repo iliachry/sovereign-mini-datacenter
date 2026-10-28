@@ -127,8 +127,8 @@ class SettlementEngine:
         worker_public_key_hex: str | None = None,
     ) -> Transaction:
         """Validates a ProofOfCompute receipt and transfers credits to the worker node."""
-        if worker_public_key_hex and not proof.verify(worker_public_key_hex):
-            raise ValueError("Invalid ProofOfCompute signature or corrupted payload")
+        if not worker_public_key_hex or not proof.verify(worker_public_key_hex):
+            raise ValueError("Invalid ProofOfCompute signature or missing worker public key")
 
         memo = f"compute_settle:{proof.service_type}:{proof.task_id}"
         tx = ledger.transfer(
@@ -155,12 +155,24 @@ class SettlementEngine:
         priority: int = 2,
     ) -> Bundle:
         """Serializes transactions into an RFC 9171 Space DTN bundle for satellite burst settlement."""
-        payload_dict = {
+        tx_dicts = []
+        for tx in transactions:
+            d = tx.to_dict()
+            if not d.get("sender_public_key") and tx.sender == wallet.address:
+                d["sender_public_key"] = wallet.keypair.public_key_hex
+            tx_dicts.append(d)
+
+        payload_dict: dict[str, Any] = {
             "type": "dtn_economy_settlement_v1",
             "sender_address": wallet.address,
+            "sender_public_key": wallet.keypair.public_key_hex,
+            "sender_algorithm": wallet.keypair.algorithm.value,
             "created_at": datetime.now(UTC).isoformat(),
-            "transactions": [tx.to_dict() for tx in transactions],
+            "transactions": tx_dicts,
         }
+        canonical_body = json.dumps(payload_dict, sort_keys=True).encode("utf-8")
+        payload_dict["bundle_signature"] = wallet.sign_payload(canonical_body)
+
         payload_bytes = json.dumps(payload_dict, sort_keys=True).encode("utf-8")
         bundle = Bundle(
             source_eid=source_eid,
@@ -176,7 +188,7 @@ class SettlementEngine:
         bundle: Bundle,
         ledger: Ledger,
     ) -> list[Transaction]:
-        """Unpacks and applies validated transactions received via satellite DTN pass."""
+        """Unpacks, cryptographically validates, and applies transactions received via satellite DTN pass."""
         try:
             data = json.loads(bundle.payload.decode("utf-8"))
         except Exception as e:
@@ -185,18 +197,23 @@ class SettlementEngine:
         if data.get("type") != "dtn_economy_settlement_v1":
             raise ValueError("Unsupported DTN bundle payload type")
 
+        bundle_pubkey = data.get("sender_public_key", "")
         settled_txs: list[Transaction] = []
         for tx_data in data.get("transactions", []):
             tx = Transaction.from_dict(tx_data)
-            # Check if transaction already applied
-            existing = [t for t in ledger.get_history(limit=1000) if t.tx_id == tx.tx_id]
-            if not existing:
-                # Apply transaction
+            pubkey_to_check = tx.sender_public_key or bundle_pubkey
+            if not tx.is_valid(pubkey_to_check):
+                raise ValueError(f"Rejected invalid or unsigned transaction {tx.tx_id} in DTN settlement bundle")
+
+            if not ledger.has_transaction(tx.tx_id):
                 with ledger._lock, ledger._get_connection() as conn:
-                    # Debit sender
+                    # Debit sender (if tracked on this ledger, ensure non-negative or deduct)
                     conn.execute(
-                        "UPDATE balances SET balance = balance - ?, nonce = nonce + 1 WHERE address = ?",
-                        (tx.amount + tx.fee, tx.sender),
+                        """
+                        INSERT INTO balances (address, balance, nonce) VALUES (?, ?, 1)
+                        ON CONFLICT(address) DO UPDATE SET balance = balance - ?, nonce = nonce + 1
+                        """,
+                        (tx.sender, -(tx.amount + tx.fee), tx.amount + tx.fee),
                     )
                     # Credit recipient
                     conn.execute(
@@ -208,11 +225,12 @@ class SettlementEngine:
                     )
                     conn.execute(
                         """
-                        INSERT INTO transactions (tx_id, sender, recipient, amount, fee, nonce, timestamp, memo, signature, signature_algorithm)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        INSERT INTO transactions (tx_id, prev_hash, sender, recipient, amount, fee, nonce, timestamp, memo, signature, signature_algorithm, sender_public_key)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             tx.tx_id,
+                            tx.prev_hash,
                             tx.sender,
                             tx.recipient,
                             tx.amount,
@@ -222,9 +240,9 @@ class SettlementEngine:
                             tx.memo,
                             tx.signature,
                             tx.signature_algorithm,
+                            pubkey_to_check,
                         ),
                     )
-                    conn.commit()
                 settled_txs.append(tx)
 
         logger.info("Reconciled %d transactions from DTN bundle %s", len(settled_txs), bundle.bundle_id)

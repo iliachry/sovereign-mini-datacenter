@@ -157,13 +157,13 @@ function applyLiveTelemetry(data) {
     const hudCoolant = document.getElementById('hud-coolant');
     if (hudCoolant) hudCoolant.textContent = `${coolant.toFixed(1)}°C`;
 
-    // Dynamic Coolant Tube Luminescence Color Shift (Cyan -> Amber if hot)
+    // Dynamic Coolant Tube Luminescence Color Shift (Cyan -> Amber -> Red Over-temp)
     const coolantMat = getMaterial('coolantTube');
     if (coolantMat) {
-      if (coolant > 48.0) {
-        coolantMat.emissive.setHex(0xf59e0b); // Amber Warning
-      } else if (coolant > 55.0) {
+      if (coolant > 55.0) {
         coolantMat.emissive.setHex(0xf43f5e); // Red Over-temp
+      } else if (coolant > 48.0) {
+        coolantMat.emissive.setHex(0xf59e0b); // Amber Warning
       } else {
         coolantMat.emissive.setHex(0x0284c7); // Cool Cyan
       }

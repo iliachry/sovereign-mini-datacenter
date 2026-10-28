@@ -102,7 +102,9 @@ class SovereignEventBus:
             if event_type not in self._handlers:
                 self._handlers[event_type] = []
             self._handlers[event_type].append(handler)
-            logger.debug("Subscribed handler %s to event type '%s'", handler.__name__, event_type)
+            logger.debug(
+                "Subscribed handler %s to event type '%s'", getattr(handler, "__name__", repr(handler)), event_type
+            )
 
     def unsubscribe(self, event_type: str, handler: EventHandler) -> bool:
         """Remove a handler from a specific event type.
@@ -156,7 +158,7 @@ class SovereignEventBus:
             except Exception as exc:
                 logger.error(
                     "Event handler %s raised exception for %s: %s",
-                    handler.__name__,
+                    getattr(handler, "__name__", repr(handler)),
                     event.event_type,
                     exc,
                 )

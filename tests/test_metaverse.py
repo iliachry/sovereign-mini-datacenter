@@ -188,6 +188,16 @@ def test_depin_sla_consensus_and_validation():
     )
     assert not res_sig_fail.valid
 
+    # 4. Direct verify_sensor_signature check rejects forged 16+ char strings
+    import hashlib
+
+    sensor_id = "sensor-rx1"
+    payload = b"SINR:-9.5"
+    valid_sig = hashlib.sha256(sensor_id.encode() + payload).hexdigest()
+    assert val.verify_sensor_signature(sensor_id, payload, valid_sig) is True
+    assert val.verify_sensor_signature(sensor_id, payload, "0" * 32) is False
+    assert val.verify_sensor_signature(sensor_id, payload, "") is False
+
 
 # =============================================================================
 # 5. Multi-Layer Orchestrator & Benchmark Tests
