@@ -72,21 +72,21 @@ pie title "SAM Breakdown by Target Vertical ($6.4B)"
 
 ## 4. Business Model & Monetization Architecture
 
-The Sovereign Mini Datacenter leverages a proven **hybrid commercialization model** combining high-margin hardware sales, recurring SaaS subscriptions, and enterprise SLA contracts:
+The Sovereign Mini Datacenter leverages a proven **hybrid commercialization model** combining turnkey hardware sales, high-margin recurring SaaS subscriptions, and enterprise SLA contracts:
 
 ```mermaid
 flowchart TD
     SMDC["Sovereign Commercial Engine"]
     
-    SMDC --> H["📦 1. Turnkey Hardware Kits (CapEx)<br/>• Standard 9U Node: $31,500<br/>• Hardware Gross Margin: ~26.2%"]
+    SMDC --> H["📦 1. Turnkey Hardware Kits (CapEx)<br/>• Standard 9U Node: $31,500<br/>• Hardware Gross Margin: ~22.0%"]
     SMDC --> S["🔄 2. Sovereign Control Plane (ARR SaaS)<br/>• Fleet Mesh & DTN Management: $199/node/mo<br/>• Gross Margin: ~88%"]
     SMDC --> E["🛡️ 3. Enterprise Support & PQC Audits<br/>• Mission-Critical SLA & Space Ephemeris Relays<br/>• $15,000/year/fleet"]
 ```
 
 ### Revenue Streams
 1. **Turnkey Hardware Deliveries**:
-   - **SMDC-Core-9U**: \$31,500 per unit (BOM cost: \$23,257 $\implies$ \$8,243 gross profit per node, a 26.2% gross margin). The BOM is the itemised total in [`hardware/COMPONENTS.md`](hardware/COMPONENTS.md): \$9,357 for the priced non-compute lines plus 2 × \$6,950 for the DGX Spark nodes (the price NVIDIA lists on its marketplace page, checked on 2026-11-14). It excludes assembly labour, shipping, taxes and the unpriced items listed in that file, so the realised margin is lower.
-   - **SMDC-Rugged-IP67 (Mobile Tactical)**: \$38,000 per unit (MIL-STD-810H vibration and shock damping).
+   - **SMDC-Core-9U**: \$31,500 per unit (BOM cost: \$24,563 $\implies$ \$6,937 gross profit per node, a 22.0% gross margin). The BOM is the itemised total in [`hardware/COMPONENTS.md`](hardware/COMPONENTS.md): \$10,663 for the non-compute lines (host, power electronics, battery, array, protection, cabling, cooling, telemetry, network and enclosure) plus 2 × \$6,950 for the DGX Spark nodes (the price NVIDIA lists on its marketplace page, checked on 2026-11-14). Apart from the DGX Spark price, the unit costs are estimates. The BOM excludes assembly labour, shipping, taxes and the site-specific PV mounting structure and conduit, so the realised margin is lower.
+   - **SMDC-Rugged-IP67 (Mobile Tactical)**: \$48,900 per unit (MIL-STD-810H vibration and shock damping), priced at the same 1.551× premium over the Core unit as in the original price list (\$38,000 against \$24,500; 1.551 × \$31,500 = \$48,857, rounded to \$48,900). No separate BOM is itemised for this variant.
 2. **Sovereign Control Plane (Recurring SaaS ARR)**:
    - Zero-trust mesh orchestration, federated Qdrant vector index synchronization, orbital pass scheduling, and remote telemetry monitoring at \$199/node/month.
 3. **Custom Engineering & Dual-Use Defense Deployments**:
@@ -140,19 +140,19 @@ Recurring ARR          $0.11M       $0.54M       $2.02M       $6.44M      $16.45
 Services & SLA         $0.25M       $0.85M       $2.40M       $6.20M      $12.50M
 ─────────────────────────────────────────────────────────────────────────────────
 TOTAL REVENUE          $1.78M       $7.06M      $23.95M      $70.92M     $161.25M
-Gross Profit           $0.59M       $2.38M       $8.09M      $24.02M      $55.35M
-Gross Margin (%)        33.3%        33.8%        33.8%        33.9%        34.3%
+Gross Profit           $0.53M       $2.15M       $7.28M      $21.60M      $49.86M
+Gross Margin (%)        30.0%        30.4%        30.4%        30.5%        30.9%
 ─────────────────────────────────────────────────────────────────────────────────
 Operating Expenses     $0.86M       $2.35M       $6.79M      $19.36M      $41.66M
-EBITDA                -$0.26M      +$0.03M      +$1.30M      +$4.66M     +$13.68M
-EBITDA Margin (%)      -14.8%         0.4%         5.4%         6.6%         8.5%
-Net Operating Cash    -$0.26M      +$0.03M      +$1.30M      +$4.66M     +$13.68M
+EBITDA                -$0.32M      -$0.21M      +$0.49M      +$2.24M      +$8.20M
+EBITDA Margin (%)      -18.1%        -2.9%         2.1%         3.2%         5.1%
+Net Operating Cash    -$0.32M      -$0.21M      +$0.49M      +$2.24M      +$8.20M
 ```
 
-Hardware revenue is nodes deployed × the \$31,500 SMDC-Core-9U list price. Gross profit is derived from the revenue rows above: hardware revenue × 26.2% (the \$8,243 gross profit per \$31,500 node at the reference BOM of \$23,257), plus recurring ARR × 88% (the SaaS gross margin stated in Section 4), plus services & SLA revenue × 50%. This document states no margin for services, so the 50% is an assumption; with services at 0% or 100% margin, Year 1 gross margin would be 26.3% or 40.4%. Gross margin is gross profit divided by total revenue. No volume BOM reduction is assumed.
+Hardware revenue is nodes deployed × the \$31,500 SMDC-Core-9U list price. Gross profit is derived from the revenue rows above: hardware revenue × 22.0% (the \$6,937 gross profit per \$31,500 node at the reference BOM of \$24,563, i.e. nodes deployed × \$6,937), plus recurring ARR × 88% (the SaaS gross margin stated in Section 4), plus services & SLA revenue × 50%. This document states no margin for services, so the 50% is an assumption; with services at 0% or 100% margin, Year 1 gross margin would be 23.0% or 37.0%. Gross margin is gross profit divided by total revenue. No volume BOM reduction is assumed.
 
 > [!NOTE]
-> **How the operating rows are derived.** This document has no bottom-up operating-cost model. The operating-expense row is the schedule implied by the first version of this table (at a \$24,500 list price), kept unchanged: implied operating expenses = original gross profit − original EBITDA, where original gross profit = original revenue × original gross margin and original EBITDA = original revenue × original EBITDA margin.
+> **How the operating rows are derived.** Operating expenses are an assumption, not a bottom-up cost model: the row is the schedule implied by the first version of this plan (at a \$24,500 list price), carried over unchanged at \$0.86M, \$2.35M, \$6.79M, \$19.36M and \$41.66M for Years 1 to 5. It is derived as implied operating expenses = original gross profit − original EBITDA, where original gross profit = original revenue × original gross margin and original EBITDA = original revenue × original EBITDA margin.
 >
 > | Original table | Year 1 | Year 2 | Year 3 | Year 4 | Year 5 |
 > | :--- | ---: | ---: | ---: | ---: | ---: |
@@ -161,7 +161,15 @@ Hardware revenue is nodes deployed × the \$31,500 SMDC-Core-9U list price. Gros
 > | EBITDA margin | -12.4% | 14.2% | 28.6% | 34.1% | 37.8% |
 > | Implied operating expenses | \$0.86M | \$2.35M | \$6.79M | \$19.36M | \$41.66M |
 >
-> EBITDA in the table above = gross profit − operating expenses, and EBITDA margin = EBITDA ÷ total revenue. In the original table net operating cash equalled revenue × EBITDA margin to within rounding (\$0.01M) in every year, so net operating cash is set equal to EBITDA here as well; no working-capital, tax or capital-expenditure effects are modelled. The original gross margins (46–69%) assumed a much lower BOM than the itemised one, which is why EBITDA is far lower here than in the original table. Treat the operating-expense schedule as a placeholder until a bottom-up cost model replaces it.
+> EBITDA in the table above = gross profit − operating expenses, and EBITDA margin = EBITDA ÷ total revenue. In the original table net operating cash equalled revenue × EBITDA margin to within rounding (\$0.01M) in every year, so net operating cash is set equal to EBITDA here as well; no working-capital, tax or capital-expenditure effects are modelled. The original gross margins (46–69%) assumed a much lower BOM than the itemised one, which is why EBITDA is far lower here than in the original table, and why it turns positive in Year 3 rather than Year 2.
+>
+> **Status of these figures.** Because operating expenses are an assumption carried over from the original plan, the EBITDA and cash rows are a scenario, not a forecast: they show what the stated revenue and the itemised BOM imply if spending follows that schedule. Sensitivity of the result to the assumption, computed from the table (EBITDA = gross profit − operating expenses × factor):
+>
+> | Operating expenses in Year 5 | Year 5 operating expenses | Year 5 EBITDA | Year 5 EBITDA margin |
+> | :--- | ---: | ---: | ---: |
+> | 20% lower | \$33.33M | +\$16.53M | 10.3% |
+> | As assumed | \$41.66M | +\$8.20M | 5.1% |
+> | 20% higher | \$50.00M | -\$0.14M | -0.1% |
 
 ---
 
@@ -206,7 +214,7 @@ Slide 06: Unit Economics ───── 67.8% 3-Year TCO Savings ($81.3k saved 
 Slide 07: Business Model ───── Turnkey Hardware ($31.5k) + Sovereign SaaS ($199/node/mo)
 Slide 08: Traction & Code ──── 681 Automated Tests, 89.8% Coverage, Ready-to-Deploy Stacks
 Slide 09: Technology Moat ──── Space DTN (RFC 9171), Energy Load-Shedder, PQC Zero-Trust
-Slide 10: Financials ───────── $1.78M Y1 -> $23.95M Y3 -> $161.25M Y5 (8.5% EBITDA in Y5)
+Slide 10: Financials ───────── $1.78M Y1 -> $23.95M Y3 -> $161.25M Y5 (5.1% EBITDA in Y5, scenario)
 Slide 11: Team & Advisory ──── Metatopia Studio: DeepTech Systems, AI & Embedded Engineers
 Slide 12: The Ask ──────────── $2.5M Seed Round to scale batch manufacturing & certifications
 ```

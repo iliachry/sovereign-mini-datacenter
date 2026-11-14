@@ -30,14 +30,21 @@ const BATTERY_USABLE_DOD = 0.85; // Usable depth of discharge
 
 // BOM cost estimator (USD)
 // Unit prices are the priced rows of hardware/COMPONENTS.md; at DEFAULT_SIZING the total equals
-// that file's reference BOM: 3,597 + 2×6,950 + 2×1,200 + 8×180 + 1,320 + 1×600 = $23,257.
-// Host liquid loop and enclosure fans (615) = radiator 1×140 + pump 90 + fans 6×32 + CPU water block 90
-// + coolant 1 L×30 + compression fittings 6×8 + tubing 25.
-const COST_BASE_USD = 3597; // Host, storage, switch (1,940) + PDU (250) + host liquid loop and fans (615) + network cabling (170) + enclosure (622)
+// that file's reference BOM: 4,045 + 2×6,950 + 2×1,200 + 8×180 + 2,178 + 1×600 = $24,563.
+// Host, storage and switch (2,250) = switch 270 + NVMe 2×320 + host board 450 + host CPU 330 + RAM 2×160
+// + boot drive 60 + host chassis and PSU 180.
+// Host liquid loop and enclosure fans (718) = radiator 1×140 + CPU water block 90 + pump 90 + pump top and
+// reservoir 60 + fans 6×32 + coolant 1 L×30 + compression fittings 6×8 + tubing 25 + fan bracket 25 + grilles 6×3.
+// Protection, cabling, 12 V supply and telemetry bridge (858) = Class T fuses 2×55 + holders 2×45 + MEGA fuses 5×9
+// + 35 mm² cable 6 m×12 + lugs 24×2 + PV combiner 70 + PV isolator 40 + 4 mm² PV cable 50 m×1
+// + 6 mm² PV cable 10 m×1.50 + MC4 pairs 6×3 + earthing kit 80 + 48V-to-12V converter 95
+// + 12 V distribution 30 + telemetry bridge 45 + AC output RCBO 50. These are held fixed here: the calculator does not
+// rescale cable or fuses with the panel or battery count.
+const COST_BASE_USD = 4045; // Host, storage, switch (2,250) + PDU (250) + host liquid loop and fans (718) + network cabling (170) + enclosure and mounting (657)
 const COST_NODE_USD = 6950; // NVIDIA DGX Spark (128 GB / 4 TB), price listed on marketplace.nvidia.com, checked 2026-11-14
 const COST_BATTERY_PACK_USD = 1200; // 5.12 kWh 48V 100Ah LiFePO4
 const COST_PANEL_USD = 180; // 410W monocrystalline PERC
-const COST_POWER_FIXED_USD = 1320; // MultiPlus-II (1,100) + SmartShunt (130) + Lynx Distributor (90)
+const COST_POWER_FIXED_USD = 2178; // MultiPlus-II (1,100) + SmartShunt (130) + Lynx Distributor (90) + protection, cabling, 12 V supply and telemetry bridge (858)
 const COST_MPPT_USD = 600; // Victron SmartSolar MPPT 250/70-Tr
 // One MPPT 250/70 takes two strings of four panels (4S2P): a third parallel string would exceed
 // its 35 A PV short-circuit limit with 14 A panels, so every further 8 panels add a controller.
@@ -277,8 +284,8 @@ export function exportBOMCSV() {
       ['AI Compute', 'NVIDIA DGX Spark (128GB unified memory, 4TB NVMe)', input.nodes, `$${fmtInt(r.costs.compute)}`],
       ['Energy Storage', 'LiFePO4 48V 100Ah 5.12kWh Module', input.batPacks, `$${fmtInt(r.costs.battery)}`],
       ['Solar PV', '410W Monocrystalline PERC Panel', input.panels, `$${fmtInt(r.costs.solar)}`],
-      ['Power Conversion', `Victron MultiPlus-II 48/3000 + ${r.mpptCount}x SmartSolar MPPT 250/70 + SmartShunt + Lynx Distributor`, 1, `$${fmtInt(r.costs.powerConversion)}`],
-      ['Chassis, Host & Network', '9U 19" Rack + Host Server & NVMe Storage + 10GbE Switch + PDU + Host Liquid Loop & Fans', 1, `$${fmtInt(r.costs.base)}`],
+      ['Power Conversion', `Victron MultiPlus-II 48/3000 + ${r.mpptCount}x SmartSolar MPPT 250/70 + SmartShunt + Lynx Distributor + Fuses, Cabling, PV Isolator, Earthing, 12V Supply & Telemetry Bridge`, 1, `$${fmtInt(r.costs.powerConversion)}`],
+      ['Chassis, Host & Network', '9U 19" Rack & Shelf + Host Server (Board, CPU, RAM, Chassis & PSU) & NVMe Storage + 10GbE Switch + PDU + Host Liquid Loop & Fans', 1, `$${fmtInt(r.costs.base)}`],
       ['Total', 'Sovereign Mini Datacenter Complete BOM', '', out.cost],
       ['Energy Balance', `Daily draw ${out.draw} vs solar yield ${out.yield}`, '', `${r.balanceKwh >= 0 ? '+' : '-'}${Math.abs(r.balanceKwh).toFixed(1)} kWh/day`],
     ],
@@ -379,7 +386,7 @@ export function handleTerminalInput(e) {
     print(`<span class="term-line-cyan">[SYSTEM STATUS]</span>
   Solar PV:       2,660 W (250V MPPT, 3,280 W Array)
   LiFePO4 Bank:   88.5% (52.8V, 10.24 kWh Reserve)
-  Coolant Loop:   31.2°C (Host loop, 1x 360mm Rad, Flow: 4.2 L/min)
+  Coolant Loop:   31.2°C (Host loop, 1x 360mm Rad, Pump: PWM 60%)
   AI Inference:   Ollama nomic-embed-text (0.42ms/token)
   Space Link:     IN CONTACT (57.1° EL, SNR: 14.2 dB)
   Load Shedding:  L0 (Full Compute Operations Authorized)`);

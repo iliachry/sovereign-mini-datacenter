@@ -611,7 +611,7 @@
           <span class="flow-step-title">Dynamic Absorption</span>
         </div>
         <div class="flow-step-desc">
-          GPU compute power throttles dynamically from <strong>30W to 450W</strong>.
+          Compute power on 2× DGX Spark throttles dynamically from <strong>90W to 480W</strong>.
         </div>
       </div>
 
@@ -683,7 +683,7 @@
       <div class="visual-frame">
         <img src="figures/smdc_hardware_render.jpg" alt="Sovereign Mini Datacenter 9U Enclosure">
         <div class="visual-caption">
-          Sovereign Mini Datacenter: 9U Rugged Chassis / Liquid-Cooled Industrial Micro-Datacenter
+          Sovereign Mini Datacenter: 9U Chassis · 2× Air-Cooled NVIDIA DGX Spark Nodes · Liquid-Cooled Host
         </div>
       </div>
 
@@ -695,7 +695,7 @@
             <span class="tag tag-green">Hardware Layer</span>
           </div>
           <p style="font-size: 10px; color: #cbd5e1; line-height: 1.35;">
-            Direct DC coupling with BRITE PanePower glass + 48V LiFePO4 buffer + closed-loop liquid cooling rejected into greenhouse thermal mass.
+            Direct DC coupling with BRITE PanePower glass + 48V LiFePO4 buffer. The DGX Spark AI nodes are air-cooled and only the host is liquid-cooled; waste heat is exhausted into the greenhouse.
           </p>
         </div>
 
@@ -715,7 +715,7 @@
             <span class="tag tag-amber">Zero-CapEx Validation</span>
           </div>
           <p style="font-size: 10px; color: #cbd5e1; line-height: 1.35;">
-            Hardware-in-the-Loop (HIL) emulation with real PanePower I-V curves, simulating feeder voltage sags and sub-100ms load shedding.
+            Hardware-in-the-Loop (HIL) emulation on 2× NVIDIA DGX Spark (GB10, 128 GB unified memory each) with real PanePower I-V curves, simulating feeder voltage sags and sub-100ms load shedding.
           </p>
         </div>
       </div>
@@ -728,8 +728,8 @@
         <div class="stat-label">Hardware Validation Spend</div>
       </div>
       <div class="stat-box">
-        <div class="stat-value cyan">30W ➔ 450W</div>
-        <div class="stat-label">Dynamic Load Range</div>
+        <div class="stat-value cyan">90W ➔ 480W</div>
+        <div class="stat-label">Dynamic Load Range (2× DGX Spark)</div>
       </div>
       <div class="stat-box">
         <div class="stat-value amber">100%</div>

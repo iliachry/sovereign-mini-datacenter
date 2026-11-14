@@ -131,17 +131,21 @@ xychart-beta
   - Daily Solar Yield (Athens / Southern Europe, 3.28 kW array): **17.24 kWh / day** (Summer peak) / **7.68 kWh / day** (Winter average). These are the earlier reference figures for a 1.64 kW array (8.62 and 3.84 kWh/day, i.e. 5.26 and 2.34 kWh per kWp per day) scaled linearly to 3.28 kW; they are not measurements. The annual-average planning figure used by the sizing calculator is 14.5 kWh/day (5.2 peak sun hours, 85% system efficiency).
   - Against the reference duty cycle's 11.2 kWh/day draw, the summer figure is a surplus of about 6.1 kWh/day and the winter-average figure a shortfall of about 3.5 kWh/day, which the battery covers only briefly (about 18.7 hours of zero-sun autonomy); sustained winter operation at that duty cycle needs load shedding or a grid or generator top-up.
 
-### Thermal Dissipation (Continuous 350W Compute Load)
+### Thermal Design Reference Values (Not Measured)
 
-| Component Monitored | Ambient $22.0^\circ\text{C}$ | Ambient $35.0^\circ\text{C}$ (Harsh Outdoor) | Max Allowed Limit |
-| :--- | :---: | :---: | :---: |
-| **Coolant Loop Temperature** | **$28.4^\circ\text{C}$** | **$41.2^\circ\text{C}$** | $60.0^\circ\text{C}$ |
-| **DGX Spark Core Temp (air-cooled)** | **$48.2^\circ\text{C}$** | **$61.8^\circ\text{C}$** | $85.0^\circ\text{C}$ |
-| **LiFePO4 Battery Core Temp** | **$24.1^\circ\text{C}$** | **$31.5^\circ\text{C}$** | $45.0^\circ\text{C}$ |
-| **Radiator Delta-T ($\Delta T$)** | **$6.4^\circ\text{C}$** | **$6.2^\circ\text{C}$** | $15.0^\circ\text{C}$ |
+None of the figures in this table is a measurement of the current build. The DGX Spark and battery rows are the earlier reference values, kept as design targets. The two coolant rows are derived for the current host-only loop from the earlier reference figures, as explained under the table.
+
+| Component Monitored | Ambient $22.0^\circ\text{C}$ | Ambient $35.0^\circ\text{C}$ (Harsh Outdoor) | Design Limit | Basis |
+| :--- | :---: | :---: | :---: | :--- |
+| **Coolant Loop Temperature (host loop)** | **$26.6^\circ\text{C}$** | **$39.4^\circ\text{C}$** | $60.0^\circ\text{C}$ | Derived (below) |
+| **Coolant Rise Above Ambient** | **$4.6^\circ\text{C}$** | **$4.4^\circ\text{C}$** | $15.0^\circ\text{C}$ | Derived (below) |
+| **DGX Spark Core Temp (air-cooled)** | **$48.2^\circ\text{C}$** | **$61.8^\circ\text{C}$** | $85.0^\circ\text{C}$ | Reference value |
+| **LiFePO4 Battery Core Temp** | **$24.1^\circ\text{C}$** | **$31.5^\circ\text{C}$** | $45.0^\circ\text{C}$ | Reference value |
+
+**How the coolant rows are derived.** The earlier reference figures were written for a two-radiator loop that carried a continuous 350W compute load: 175W per 360mm radiator, with the coolant $6.4^\circ\text{C}$ above a $22.0^\circ\text{C}$ ambient and $6.2^\circ\text{C}$ above a $35.0^\circ\text{C}$ ambient. The current loop carries only the system host CPU, at most 125W, on one 360mm radiator. Taking the coolant-to-air temperature rise as proportional to the heat rejected per radiator at the same fan speed, the rise is at most 125 / 175 = 71% of the earlier figure: $6.4 \times 0.714 = 4.6^\circ\text{C}$ and $6.2 \times 0.714 = 4.4^\circ\text{C}$, which gives $26.6^\circ\text{C}$ and $39.4^\circ\text{C}$. With a 65W CPU the rise is about half of that. The temperature difference between the coolant entering and leaving the water block is much smaller: at 125W and a flow of 100 L/h (0.028 kg/s of water, $c_p \approx 4186\text{ J/(kg K)}$) it is $125 / (0.028 \times 4186) \approx 1.1^\circ\text{C}$. The loop has no flow meter, so 100 L/h is a conservative assumption against the pump's 350 L/h catalogue maximum.
 
 > [!TIP]
-> The single 360mm radiator loop cools the system host only and keeps its coolant well below the $60.0^\circ\text{C}$ threshold in $35.0^\circ\text{C}$ ambient conditions. The two DGX Spark units are sealed, air-cooled appliances outside the loop; their core temperature depends on enclosure airflow (side vent slots and the three rear exhaust fans), not on the radiator.
+> The single 360mm radiator loop cools the system host only, and on these estimates its coolant stays well below the $60.0^\circ\text{C}$ design limit in $35.0^\circ\text{C}$ ambient conditions. The two DGX Spark units are sealed, air-cooled appliances outside the loop; their core temperature depends on enclosure airflow (side vent slots and the three rear exhaust fans), not on the radiator.
 
 ---
 

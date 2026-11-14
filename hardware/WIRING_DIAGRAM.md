@@ -11,8 +11,9 @@
                             │ 2 strings, 4mm² solar cable each
                             ▼
           ┌─────────────────────────────────┐
-          │ 2-string combiner + 2-pole PV   │
-          │ DC isolator (250V DC, 35A min)  │
+          │ 2-string combiner (Type 2 SPD)  │
+          │ + 2-pole PV DC isolator         │
+          │ (250V DC, 35A min)              │
           └──────────────┬──────────────────┘
                          │ 6mm² Solar DC Cable (Red/Black)
                          ▼
@@ -25,7 +26,7 @@
                          ▼
           ┌──────────────────────────────────┐
           │   Victron Lynx Distributor (48V) │  ◄─── Main 48V DC Bus
-          │   (Fused Busbars)                │
+          │   (4x MEGA fuse 125A / 58V)      │
           └───┬──────────────────────┬───────┘
               │                      │
               ▼                      ▼
@@ -34,7 +35,8 @@
   │ 2x 48V 100Ah Packs  │    │ 48/3000/35-32 Inverter   │
   │ (10.24 kWh Total)   │    │ 48V DC ➔ 230V AC Sine    │
   │ Built-in BMS / pack │    └──────────────┬───────────┘
-  └─────────────────────┘                   │ 230V AC
+  └─────────────────────┘                   │ 230V AC, through a
+                                            │ 2-pole RCBO 16A / 30mA
                                             ▼
                            ┌───────────────────────────────┐
                            │  1U 230V Metered Rack PDU     │
@@ -44,8 +46,8 @@
                         ┌─────────────────┼─────────────────┐
                         ▼                 ▼                  ▼
               [DGX Spark Node 1]  [DGX Spark Node 2]  [Mini-ITX Host]
-              (Air Cooled,        (Air Cooled,        (Liquid Cooled)
-               own 240W PSU)       own 240W PSU)       + [Switch]
+              (Air Cooled,        (Air Cooled,        (Liquid Cooled,
+               own 240W PSU)       own 240W PSU)       own PSU)
 ```
 
 > **(\*) PV array:** take Voc, Isc and the Voc temperature coefficient from the datasheet of the panels you install. The eight panels are wired as two strings of four in series (4S2P).
@@ -61,11 +63,13 @@
 
 ### Battery connection detail
 
-Each pack has its own positive lead and its own fuse; the two negatives join and pass through the battery monitor shunt before reaching the negative busbar. This matches Phase 2 of `ASSEMBLY_MANUAL.md`.
+Each pack has its own positive lead with a Class T fuse at the pack, and lands on its own fused position of the Lynx Distributor; the inverter and the MPPT take the other two positions. The two negatives join and pass through the battery monitor shunt before reaching the negative busbar. This matches Phase 2 of `ASSEMBLY_MANUAL.md`.
 
 ```
- [Pack 1 (+)] ──35mm²──► [MEGA fuse 125A] ──► [Lynx Distributor (+)]
- [Pack 2 (+)] ──35mm²──► [MEGA fuse 125A] ──► [Lynx Distributor (+)]
+ [Pack 1 (+)] ──► [Class T fuse 125A] ──35mm²──► [Lynx position 1, MEGA 125A/58V] ─┐
+ [Pack 2 (+)] ──► [Class T fuse 125A] ──35mm²──► [Lynx position 2, MEGA 125A/58V] ─┤ Lynx (+) busbar
+ [MultiPlus-II DC (+)] ◄──────────────35mm²───── [Lynx position 3, MEGA 125A/58V] ─┤
+ [MPPT 250/70 battery (+)] ◄──────────35mm²───── [Lynx position 4, MEGA 125A/58V] ─┘
 
  [Pack 1 (−)] ──35mm²──┐
  [Pack 2 (−)] ──35mm²──┴─► [Victron SmartShunt 500A/50mV] ──► [Lynx Distributor (−)]
@@ -78,7 +82,28 @@ Each pack has its own positive lead and its own fuse; the two negatives join and
 
 > **Wire Sizing:** Use minimum 35mm² flexible cable on 48V DC bus runs. AC output wiring: 4mm² to PDU. All connections torqued to manufacturer spec.
 
-> **Safety:** Install one 125A DC fuse in the positive lead of **each** battery pack (two fuses in total), as close to the pack terminal as practical. The fuses must carry a DC voltage rating suitable for a 48V LiFePO4 bank: check the fuse datasheet, since many MEGA fuses are rated for 32V only. Earth all metal chassis to ground bus.
+> **Safety:** Install one 125A Class T fuse (DC rating ≥ 125V, interrupting rating ≥ 20kA) in the positive lead of **each** battery pack (two in total), as close to the pack terminal as practical: a LiFePO4 bank can drive several kA into a short circuit, and the Class T fuse is the device rated to interrupt it. The Lynx Distributor accepts MEGA fuses only, and Victron specifies 58V-rated MEGA fuses for 48V systems ([Lynx Distributor manual](https://www.victronenergy.com/media/pg/Lynx_Distributor/en/system-design.html)); fit a 125A/58V MEGA fuse in each of its four positions and never a 32V one. Earth all metal chassis to ground bus.
+
+### 12V auxiliary rail
+
+The coolant pump and the six 120mm fans are 12V devices, and the MikroTik switch (12–57V DC jack) and the ESP32 telemetry bridge (through a 5V buck module) run from the same rail so that they stay up when the inverter is off. The rail is fed from the 48V bus through a DC-DC converter; the rack PDU is 230V AC and does not supply these loads.
+
+```
+ [Lynx (+) busbar] ──► [10A fuse, ≥ 80V DC] ──2.5mm²──► [48V-to-12V DC-DC converter, 20A]
+ [Lynx (−) busbar] ───────────────────────────────────► [converter input (−)]
+                                                              │ 12V
+                                                              ▼
+                                                   [4-way 12V fuse block]
+                                                     ├──► [D5 coolant pump]
+                                                     ├──► [3x radiator fans  (PWM splitter)]
+                                                     ├──► [3x exhaust fans   (PWM splitter)]
+                                                     └──► [MikroTik switch DC jack] and
+                                                          [5V buck ──► ESP32 telemetry bridge]
+```
+
+- Load: pump 23W + six fans at 3.6W each (21.6W) + switch 23W + telemetry bridge 1.5W = 69.1W (about 5.7A), against a 20A converter; the sizing is in `COMPONENTS.md`.
+- The converter's input negative connects on the system side of the SmartShunt (the Lynx negative busbar), so the 12V load is included in the measured battery current.
+- The PWM signal for the fans and the pump comes from the system host's fan headers; only the 12V power comes from this rail. Without a PWM signal the fans and the pump run at full speed.
 
 ---
 
@@ -90,7 +115,7 @@ Each pack has its own positive lead and its own fuse; the two negatives join and
  │      (EK-CryoFuel Clear concentrate, mixed 1:9 with water)      │
  └─────────────────────────────────────────────────────────────────┘
 
-  [Alphacool D5 Pump + Reservoir Combo]
+  [D5 Pump (Alphacool VPP755) + Pump Top with Reservoir]
          │
          ▼  ← Cold Coolant In (~25°C)
   [System Host CPU Water Block]  (Mini-ITX server; block matched
@@ -109,7 +134,7 @@ Each pack has its own positive lead and its own fuse; the two negatives join and
 
 > **Scope:** the two NVIDIA DGX Spark units are sealed, air-cooled appliances. They are not opened, have no water block and are not connected to this loop; keep their intake and exhaust vents clear. The loop carries only the system host's CPU heat (on the order of 65–125W depending on the CPU fitted), so the single 360mm radiator runs far below its capacity and its fans can be run slowly. The loop has six G1/4 compression fittings (two each on the water block, the pump-reservoir and the radiator) and no quick-disconnect couplings. The second rear opening holds three exhaust fans that move enclosure air only.
 
-> **Bleed procedure:** Run pump at full speed for 30 min with reservoir cap loose. Tilt enclosure side-to-side. Top up coolant. Verify no air bubbles in sight glass.
+> **Bleed procedure:** Run pump at full speed for 30 min with reservoir cap loose. Tilt enclosure side-to-side. Top up coolant. Verify no air bubbles remain in the reservoir.
 
 > **Coolant ratio:** EK-CryoFuel Clear at 1:9 concentrate:distilled water. Replace every 2 years.
 
