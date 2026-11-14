@@ -284,7 +284,7 @@ class TestPrivateStateDirectory:
         assert cfg.dtn_db_path == str(state_dir / "dtn_spool.db")
         assert cfg.log_dir == str(state_dir / "sovereign_logs")
         assert config_module.default_mode_file() == str(state_dir / "sovereign_mode")
-        assert not cfg.dtn_db_path.startswith("/tmp/") and not cfg.log_dir.startswith("/tmp/")
+        # (No "/tmp" prefix check: pytest's tmp_path itself lives under /tmp on Linux.)
 
     def test_explicit_paths_are_untouched(self, state_dir, monkeypatch):
         monkeypatch.setenv("DTN_DB_PATH", "/var/spool/dtn/bundles.db")
