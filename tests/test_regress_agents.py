@@ -360,6 +360,7 @@ def test_failed_file_is_retried_and_collection_re_ensured(tmp_path: Path, monkey
     with (
         patch.object(knowledge_indexer, "WATCH_DIR", str(tmp_path)),
         patch.object(knowledge_indexer, "ensure_qdrant_collection", return_value=True) as ensure,
+        patch.object(knowledge_indexer, "seed_indexed_sources", return_value=True),
         patch.object(knowledge_indexer, "index_file", side_effect=fake_index),
         patch("time.sleep", side_effect=[None, None, KeyboardInterrupt]),
         pytest.raises(KeyboardInterrupt),
@@ -601,3 +602,301 @@ def test_power_exporter_solar_offset(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_software_python_tree_compiles() -> None:
     for path in (ROOT / "software").rglob("*.py"):
         compile(path.read_text(encoding="utf-8"), str(path), "exec")
+
+
+# --- Knowledge indexer: per-source reconciliation and collision-resistant ids -------------------
+
+
+class FakeQdrant:
+    """In-memory stand-in for the Qdrant REST calls the indexer makes (upsert, delete, scroll)."""
+
+    def __init__(self) -> None:
+        self.points: dict[Any, dict[str, Any]] = {}
+        self.fail_delete = False
+        self.calls: list[tuple[str, str]] = []
+
+    @staticmethod
+    def _matches(point: dict[str, Any], point_filter: dict[str, Any]) -> bool:
+        for cond in point_filter.get("must", []):
+            if point["payload"].get(cond["key"]) != cond["match"]["value"]:
+                return False
+        return not any(point["id"] in cond.get("has_id", []) for cond in point_filter.get("must_not", []))
+
+    def __call__(self, req: Any, timeout: float = 0) -> MagicMock:
+        url, method = req.full_url, req.get_method()
+        body = json.loads(req.data) if req.data else {}
+        self.calls.append((method, url.split("/collections/", 1)[-1]))
+        if "/points/delete" in url:
+            if self.fail_delete:
+                raise urllib.error.URLError("delete refused")
+            assert "wait=true" in url
+            self.points = {k: v for k, v in self.points.items() if not self._matches(v, body["filter"])}
+            return _resp({"result": {"status": "completed"}})
+        if "/points/scroll" in url:
+            assert body["with_vector"] is False
+            start = int(body.get("offset") or 0)
+            page = list(self.points.values())[start : start + body["limit"]]
+            nxt = start + body["limit"] if start + body["limit"] < len(self.points) else None
+            return _resp(
+                {
+                    "result": {
+                        "points": [{"id": p["id"], "payload": p["payload"]} for p in page],
+                        "next_page_offset": nxt,
+                    }
+                }
+            )
+        if method == "PUT" and "/points" in url:
+            for point in body["points"]:
+                self.points[point["id"]] = point
+            return _resp({"result": {"status": "completed"}})
+        return _resp({})
+
+    def texts(self, path: Path | str) -> list[str]:
+        own = [p["payload"] for p in self.points.values() if p["payload"]["path"] == str(path)]
+        return [p["text"] for p in sorted(own, key=lambda p: p["chunk_index"])]
+
+
+@pytest.fixture
+def qdrant() -> Any:
+    fake = FakeQdrant()
+    with (
+        patch.object(knowledge_indexer, "get_embedding", return_value=[0.1] * knowledge_indexer.EMBEDDING_DIM),
+        patch("urllib.request.urlopen", side_effect=fake),
+    ):
+        yield fake
+
+
+def _words(n: int, tag: str = "w") -> str:
+    return " ".join(f"{tag}{i}" for i in range(n))
+
+
+def test_reindexing_a_shortened_document_removes_stale_chunks(tmp_path: Path, qdrant: FakeQdrant) -> None:
+    doc = tmp_path / "runbook.md"
+    other = tmp_path / "other.md"
+    other.write_text("unrelated document", encoding="utf-8")
+    doc.write_text(_words(1200, "old"), encoding="utf-8")
+    assert knowledge_indexer.index_file(str(other)) is True
+    assert knowledge_indexer.index_file(str(doc)) is True
+    assert len(qdrant.texts(doc)) == 3
+
+    doc.write_text("corrected short procedure", encoding="utf-8")
+    assert knowledge_indexer.index_file(str(doc)) is True
+    assert qdrant.texts(doc) == ["corrected short procedure"]  # was: 3 points, two of them obsolete
+    assert qdrant.texts(other) == ["unrelated document"]
+
+    doc.write_text("", encoding="utf-8")
+    assert knowledge_indexer.index_file(str(doc)) is True
+    assert qdrant.texts(doc) == []  # shrink-to-zero withdraws the document
+    assert qdrant.texts(other) == ["unrelated document"]
+
+
+def test_point_ids_are_collision_resistant_uuids(tmp_path: Path, qdrant: FakeQdrant) -> None:
+    import uuid
+
+    ids = {knowledge_indexer.chunk_point_id(f"/data/documents/doc-{d}.md", c) for d in range(2000) for c in range(5)}
+    assert len(ids) == 10_000
+    for point_id in list(ids)[:50]:
+        assert str(uuid.UUID(point_id)) == point_id  # a UUID string, which Qdrant accepts as an id
+    # Path and chunk index are separated unambiguously ("a-1" + 0 vs "a" + "1-0" collided before).
+    assert knowledge_indexer.chunk_point_id("a-1", 0) != knowledge_indexer.chunk_point_id("a", 10)
+    assert knowledge_indexer.chunk_point_id("a", 1) == knowledge_indexer.chunk_point_id("a", 1)
+
+    doc = tmp_path / "doc.md"
+    doc.write_text("hello", encoding="utf-8")
+    assert knowledge_indexer.index_file(str(doc)) is True
+    (point,) = qdrant.points.values()
+    assert point["id"] == knowledge_indexer.chunk_point_id(str(doc), 0)
+    assert point["payload"]["path"] == str(doc) and point["payload"]["source"] == "doc.md"
+
+
+def test_reindexing_replaces_points_stored_under_legacy_integer_ids(tmp_path: Path, qdrant: FakeQdrant) -> None:
+    doc = tmp_path / "doc.md"
+    doc.write_text("current text", encoding="utf-8")
+    for idx in range(2):  # as written by the release that used 32-bit md5 ids
+        qdrant.points[1000 + idx] = {"id": 1000 + idx, "payload": {"path": str(doc), "chunk_index": idx, "text": "old"}}
+    qdrant.points[7] = {"id": 7, "payload": {"path": str(tmp_path / "kept.md"), "chunk_index": 0, "text": "kept"}}
+
+    assert knowledge_indexer.index_file(str(doc)) is True
+    assert qdrant.texts(doc) == ["current text"]
+    assert set(qdrant.points) == {7, knowledge_indexer.chunk_point_id(str(doc), 0)}
+
+
+def test_failed_upsert_or_delete_keeps_old_version_and_reports_failure(tmp_path: Path, qdrant: FakeQdrant) -> None:
+    doc = tmp_path / "doc.md"
+    doc.write_text(_words(600), encoding="utf-8")
+    assert knowledge_indexer.index_file(str(doc)) is True
+    before = dict(qdrant.points)
+
+    doc.write_text("short", encoding="utf-8")
+    with patch.object(knowledge_indexer, "get_embedding", side_effect=ValueError("ollama down")):
+        assert knowledge_indexer.index_file(str(doc)) is False
+    assert qdrant.points == before  # nothing deleted when the new version could not be stored
+
+    qdrant.fail_delete = True
+    assert knowledge_indexer.index_file(str(doc)) is False  # stale chunk still there: must be retried
+    qdrant.fail_delete = False
+    assert knowledge_indexer.index_file(str(doc)) is True
+    assert qdrant.texts(doc) == ["short"]
+
+
+def test_scan_removes_points_of_deleted_documents(
+    tmp_path: Path, qdrant: FakeQdrant, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    docs = tmp_path / "docs"
+    (docs / "sub").mkdir(parents=True)
+    keep, gone = docs / "keep.md", docs / "sub" / "gone.txt"
+    keep.write_text("keep me", encoding="utf-8")
+    gone.write_text("withdrawn instructions", encoding="utf-8")
+    outside = tmp_path / "elsewhere.md"
+    qdrant.points["x"] = {"id": "x", "payload": {"path": str(outside), "chunk_index": 0, "text": "foreign"}}
+    monkeypatch.setattr(knowledge_indexer, "WATCH_DIR", str(docs))
+
+    indexed: set[tuple[str, float]] = set()
+    assert knowledge_indexer.scan_and_index(indexed) == (2, 0)
+    assert qdrant.texts(gone) == ["withdrawn instructions"]
+
+    gone.unlink()
+    assert knowledge_indexer.scan_and_index(indexed) == (1, 0)
+    assert qdrant.texts(gone) == []
+    assert qdrant.texts(keep) == ["keep me"]
+    assert {p for p, _ in indexed} == {str(keep)}
+    assert knowledge_indexer.scan_and_index(indexed) == (0, 0)  # idempotent
+    assert qdrant.texts(outside) == ["foreign"]  # points outside the watch directory are not ours to delete
+
+    # A failed removal is reported and retried.
+    keep.unlink()
+    qdrant.fail_delete = True
+    assert knowledge_indexer.scan_and_index(indexed) == (0, 1)
+    assert qdrant.texts(keep) == ["keep me"]
+    qdrant.fail_delete = False
+    assert knowledge_indexer.scan_and_index(indexed) == (1, 0)
+    assert qdrant.texts(keep) == [] and indexed == set()
+
+
+def test_documents_deleted_while_the_worker_was_down_are_removed_after_restart(
+    tmp_path: Path, qdrant: FakeQdrant, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    alive, deleted = docs / "alive.md", docs / "deleted.md"
+    alive.write_text("still here", encoding="utf-8")
+    monkeypatch.setattr(knowledge_indexer, "WATCH_DIR", str(docs))
+    monkeypatch.setattr(knowledge_indexer, "SCROLL_PAGE_SIZE", 2)  # force pagination
+    for idx in range(3):  # left behind by a previous run, under legacy ids
+        qdrant.points[idx] = {"id": idx, "payload": {"path": str(deleted), "chunk_index": idx, "text": "stale"}}
+    qdrant.points[10] = {"id": 10, "payload": {"path": str(alive), "chunk_index": 0, "text": "old version"}}
+
+    indexed: set[tuple[str, float]] = set()  # a freshly started worker knows nothing
+    assert knowledge_indexer.seed_indexed_sources(indexed) is True
+    assert {p for p, _ in indexed} == {str(alive), str(deleted)}
+    assert knowledge_indexer.scan_and_index(indexed) == (2, 0)
+    assert qdrant.texts(deleted) == []
+    assert qdrant.texts(alive) == ["still here"]
+    assert set(qdrant.points) == {knowledge_indexer.chunk_point_id(str(alive), 0)}
+
+
+def test_missing_or_unreadable_watch_dir_never_purges_the_index(
+    tmp_path: Path, qdrant: FakeQdrant, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    doc = docs / "a.md"
+    doc.write_text("content", encoding="utf-8")
+    monkeypatch.setattr(knowledge_indexer, "WATCH_DIR", str(docs))
+    indexed: set[tuple[str, float]] = set()
+    assert knowledge_indexer.scan_and_index(indexed) == (1, 0)
+
+    # The volume is not mounted: the directory is gone, which is not "all documents were deleted".
+    monkeypatch.setattr(knowledge_indexer, "WATCH_DIR", str(tmp_path / "not-mounted" / "docs"))
+    assert knowledge_indexer.scan_and_index(indexed) == (0, 0)
+    assert qdrant.texts(doc) == ["content"]
+
+    # A listing error anywhere under the watch directory also suspends removal for that scan.
+    monkeypatch.setattr(knowledge_indexer, "WATCH_DIR", str(docs))
+
+    def broken_walk(top: str, onerror: Any = None) -> Any:
+        onerror(PermissionError(13, "denied", top))
+        return iter(())
+
+    with patch("os.walk", side_effect=broken_walk):
+        assert knowledge_indexer.scan_and_index(indexed) == (0, 0)
+    assert qdrant.texts(doc) == ["content"] and len(indexed) == 1
+
+
+def test_seeding_failure_is_reported_so_the_worker_retries(tmp_path: Path) -> None:
+    indexed: set[tuple[str, float]] = set()
+    with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("refused")):
+        assert knowledge_indexer.seed_indexed_sources(indexed) is False
+    assert indexed == set()
+
+
+# --- Private state directory instead of shared /tmp (mode file, alert log, DTN spool) -----------
+
+
+def _no_path_overrides(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    state_dir = tmp_path / "state"
+    for name in ("SOVEREIGN_MODE_FILE", "SOVEREIGN_LOG_DIR", "LOG_DIR", "DTN_DB_PATH"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("SMDC_STATE_DIR", str(state_dir))
+    return state_dir
+
+
+@pytest.mark.parametrize("module", [sentinel_copilot, knowledge_indexer])
+def test_mode_file_defaults_to_private_state_dir(
+    module: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    state_dir = _no_path_overrides(monkeypatch, tmp_path)
+    monkeypatch.setattr(module, "MODE_FILE", "")
+    assert module.mode_file_path() == str(state_dir / "sovereign_mode")
+    assert (state_dir.stat().st_mode & 0o777) == 0o700
+
+    # The environment variable (set by the container deployment) stays authoritative.
+    monkeypatch.setenv("SOVEREIGN_MODE_FILE", "/run/sovereign/mode")
+    assert module.mode_file_path() == "/run/sovereign/mode"
+
+
+def test_sentinel_and_indexer_share_the_default_mode_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    state_dir = _no_path_overrides(monkeypatch, tmp_path)
+    monkeypatch.setattr(sentinel_copilot, "MODE_FILE", "")
+    monkeypatch.setattr(knowledge_indexer, "MODE_FILE", "")
+    assert knowledge_indexer.get_current_mode() == "NORMAL"
+    sentinel_copilot.set_mode("ECO_PRESERVATION")
+    assert (state_dir / "sovereign_mode").read_text(encoding="utf-8") == "ECO_PRESERVATION"
+    assert sentinel_copilot.read_persisted_mode() == "ECO_PRESERVATION"
+    assert knowledge_indexer.get_current_mode() == "ECO_PRESERVATION"
+
+
+def test_technician_notifier_defaults_live_in_private_state_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    state_dir = _no_path_overrides(monkeypatch, tmp_path)
+    file_notifier = FileNotifier()
+    dtn_notifier = DTNNotifier()
+    assert file_notifier.log_path == str(state_dir / "sovereign_logs" / "technician_notifications.jsonl")
+    assert dtn_notifier.db_path == str(state_dir / "dtn_spool.db")
+
+    assert file_notifier.send(_msg()) is True
+    assert dtn_notifier.send(_msg()) is True
+    assert (state_dir / "dtn_spool.db").is_file()
+    assert (state_dir.stat().st_mode & 0o777) == 0o700
+    assert ((state_dir / "sovereign_logs").stat().st_mode & 0o777) == 0o700
+
+    # Explicit configuration still wins.
+    monkeypatch.setenv("SOVEREIGN_LOG_DIR", str(tmp_path / "logs"))
+    monkeypatch.setenv("DTN_DB_PATH", str(tmp_path / "spool.db"))
+    assert FileNotifier().log_path == str(tmp_path / "logs" / "technician_notifications.jsonl")
+    assert DTNNotifier().db_path == str(tmp_path / "spool.db")
+    assert DTNNotifier(db_path=str(tmp_path / "explicit.db")).db_path == str(tmp_path / "explicit.db")
+
+
+@pytest.mark.parametrize("name", ["knowledge_indexer.py", "sentinel_copilot.py", "gitlab_reviewer.py"])
+def test_container_agent_scripts_import_only_the_standard_library(name: str) -> None:
+    """software/agents/*.py run from a bare python image with only that directory mounted."""
+    import ast
+    import sys
+
+    tree = ast.parse((ROOT / "software" / "agents" / name).read_text(encoding="utf-8"))
+    top_level = [n for n in tree.body if isinstance(n, (ast.Import, ast.ImportFrom))]
+    modules = {a.name.split(".")[0] for n in top_level if isinstance(n, ast.Import) for a in n.names}
+    modules |= {(n.module or "").split(".")[0] for n in top_level if isinstance(n, ast.ImportFrom)}
+    assert modules <= set(sys.stdlib_module_names), modules - set(sys.stdlib_module_names)

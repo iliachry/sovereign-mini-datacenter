@@ -15,6 +15,8 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from sovereign_dc.config import default_dtn_db_path, default_log_dir
+
 logger = logging.getLogger("TechnicianNotifier")
 
 
@@ -64,18 +66,27 @@ class BaseNotifier:
 
 
 class FileNotifier(BaseNotifier):
-    """Appends structured JSON notifications to persistent local log file."""
+    """Appends structured JSON notifications to a persistent local log file.
+
+    Without ``log_path`` the log is ``technician_notifications.jsonl`` in ``SOVEREIGN_LOG_DIR``
+    if that is set, else in ``<state dir>/sovereign_logs`` (``SMDC_STATE_DIR`` or ``~/.smdc``,
+    private to the user and kept across reboots; never shared ``/tmp``). The file is created
+    with mode 0600.
+    """
 
     def __init__(self, log_path: str | None = None):
-        default_dir = os.getenv("SOVEREIGN_LOG_DIR", os.path.join(os.environ.get("TEMP", "/tmp"), "sovereign_logs"))
+        default_dir = os.getenv("SOVEREIGN_LOG_DIR") or default_log_dir()
         self.log_path: str = log_path if log_path else os.path.join(default_dir, "technician_notifications.jsonl")
 
     def send(self, message: TechnicianMessage) -> bool:
         try:
             directory = os.path.dirname(self.log_path)
             if directory:  # a bare filename means "current directory": nothing to create
-                os.makedirs(directory, exist_ok=True)
-            with open(self.log_path, "a", encoding="utf-8") as f:
+                os.makedirs(directory, mode=0o700, exist_ok=True)
+            # 0600 like the wallet: alerts carry node details and must not be world-readable.
+            # The mode only applies when the file is created; an existing log keeps its own.
+            fd = os.open(self.log_path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+            with os.fdopen(fd, "a", encoding="utf-8") as f:
                 f.write(message.to_json() + "\n")
             logger.info("Technician notification written to %s", self.log_path)
             return True
@@ -133,15 +144,18 @@ class LoRaNotifier(BaseNotifier):
 
 
 class DTNNotifier(BaseNotifier):
-    """Enqueues high-priority notification bundles for transmission via satellite pass."""
+    """Enqueues high-priority notification bundles for transmission via satellite pass.
+
+    Spool path: ``db_path``, else ``DTN_DB_PATH``, else the private state-directory default
+    (``sovereign_dc.config.default_dtn_db_path``).
+    """
 
     def __init__(
         self,
         db_path: str | None = None,
         technician_eid: str = "dtn://technician.sovereign.space/alerts",
     ):
-        default_db = os.path.join(os.environ.get("TEMP", "/tmp"), "dtn_spool.db")
-        self.db_path: str = str(db_path or os.getenv("DTN_DB_PATH") or default_db)
+        self.db_path: str = str(db_path or os.getenv("DTN_DB_PATH") or default_dtn_db_path())
         self.technician_eid: str = technician_eid
 
     def send(self, message: TechnicianMessage) -> bool:

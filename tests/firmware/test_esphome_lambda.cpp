@@ -49,6 +49,10 @@ struct EsphomeFlavour {
   static std::optional<double> solar_watts() { return reported(solar_power); }
   static std::optional<double> soc_percent() { return reported(battery_soc); }
   static double tolerance() { return 1e-4; }
+  static void advance_ms(unsigned long ms) {
+    smdc_host::now_ms += (uint32_t)ms;
+    smdc_ve_watchdog_lambda();  // the `interval: 1s` body
+  }
 };
 
 void feed(const Bytes &b) {
@@ -151,6 +155,29 @@ void register_esphome_tests() {
     CHECK(!battery_soc.reporting());  // an MPPT never revives SOC
     smdc_ve_watchdog_lambda();
     CHECK(!ve_stale && battery_voltage.reporting());
+  });
+
+  vt::add_test("watchdog: one field expires on its own, with one NaN publish and one warning naming it", [] {
+    smdc_host::now_ms = 1000;
+    feed(vt::shunt_frame(26412, -1530, 900));
+    CHECK(ve_field_live[0] && ve_field_live[1] && ve_field_live[3]);
+    CHECK(!ve_field_live[2] && !ve_field_live[4] && !ve_field_live[5]);  // a shunt sends no PPV/VPV/H20
+    const unsigned long soc_publishes = battery_soc.publishes;
+    for (int second = 1; second <= 61; second++) {
+      smdc_host::now_ms += 1000;
+      feed(vt::ve_frame({{"V", "26000"}, {"I", "-1530"}, {"SOC", "---"}}));
+      smdc_ve_watchdog_lambda();
+    }
+    CHECK(!ve_stale);  // frames never stopped: this is not the all-sensors withdrawal
+    CHECK(battery_soc.has_state && std::isnan(battery_soc.state));
+    CHECK(battery_soc.publishes == soc_publishes + 1);  // withdrawn once, not every second
+    CHECK(!ve_field_live[3]);
+    CHECK(count_containing(smdc_host::warnings, "Field SOC missing or unusable") == 1);
+    CHECK(count_containing(smdc_host::warnings, "No valid VE.Direct frame") == 0);
+    CHECK(battery_voltage.reporting() && battery_current.reporting());
+    // Sensors the device never provided are left untouched (still "unknown").
+    CHECK(solar_power.publishes == 0 && solar_voltage.publishes == 0 && solar_yield_today.publishes == 0);
+    CHECK(close_to(smdc_ve_frame_age_lambda(), 0.0));  // the frame age is about frames, not fields
   });
 
   vt::add_test("frame-age sensor: unknown before the first frame, keeps counting while withdrawn", [] {

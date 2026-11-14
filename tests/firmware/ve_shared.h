@@ -265,6 +265,9 @@ struct Lcg {
 //                                              what the flavour currently
 //                                              reports (nullopt = not reported)
 //   double tolerance();                        output resolution
+//   void advance_ms(unsigned long);            let that much time pass and run
+//                                              the firmware's periodic work
+//                                              (use steps of at most 1000 ms)
 
 // Delivers `data` in chunks; `sizes` is cycled, an empty list means "all at
 // once". The firmware loop runs after every chunk, like on the device.
@@ -569,6 +572,57 @@ void register_shared_tests() {
     }
     deliver<F>(ve_frame({{"PPV", "345"}}));
     CHECK(near<F>(F::solar_watts(), 345.0));
+  });
+
+  // Freshness is per FIELD, not per frame: checksum-valid frames that keep
+  // arriving must not keep an old value of a field they no longer carry.
+  add_test("SOC '---' in valid frames for 61 s: the old SoC is withdrawn, V and I stay live", [] {
+    F::boot();
+    deliver<F>(shunt_frame(26412, -1530, 900));
+    CHECK(near<F>(F::soc_percent(), 90.0));
+    unsigned long expected = 1;
+    for (int second = 1; second <= 61; second++) {
+      F::advance_ms(1000);
+      deliver<F>(ve_frame({{"V", std::to_string(26000 + second)}, {"I", "-1530"}, {"SOC", "---"}}));
+      expected++;
+      CHECK(F::valid_frames() == expected);
+      CHECK(F::bad_frames() == 0);
+      if (second <= 9) {
+        CHECK_MSG(near<F>(F::soc_percent(), 90.0), "SoC withdrawn too early, second " + std::to_string(second));
+      }
+      if (second >= 11) {
+        CHECK_MSG(!F::soc_percent().has_value(), "obsolete SoC still reported, second " + std::to_string(second));
+      }
+      // The fields the frames do carry are current throughout.
+      CHECK(near<F>(F::volts(), (26000 + second) / 1000.0));
+      CHECK(near<F>(F::amps(), -1.530));
+    }
+    // A frame that carries SOC again restores it at once.
+    F::advance_ms(1000);
+    deliver<F>(shunt_frame(26100, -1200, 850));
+    CHECK(near<F>(F::soc_percent(), 85.0));
+    CHECK(near<F>(F::volts(), 26.100));
+  });
+
+  add_test("valid frames that omit SOC for 61 s: the old SoC is withdrawn, the rest stays live", [] {
+    F::boot();
+    deliver<F>(shunt_frame(26412, -1530, 900));
+    CHECK(near<F>(F::soc_percent(), 90.0));
+    CHECK(!F::solar_watts().has_value());
+    for (int second = 1; second <= 61; second++) {
+      F::advance_ms(1000);
+      deliver<F>(mppt_frame(27000 + second, 12300, 345, 78120, 187));  // no SOC field at all
+      if (second <= 9) {
+        CHECK_MSG(near<F>(F::soc_percent(), 90.0), "SoC withdrawn too early, second " + std::to_string(second));
+      }
+      if (second >= 11) {
+        CHECK_MSG(!F::soc_percent().has_value(), "obsolete SoC still reported, second " + std::to_string(second));
+      }
+      CHECK(near<F>(F::volts(), (27000 + second) / 1000.0));
+      CHECK(near<F>(F::solar_watts(), 345.0));
+    }
+    CHECK(F::valid_frames() == 62);
+    CHECK(F::bad_frames() == 0);
   });
 
   add_test("starting mid-frame loses that frame only", [] {

@@ -119,7 +119,7 @@ flowchart TD
 
 ## 7. EU Data Sovereignty, GDPR & Air-Gap Compliance
 
-- **GDPR Article 32 (Security of Processing)**: Complete technical measures including end-to-end encryption, regular automated testing (681 unit tests, 89.8% coverage), and high resilience against power outages.
+- **GDPR Article 32 (Security of Processing)**: Complete technical measures including end-to-end encryption, regular automated testing (844 unit tests, 91.2% coverage), and high resilience against power outages.
 - **100% European & Sovereign Residency**: No outbound data leaves the local physical boundary. Unlike cloud services, prompt tokens and vector embeddings never transit US or third-country infrastructure, completely satisfying **Schrems II** data residency mandates.
 - **Physical Air-Gap Attestation**: When disconnected from terrestrial fiber and Starlink, the system continues full autonomous AI inference, local document indexing, and internal collaboration without degradation.
 

@@ -19,6 +19,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+. "$PSScriptRoot\bash_gates.ps1"
+
 function Show-Help {
     Write-Host '====================================================================' -ForegroundColor Cyan
     Write-Host 'Sovereign Mini Datacenter -- Windows Developer Task Runner' -ForegroundColor Cyan
@@ -116,7 +118,13 @@ switch ($Command) {
         uv tool run ruff check src/ tests/
         uv tool run mypy --ignore-missing-imports src/sovereign_dc
         uv run pytest --no-cov tests/
-        Write-Host "`nAll fast pre-push checks passed!" -ForegroundColor Green
+        # Mirror gate (bash script; reported as skipped when no bash is usable).
+        $mirrorsChecked = Invoke-BashGate -Name "Mirror gate" -Script "check_mirrors.sh"
+        if ($mirrorsChecked) {
+            Write-Host "`nAll fast pre-push checks passed!" -ForegroundColor Green
+        } else {
+            Write-Host "`nFast pre-push checks passed, EXCEPT the mirror gate, which was skipped (see above)." -ForegroundColor Yellow
+        }
     }
 
     "quality-gate" {
@@ -145,6 +153,12 @@ switch ($Command) {
 
     "docker-validate" {
         Write-Host "`n--> Validating Docker Compose configuration..." -ForegroundColor Cyan
+        # Preferred: the bash script CI runs (bind-mount sources + storage-identity invariant).
+        if (Invoke-BashGate -Name "Compose validation and invariant" -Script "validate_compose.sh" -Requires @("docker", "python3")) {
+            Write-Host "Docker Compose configurations valid (scripts/validate_compose.sh)." -ForegroundColor Green
+            break
+        }
+        Write-Host "Falling back to syntax-only validation: the bind-mount source check and the storage-identity invariant were NOT run." -ForegroundColor Yellow
         # Same file list as scripts/validate_compose.sh (used by CI).
         $envFile = "software/env.example"
         $overlays = @("vpn/docker-compose.vpn.yml", "backup/docker-compose.backup.yml",
@@ -163,7 +177,7 @@ switch ($Command) {
         # Merged set, as deployed by software/setup.sh --all.
         docker compose --env-file $envFile @merged config --quiet
         if ($LASTEXITCODE -ne 0) { exit 1 }
-        Write-Host "Docker Compose configurations valid (bind-mount sources are checked by scripts/validate_compose.sh only)." -ForegroundColor Green
+        Write-Host "Docker Compose files parse (syntax only; bind-mount sources and the storage-identity invariant are checked by scripts/validate_compose.sh only)." -ForegroundColor Yellow
     }
 
     "scad-export" {

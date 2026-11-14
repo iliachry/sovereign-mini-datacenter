@@ -30,7 +30,7 @@ const COMPONENT_DATA = {
     name: 'Motorized Phased Array Space Terminal',
     badge: 'SPACE / DTN',
     desc: 'Dual-axis electronically steerable beamforming phased array terminal executing RFC 9171 Delay-Tolerant Networking (BPv7) bundle reconciliations with passing LEO/MEO satellite constellations in real time.',
-    specs: { 'Protocol': 'RFC 9171 BPv7', 'Frequency': 'S-Band / Ku-Band', 'Throughput': '25 Mbps Downlink', 'Tracking': 'SGP4 Auto-Track', 'EIRP': '42.5 dBW' },
+    specs: { 'Protocol': 'RFC 9171 BPv7', 'Frequency': 'S-Band / Ku-Band', 'Throughput': '25 Mbps Downlink', 'Tracking': 'Simplified orbit model', 'EIRP': '42.5 dBW' },
   },
   dgx1: {
     name: 'NVIDIA DGX Spark AI Core 1',

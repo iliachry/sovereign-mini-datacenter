@@ -21,7 +21,7 @@ Unlike traditional cloud architectures that depend on centralized control planes
                                     │    LEO/MEO SATELLITE CONSTELLATION   │
                                     │    (Orbital DTN / BPv7 Store-Forward)│
                                     └──────┬──────────────────────┬────────┘
-                                           │ RFC 9171 Bundles     │ SGP4 Pass Tracking
+                                           │ RFC 9171 Bundles     │ Pass Prediction
                                            ▼                      ▼
 ┌──────────────────────────────────────────────┐              ┌──────────────────────────────────────────────┐
 │       NODE-ALPHA (Sovereign Core)            │              │        NODE-BETA (Edge AI Station)           │
@@ -72,7 +72,7 @@ graph TD
     L5["L5: Compute & Workload Orchestration (Talos Linux, K3s, Nomad, Wasm Runtimes)"]:::l5
     L4["L4: Trust, Identity & Cryptography (SPIFFE/SPIRE, TPM 2.0 / HSM, Kyber/Dilithium PQC)"]:::l4
     L3["L3: Multi-Tier Overlay Mesh (Headscale WireGuard, Nebula, Yggdrasil, BGP EVPN)"]:::l3
-    L2["L2: Deep Out-of-Band & DTN Routing (RFC 9171 BPv7, Meshtastic LoRa, SGP4 Orbit Tracker)"]:::l2
+    L2["L2: Deep Out-of-Band & DTN Routing (RFC 9171 BPv7, Meshtastic LoRa, Simplified Orbital Pass Predictor)"]:::l2
     L1["L1: Physical Microgrid & Telemetry (LiFePO4 BMS, Victron MPPT, ESP32, Coolant Loop)"]:::l1
 
     L7 --> L6
@@ -90,7 +90,7 @@ graph TD
 | **L5: Compute & Workloads** | Sovereign Orchestration | Talos Linux + K3s / Nomad / Docker Engine, WebAssembly (Wasm) | Dynamic container scheduling, AI batch pipelines, emergency load shedding. |
 | **L4: Trust & Identity** | Zero-Trust & PKI | SPIFFE/SPIRE, TPM 2.0 / HSM Attestation, Kyber/Dilithium PQC | Cryptographic machine identity, mutual TLS (mTLS), hardware trust roots. |
 | **L3: Network Fabric** | Multi-Tier Overlay Mesh | Headscale (WireGuard), Nebula, Yggdrasil, BGP EVPN | Seamless P2P flat mesh routing across dynamic NATs, firewalls, and air-gaps. |
-| **L2: Deep Out-of-Band** | Emergency Comms & DTN | RFC 9171 DTN/BPv7, Meshtastic LoRa, Starlink, SGP4 Orbit Tracker | Asynchronous orbital store-and-forward, low-baud heartbeat broadcast. |
+| **L2: Deep Out-of-Band** | Emergency Comms & DTN | RFC 9171 DTN/BPv7, Meshtastic LoRa, Starlink, simplified circular-orbit pass predictor (not SGP4) | Asynchronous orbital store-and-forward, low-baud heartbeat broadcast. |
 | **L1: Energy & Physical** | Microgrid & Telemetry | LiFePO4 BMS, Victron MPPT (VE.Direct/RS485), ESP32, Host Liquid Loop & Exhaust Fans | Solar harvesting, autonomous thermal regulation, brownout cold-recovery. |
 
 ---
@@ -136,7 +136,7 @@ graph TD
 
 4. **Tier 4: Space DTN / BPv7 Store-and-Forward (RFC 9171)**
    * **Trigger**: Complete terrestrial and line-of-sight isolation (Grid Down / Electromagnetic disruption).
-   * **Mechanism**: The node's `smdc.space` orbital propagator tracks LEO/MEO satellite relays using real-time SGP4 orbit propagation. Encrypted bundles are queued in persistent NVMe storage and burst-transmitted during Acquisition of Signal (AOS) to Loss of Signal (LOS) windows.
+   * **Mechanism**: The node's `smdc.space` orbital propagator predicts LEO/MEO satellite relay passes with a simplified circular-orbit model (not SGP4; pass times are approximate). Encrypted bundles are queued in persistent NVMe storage and burst-transmitted during Acquisition of Signal (AOS) to Loss of Signal (LOS) windows.
 
 ---
 
@@ -271,7 +271,7 @@ graph LR
 
 - **Sentinel Copilot Agent**: Parses hardware telemetry (`/dev/ttyUSB0` VE.Direct, RS485 Modbus, 1-Wire sensors) and executes deterministic emergency actions (GPU throttling, coolant pump speed adjustment, radiator and exhaust fan PWM control).
 - **Swarm Dispatcher Agent**: Participates in an open compute-bidding marketplace, shifting heavy compute tasks to nodes with >80% battery SoC and excess solar.
-- **Space Link Scheduler Agent**: Continuously recalculates orbital trajectories for LEO satellites using SGP4 algorithms, queueing DTN bundles for burst transmission during orbital passes.
+- **Space Link Scheduler Agent**: Recalculates contact windows for LEO satellites with the simplified circular-orbit propagator (not SGP4), queueing DTN bundles for burst transmission during orbital passes.
 
 ---
 

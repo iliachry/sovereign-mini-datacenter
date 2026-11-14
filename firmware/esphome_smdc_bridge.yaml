@@ -131,12 +131,18 @@ uart:
 # sends V, I, PPV, VPV and H20 and never sends SOC. Sensors the connected
 # device does not provide stay "unknown".
 #
-# Staleness: the parser records millis() of every checksum-valid frame in the
-# globals below. The 1 s watchdog interval further down publishes NAN to every
-# VE.Direct sensor once no valid frame has arrived for 10 s (cable unplugged,
-# device off), so the last reading is not reported forever: Home Assistant
-# shows the sensors as unknown and /metrics reports them as failed instead of
-# exporting a value. They are published again with the next valid frame.
+# Staleness is tracked PER FIELD, like the Arduino flavour's per-reading expiry:
+# the parser records millis() of every checksum-valid frame and, separately, of
+# the last usable value of each field in the globals below. The 1 s watchdog
+# interval further down publishes NAN
+#   - to every VE.Direct sensor once no valid frame has arrived for 10 s (cable
+#     unplugged, device off), and
+#   - to a single sensor once valid frames keep arriving but have not carried a
+#     usable value for that field for 10 s (e.g. a battery monitor that sends
+#     "SOC ---" while it re-synchronises, or a field the device stopped sending),
+# so a last reading is never reported forever: Home Assistant shows the sensor
+# as unknown and /metrics reports it as failed instead of exporting a value. It
+# is published again with the next valid frame that carries the field.
 globals:
   - id: ve_frame_seen # true once the first checksum-valid frame has arrived
     type: bool
@@ -146,10 +152,19 @@ globals:
     type: uint32_t
     restore_value: no
     initial_value: "0"
-  - id: ve_stale # true while the VE.Direct sensors are withdrawn (NAN)
+  - id: ve_stale # true while all VE.Direct sensors are withdrawn (no valid frame)
     type: bool
     restore_value: no
     initial_value: "false"
+  # Per field, in parser order: V, I, PPV, SOC, VPV, H20.
+  - id: ve_field_ms # millis() of the last usable value of each field
+    type: uint32_t[6]
+    restore_value: no
+    initial_value: "{0, 0, 0, 0, 0, 0}"
+  - id: ve_field_live # true while that field's sensor carries a value
+    type: bool[6]
+    restore_value: no
+    initial_value: "{false, false, false, false, false, false}"
 
 interval:
   - interval: 100ms
@@ -188,15 +203,24 @@ interval:
             }
           };
 
-          // Publish the fields of a checksum-valid frame.
+          // Publish the fields of a checksum-valid frame. Only a field the frame
+          // carried with a usable value refreshes that field's timestamp; the
+          // watchdog withdraws the others individually once they are 10 s old.
           auto publish_frame = [&]() {
+            const uint32_t now = millis();
             if (staged_set[0]) id(battery_voltage).publish_state(staged[0] / 1000.0f);   // mV  -> V
             if (staged_set[1]) id(battery_current).publish_state(staged[1] / 1000.0f);   // mA  -> A
             if (staged_set[2]) id(solar_power).publish_state(staged[2]);                 // W
             if (staged_set[3]) id(battery_soc).publish_state(staged[3] / 10.0f);         // per mille -> %
             if (staged_set[4]) id(solar_voltage).publish_state(staged[4] / 1000.0f);     // mV  -> V
             if (staged_set[5]) id(solar_yield_today).publish_state(staged[5] * 10.0f);   // 0.01 kWh -> Wh
-            id(ve_last_valid_ms) = millis();
+            for (size_t i = 0; i < FIELD_COUNT; i++) {
+              if (staged_set[i]) {
+                id(ve_field_ms)[i] = now;
+                id(ve_field_live)[i] = true;
+              }
+            }
+            id(ve_last_valid_ms) = now;
             id(ve_frame_seen) = true;
             if (id(ve_stale)) {
               id(ve_stale) = false;
@@ -265,26 +289,46 @@ interval:
             }
           }
 
-  # VE.Direct staleness watchdog: withdraw the readings when frames stop.
-  # Unsigned subtraction keeps the age correct across the 49-day millis() wrap.
+  # VE.Direct staleness watchdog: withdraw every reading when frames stop, and a
+  # single reading when valid frames no longer carry a usable value for it.
+  # Unsigned subtraction keeps the ages correct across the 49-day millis() wrap
+  # (a field is checked every second while live, so its age never aliases).
   - interval: 1s
     then:
       - lambda: |-
           static const uint32_t VE_STALE_AFTER_MS = 10000;
+          static const size_t FIELD_COUNT = 6;
+          static const char *const LABELS[FIELD_COUNT] = {"V", "I", "PPV", "SOC", "VPV", "H20"};
           if (!id(ve_frame_seen) || id(ve_stale)) {
             return;
           }
-          if (static_cast<uint32_t>(millis() - id(ve_last_valid_ms)) < VE_STALE_AFTER_MS) {
+          auto withdraw = [&](size_t i) {
+            id(ve_field_live)[i] = false;
+            switch (i) {
+              case 0: id(battery_voltage).publish_state(NAN); break;
+              case 1: id(battery_current).publish_state(NAN); break;
+              case 2: id(solar_power).publish_state(NAN); break;
+              case 3: id(battery_soc).publish_state(NAN); break;
+              case 4: id(solar_voltage).publish_state(NAN); break;
+              default: id(solar_yield_today).publish_state(NAN); break;
+            }
+          };
+          const uint32_t now = millis();
+          if (static_cast<uint32_t>(now - id(ve_last_valid_ms)) >= VE_STALE_AFTER_MS) {
+            id(ve_stale) = true;
+            ESP_LOGW("vedirect", "No valid VE.Direct frame for 10 s: marking readings unavailable");
+            for (size_t i = 0; i < FIELD_COUNT; i++) {
+              withdraw(i);
+            }
             return;
           }
-          id(ve_stale) = true;
-          ESP_LOGW("vedirect", "No valid VE.Direct frame for 10 s: marking readings unavailable");
-          id(battery_voltage).publish_state(NAN);
-          id(battery_current).publish_state(NAN);
-          id(solar_power).publish_state(NAN);
-          id(battery_soc).publish_state(NAN);
-          id(solar_voltage).publish_state(NAN);
-          id(solar_yield_today).publish_state(NAN);
+          // Frames are arriving: expire each field on its own clock.
+          for (size_t i = 0; i < FIELD_COUNT; i++) {
+            if (id(ve_field_live)[i] && static_cast<uint32_t>(now - id(ve_field_ms)[i]) >= VE_STALE_AFTER_MS) {
+              ESP_LOGW("vedirect", "Field %s missing or unusable in valid frames for 10 s: marking it unavailable", LABELS[i]);
+              withdraw(i);
+            }
+          }
 
   # OLED page cycling
   - interval: 5s
@@ -313,7 +357,8 @@ sensor:
     accuracy_decimals: 2
 
   # Victron VE.Direct fields (published by the UART parser interval above and
-  # set to NAN by the staleness watchdog when frames stop for 10 s)
+  # set to NAN by the staleness watchdog: all of them when frames stop for 10 s,
+  # one of them when valid frames have not carried that field for 10 s)
   - platform: template
     name: "Battery Voltage"
     id: battery_voltage

@@ -10,6 +10,7 @@ import pytest
 from sovereign_dc import config as smdc_config
 from sovereign_dc.events import reset_event_bus
 from sovereign_dc.mcp.tools import reset_enterprise_manager
+from sovereign_dc.space.dtn import router as smdc_dtn_router
 from sovereign_dc.web import dashboard as smdc_dashboard
 from sovereign_dc.web.dashboard import _HARDWARE_LOCK, _HARDWARE_STATE
 
@@ -24,6 +25,10 @@ def isolate_smdc_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("HOME", str(test_home))
     monkeypatch.setenv("SMDC_STATE_DIR", str(test_home / ".smdc"))
     monkeypatch.setenv("DTN_DB_PATH", str(test_home / "test_dtn_bundles.db"))
+    # Legacy-spool fallback must never pick up a real /tmp/dtn_spool.db from the host.
+    monkeypatch.setattr(smdc_config, "LEGACY_TMP_DIR", str(tmp_path / "legacy_tmp"))
+    monkeypatch.setattr(smdc_dtn_router, "LEGACY_TMP_DIR", str(tmp_path / "legacy_tmp"))
+    monkeypatch.delenv("TEMP", raising=False)
     monkeypatch.delenv("SMDC_DASHBOARD_TOKEN", raising=False)
     monkeypatch.delenv("SMDC_CORS_ORIGIN", raising=False)
 
@@ -31,6 +36,8 @@ def isolate_smdc_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     smdc_config.reset_config()
     reset_event_bus()
     reset_enterprise_manager()
+    # Explicit isolation: never serve one test a status payload assembled for another.
+    smdc_dashboard.invalidate_status_cache()
     with _HARDWARE_LOCK:
         smdc_dashboard._METAVERSE_ORCH = None
         _HARDWARE_STATE["door_open"] = False
@@ -43,3 +50,4 @@ def isolate_smdc_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     smdc_config.reset_config()
     reset_event_bus()
     reset_enterprise_manager()
+    smdc_dashboard.invalidate_status_cache()

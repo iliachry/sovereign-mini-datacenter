@@ -1,0 +1,68 @@
+# Attach file: run ONE overlay on its own against a core stack that is already up.
+#
+#   docker compose --project-directory software [-p <core project name>] \
+#     -f software/docker-compose.attach.yml -f software/<overlay>.yml up -d
+#
+# It declares the core stack's network and volumes as `external`, under the names
+# the core stack gave them (<project>_<key>; the project name defaults to
+# "software", the name of the project directory). Consequences:
+#   - the overlay attaches to the running stack's objects, never to new empty ones;
+#   - if the core stack does not exist under that project name, `up` fails with
+#     "external volume/network ... not found" instead of silently creating blanks;
+#   - `down -v` on the overlay cannot delete core data (external objects are kept).
+#
+# Do NOT add this file when merging overlays with docker-compose.yml (setup.sh does
+# not): there the overlays reference the core file's own keys, which carry no
+# `name:`, so every service keeps its <project>_* volumes whatever the project name.
+#
+# Keep the key list identical to the `volumes:` block of docker-compose.yml;
+# scripts/validate_compose.sh fails when they drift apart.
+networks:
+  sovereign_net:
+    external: true
+    name: ${COMPOSE_PROJECT_NAME}_sovereign_net
+
+volumes:
+  traefik_certs:
+    external: true
+    name: ${COMPOSE_PROJECT_NAME}_traefik_certs
+  # Fixed name in docker-compose.yml (shared with the CrowdSec overlay).
+  traefik_logs:
+    external: true
+    name: sovereign_traefik_logs
+  ollama_data:
+    external: true
+    name: ${COMPOSE_PROJECT_NAME}_ollama_data
+  webui_data:
+    external: true
+    name: ${COMPOSE_PROJECT_NAME}_webui_data
+  gitlab_config:
+    external: true
+    name: ${COMPOSE_PROJECT_NAME}_gitlab_config
+  gitlab_logs:
+    external: true
+    name: ${COMPOSE_PROJECT_NAME}_gitlab_logs
+  gitlab_data:
+    external: true
+    name: ${COMPOSE_PROJECT_NAME}_gitlab_data
+  openproject_data:
+    external: true
+    name: ${COMPOSE_PROJECT_NAME}_openproject_data
+  openproject_pgdata:
+    external: true
+    name: ${COMPOSE_PROJECT_NAME}_openproject_pgdata
+  nextcloud_data:
+    external: true
+    name: ${COMPOSE_PROJECT_NAME}_nextcloud_data
+  vaultwarden_data:
+    external: true
+    name: ${COMPOSE_PROJECT_NAME}_vaultwarden_data
+  prometheus_data:
+    external: true
+    name: ${COMPOSE_PROJECT_NAME}_prometheus_data
+  grafana_data:
+    external: true
+    name: ${COMPOSE_PROJECT_NAME}_grafana_data
+  qdrant_data:
+    external: true
+    name: ${COMPOSE_PROJECT_NAME}_qdrant_data

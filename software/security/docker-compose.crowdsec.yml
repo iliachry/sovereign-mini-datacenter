@@ -8,8 +8,16 @@
 #
 # Relative paths below are resolved against the Compose project directory,
 # which is `software/` when this file is merged with the core stack
-# (`./setup.sh --with-security`). To run it standalone, pin the project directory:
-#   docker compose --project-directory software -f software/security/docker-compose.crowdsec.yml up -d
+# (`./setup.sh --with-security`). To run it standalone against a core stack that is
+# already up, add the attach file, which declares the core stack's network and
+# volumes as external (use the same -p <name> as the core stack if it is not the
+# default "software"):
+#   docker compose --project-directory software \
+#     -f software/docker-compose.attach.yml -f software/security/docker-compose.crowdsec.yml up -d
+#
+# No `name:` is set on sovereign_net or on any volume key that docker-compose.yml
+# also declares: merged or attached, they resolve to the core stack's own
+# <project>_* objects for every project name (scripts/validate_compose.sh checks it).
 services:
   crowdsec:
     image: crowdsecurity/crowdsec:v1.6.0
@@ -38,4 +46,3 @@ volumes:
 
 networks:
   sovereign_net:
-    name: software_sovereign_net

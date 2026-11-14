@@ -90,6 +90,8 @@ inline StubUart uart_ve_direct;
 inline bool ve_frame_seen = false;       // globals: initial_value "false"
 inline StubGlobalU32 ve_last_valid_ms;   // globals: initial_value "0"
 inline bool ve_stale = false;            // globals: initial_value "false"
+inline uint32_t ve_field_ms[6] = {0, 0, 0, 0, 0, 0};                         // globals: type uint32_t[6]
+inline bool ve_field_live[6] = {false, false, false, false, false, false};   // globals: type bool[6]
 
 // Must come after every standard header (it would break e.g. std::locale::id).
 #define id(x) (x)

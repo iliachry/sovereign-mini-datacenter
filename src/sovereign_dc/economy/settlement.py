@@ -13,7 +13,7 @@ from dataclasses import asdict, dataclass, fields
 from datetime import UTC, datetime
 from typing import Any
 
-from sovereign_dc.economy.ledger import Ledger, Transaction, TransactionRejected
+from sovereign_dc.economy.ledger import Ledger, Transaction, TransactionRejected, credits_to_micro
 from sovereign_dc.economy.wallet import AddressType, NodeWallet
 from sovereign_dc.log import get_logger
 from sovereign_dc.space.dtn.bundle import Bundle
@@ -330,7 +330,9 @@ class SettlementEngine:
 
         Raises ValueError if the receipt is not signed by the key that owns
         ``proof.worker_address``, if it was issued to a different client than
-        ``client_wallet``, or if this client/worker/task has already been settled on ``ledger``.
+        ``client_wallet``, if this client/worker/task has already been settled on ``ledger``,
+        or if the signed amount is not a multiple of 0.000001 credits (the ledger's unit of
+        account): such a debt cannot be paid exactly and is never rounded silently.
 
         The receipt's settlement key is signed into the payment transaction, so a ledger that
         later reconciles that transaction also refuses to settle the same receipt again.
@@ -343,12 +345,21 @@ class SettlementEngine:
                 f"not to the paying wallet {client_wallet.address}"
             )
 
+        amount_due = proof.signed_credits_due()
+        try:
+            credits_to_micro(amount_due)
+        except ValueError as err:
+            raise ValueError(
+                f"ProofOfCompute {proof.task_id} claims {amount_due!r} credits, which the ledger cannot "
+                "settle exactly (amounts must be multiples of 0.000001 credits)"
+            ) from err
+
         memo = f"compute_settle:{proof.service_type}:{proof.task_id}"
         try:
             tx = ledger.transfer(
                 sender_wallet=client_wallet,
                 recipient=proof.worker_address,
-                amount=proof.signed_credits_due(),
+                amount=amount_due,
                 memo=memo,
                 settlement_key=proof.settlement_key(),
             )

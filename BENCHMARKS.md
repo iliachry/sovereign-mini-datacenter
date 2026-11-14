@@ -75,7 +75,7 @@ xychart-beta
 
 ## 4. Benchmark Suite 3: Dynamic Load-Shedding & Reaction Latency
 
-The **Sentinel Copilot** agent monitors physical Victron VE.Direct serial telemetry and BMS state every 1,000ms. We measured the response time when triggering dynamic stage transitions ($L_0 \to L_1 \to L_2 \to L_3$):
+The **Sentinel Copilot** agent (`sentinel_copilot.py`) polls the power exporter's `/metrics` endpoint every 30 s (`POLL_INTERVAL_SECONDS = 30`, a module constant; there is no environment variable for it, so changing it means editing the file). It does not read VE.Direct or the BMS directly, and a change in battery state is therefore noticed up to 30 s after it happens. The figures below are reference values for the reaction pipeline *after* detection on the target hardware ($L_0 \to L_1 \to L_2 \to L_3$); they do not include the polling interval and are not produced by code in this repository (see Provenance above):
 
 ```
 Telemetry Scraping ──► State Evaluator ──► Cgroup / GPU Throttle ──► Physical Relay Shed

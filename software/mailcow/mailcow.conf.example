@@ -61,3 +61,8 @@ WATCHDOG_NOTIFY_SUBJECT=Mailcow Alert
 
 # ── ACL — restrict admin panel to LAN ────────────────────────────────
 # MAILCOW_PASS_FILTER=
+
+# ── Core stack network (read by ../docker-compose.override.yml) ───────
+# Only needed when the core stack does not run under the default Compose
+# project name "software": the network is <project>_sovereign_net.
+# SOVEREIGN_NET_NAME=software_sovereign_net

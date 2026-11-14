@@ -1,5 +1,9 @@
 # LoRa / Meshtastic gateway (standalone; not part of setup.sh).
 #   docker compose -f software/mesh/lora/docker-compose.lora.yml up -d
+#
+# This is its own Compose project ("lora"), so it joins the core stack's network
+# as an external network. If the core stack runs under a project name other than
+# the default "software", set SOVEREIGN_NET_NAME=<project>_sovereign_net.
 services:
   lora-gateway:
     image: python:3.11-alpine
@@ -23,4 +27,5 @@ services:
 
 networks:
   sovereign_net:
-    name: software_sovereign_net
+    external: true
+    name: ${SOVEREIGN_NET_NAME:-software_sovereign_net}

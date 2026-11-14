@@ -34,7 +34,7 @@ class MCPResource:
 
 
 def read_telemetry_resource() -> str:
-    """Returns a JSON string snapshot of real-time hardware telemetry."""
+    """Returns a JSON string snapshot of hardware telemetry, with its measured/simulated provenance."""
     power = read_power(exporter_url=get_config().power_exporter_url, simulation=get_config().is_simulation())
     thermal = read_thermal(exporter_url=get_config().power_exporter_url, simulation=get_config().is_simulation())
     storage = detect_storage()
@@ -43,18 +43,21 @@ def read_telemetry_resource() -> str:
     data = {
         "uri": "smdc://telemetry/current",
         "timestamp": time.time(),
+        "telemetry_simulated": bool(power.is_simulated or thermal.is_simulated),
         "power": {
             "battery_soc_percent": power.battery_soc,
             "battery_voltage_volts": power.battery_voltage,
             "solar_pv_watts": power.solar_watts,
             "system_load_watts": power.system_load_watts,
             "load_shedding_active": power.load_shedding_active,
+            "is_simulated": bool(power.is_simulated),
         },
         "thermal": {
             "coolant_celsius": thermal.coolant_celsius,
             "rack_inlet_celsius": thermal.rack_inlet_celsius,
             "rack_exhaust_celsius": thermal.rack_exhaust_celsius,
             "is_overtemp": thermal.is_overtemp,
+            "is_simulated": bool(thermal.is_simulated),
         },
         "storage": {
             "total_gb": storage.total_gb,
@@ -110,6 +113,7 @@ def read_market_resource() -> str:
         "timestamp": time.time(),
         "battery_soc": power.battery_soc,
         "solar_watts": power.solar_watts,
+        "telemetry_simulated": bool(power.is_simulated),
         "multiplier": mult,
         "market_status": status,
         "catalog": catalog,
@@ -135,12 +139,66 @@ def read_dtn_spool_resource() -> str:
     return json.dumps(data, indent=2)
 
 
+_PQC_SELF_TEST_MESSAGE = b"SMDC_MCP_PQC_STATUS_SELF_TEST"
+# Round-trip results per algorithm for this process. Only passes are cached; a failing
+# engine is re-tested on the next read.
+_PQC_SELF_TEST_PASSED: set[str] = set()
+
+
+def _pqc_self_tests() -> dict[str, str]:
+    """Runs (once per process) a round-trip self-test of each implemented PQC algorithm.
+
+    Returns ``{algorithm name: "PASSED" | "FAILED"}`` for the four engines the package
+    implements: ML-DSA-65/87 (keygen, sign, verify) and ML-KEM-768/1024 (keygen,
+    encapsulate, decapsulate).
+    """
+    from sovereign_dc.security.pqc import PQCKEM, PQCAlgorithm, PQCSigner
+
+    results: dict[str, str] = {}
+    for algorithm in (
+        PQCAlgorithm.ML_DSA_65,
+        PQCAlgorithm.ML_DSA_87,
+        PQCAlgorithm.ML_KEM_768,
+        PQCAlgorithm.ML_KEM_1024,
+    ):
+        name = algorithm.value
+        passed = name in _PQC_SELF_TEST_PASSED
+        if not passed:
+            try:
+                if algorithm in (PQCAlgorithm.ML_DSA_65, PQCAlgorithm.ML_DSA_87):
+                    signer = PQCSigner(algorithm)
+                    keypair = signer.generate_keypair()
+                    signature = signer.sign(_PQC_SELF_TEST_MESSAGE, keypair.private_key)
+                    passed = signer.verify(_PQC_SELF_TEST_MESSAGE, signature, keypair.public_key)
+                else:
+                    kem = PQCKEM(algorithm)
+                    keypair = kem.generate_keypair()
+                    ciphertext, shared_client = kem.encapsulate(keypair.public_key)
+                    passed = kem.decapsulate(ciphertext, keypair.private_key) == shared_client
+            except Exception:
+                passed = False
+            if passed:
+                _PQC_SELF_TEST_PASSED.add(name)
+        results[name] = "PASSED" if passed else "FAILED"
+    return results
+
+
 def read_pqc_status_resource() -> str:
-    """Returns a JSON string describing active Post-Quantum Cryptography implementations."""
+    """Returns a JSON string with what is verified about the PQC engines on this node.
+
+    Only two things are measured: which algorithms the package implements and whether each
+    one passes a functional round-trip self-test in this process. No compliance assessment
+    is performed, no key or transport policy is inspected, and nothing here shows that PQC
+    is enforced on any link, so unassessed standards are reported as ``not assessed``.
+    """
+    self_tests = _pqc_self_tests()
+    all_passed = all(result == "PASSED" for result in self_tests.values())
     data = {
         "uri": "smdc://security/pqc/status",
         "timestamp": time.time(),
-        "compliance_standards": ["NIST SP 800-207 Zero Trust", "NIST FIPS 203", "NIST FIPS 204"],
+        "status": "SELF_TEST_PASSED" if all_passed else "SELF_TEST_FAILED",
+        "status_basis": "functional round-trip self-test of each implemented algorithm; not a compliance audit",
+        "self_tests": self_tests,
         "algorithms": {
             "digital_signatures": {
                 "primary": "NIST FIPS 204 ML-DSA-87 (Category 5 lattice signature)",
@@ -152,7 +210,15 @@ def read_pqc_status_resource() -> str:
                 "secondary": "NIST FIPS 203 ML-KEM-768 (Category 3 lattice KEM)",
             },
         },
-        "status": "ACTIVE_ENFORCED",
+        # Algorithms are implemented to these specifications; conformance (e.g. ACVP/CAVP
+        # validation) and Zero Trust posture are not measured by this software.
+        "implemented_specifications": ["NIST FIPS 203 (ML-KEM)", "NIST FIPS 204 (ML-DSA)"],
+        "compliance_standards": {
+            "NIST FIPS 203": "not assessed (implemented; self-test only, no CAVP validation)",
+            "NIST FIPS 204": "not assessed (implemented; self-test only, no CAVP validation)",
+            "NIST SP 800-207 Zero Trust": "not assessed",
+        },
+        "enforcement": "not assessed",
     }
     return json.dumps(data, indent=2)
 
@@ -166,7 +232,7 @@ def get_mcp_resources() -> list[MCPResource]:
         MCPResource(
             uri="smdc://telemetry/current",
             name="Current Hardware Telemetry",
-            description="Real-time snapshot of battery SoC, solar harvest, AC load, coolant temps, and GPU health.",
+            description="Snapshot of battery SoC, solar harvest, AC load, coolant temps, and GPU count; is_simulated marks simulator-generated readings.",
             mime_type="application/json",
             reader=read_telemetry_resource,
         ),
@@ -194,7 +260,7 @@ def get_mcp_resources() -> list[MCPResource]:
         MCPResource(
             uri="smdc://security/pqc/status",
             name="Post-Quantum Cryptography Status",
-            description="Cryptographic attestation and active NIST FIPS 203/204 algorithms.",
+            description="Implemented NIST FIPS 203/204 algorithms and their round-trip self-test results (no compliance assessment).",
             mime_type="application/json",
             reader=read_pqc_status_resource,
         ),

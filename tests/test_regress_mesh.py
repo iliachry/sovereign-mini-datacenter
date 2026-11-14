@@ -237,3 +237,109 @@ def test_four_node_leader_alone_does_not_commit():
     idx = cluster.nodes["a"].submit_command({"task": "x"})
     cluster.replicate_heartbeats("a", reachable={"b"})
     assert cluster.nodes["a"].commit_index < idx
+
+
+# --- Raft: a demoted leader must stop replicating; committed entries are never overwritten ---
+
+
+def _stale_leader_cluster() -> RaftCluster:
+    """A holds an uncommitted term-1 entry; B and C committed a different term-2 entry at index 1."""
+    cluster = RaftCluster(["A", "B", "C"])
+    a = cluster.nodes["A"]
+    a.current_term = 1
+    a.become_leader()
+    a.submit_command({"x": "stale"})
+    for peer in ("B", "C"):
+        node = cluster.nodes[peer]
+        node.current_term = 2
+        node.log = [LogEntry(term=2, index=1, command={"x": "committed"})]
+        node.commit_index = 1
+    return cluster
+
+
+def test_demoted_leader_stops_replicating_mid_round() -> None:
+    cluster = _stale_leader_cluster()
+    a, c = cluster.nodes["A"], cluster.nodes["C"]
+    # C has not heard of term 2 as a term number yet, so only the sender-side check can stop A.
+    c.current_term = 1
+
+    cluster.replicate_heartbeats("A")  # B's higher-term reply demotes A before C is contacted
+
+    assert a.role == NodeRole.FOLLOWER and a.current_term == 2
+    assert [e.command for e in c.log] == [{"x": "committed"}]
+    assert c.commit_index == 1
+    assert c.current_term == 1  # C was never contacted by the demoted node
+    assert a.commit_index == 0  # and A committed nothing on the way out
+
+
+def test_non_leader_cannot_create_append_entries() -> None:
+    from sovereign_dc.mesh.consensus import NotLeaderError
+
+    cluster = _stale_leader_cluster()
+    a = cluster.nodes["A"]
+    reply = cluster.nodes["B"].handle_append_entries(a.create_append_entries("B"))
+    a.handle_append_reply("B", reply, 3)
+    assert a.role == NodeRole.FOLLOWER
+    with pytest.raises(NotLeaderError):
+        a.create_append_entries("C")
+    with pytest.raises(NotLeaderError):
+        RaftNode("fresh", peers=["p"]).create_append_entries("p")
+
+
+def test_follower_never_overwrites_committed_entry() -> None:
+    follower = RaftNode("C", peers=["A", "B"])
+    follower.current_term = 2
+    follower.log = [_entry(2, 1), _entry(2, 2)]
+    follower.commit_index = 1
+
+    # Same term, conflicting entry at the committed index 1: refused, nothing changes.
+    bad = AppendEntriesArgs(
+        term=2, leader_id="A", prev_log_index=0, prev_log_term=0, entries=[_entry(1, 1)], leader_commit=0
+    )
+    reply = follower.handle_append_entries(bad)
+    assert reply.success is False
+    assert [(e.term, e.index) for e in follower.log] == [(2, 1), (2, 2)]
+    assert follower.commit_index == 1
+
+    # A higher term does not buy the right to rewrite committed history either.
+    worse = AppendEntriesArgs(
+        term=9, leader_id="A", prev_log_index=0, prev_log_term=0, entries=[_entry(9, 1)], leader_commit=1
+    )
+    assert follower.handle_append_entries(worse).success is False
+    assert [(e.term, e.index) for e in follower.log] == [(2, 1), (2, 2)]
+
+    # An uncommitted suffix may still be replaced by the leader (normal Raft conflict resolution).
+    ok = AppendEntriesArgs(
+        term=9, leader_id="A", prev_log_index=1, prev_log_term=2, entries=[_entry(9, 2)], leader_commit=2
+    )
+    reply = follower.handle_append_entries(ok)
+    assert reply.success is True
+    assert [(e.term, e.index) for e in follower.log] == [(2, 1), (9, 2)]
+    assert follower.commit_index == 2
+
+
+def test_leader_refuses_append_entries_from_same_term_peer_or_itself() -> None:
+    leader = RaftNode("L", peers=["X"])
+    leader.current_term = 3
+    leader.become_leader()
+    leader.submit_command({"k": 1})
+
+    rival = AppendEntriesArgs(
+        term=3, leader_id="X", prev_log_index=0, prev_log_term=0, entries=[_entry(3, 1)], leader_commit=1
+    )
+    reply = leader.handle_append_entries(rival)
+    assert reply.success is False
+    assert leader.role == NodeRole.LEADER and leader.leader_id == "L"
+    assert leader.log[0].command == {"k": 1} and leader.commit_index == 0
+
+    follower = RaftNode("F", peers=["L"])
+    own = AppendEntriesArgs(
+        term=1, leader_id="F", prev_log_index=0, prev_log_term=0, entries=[_entry(1, 1)], leader_commit=1
+    )
+    assert follower.handle_append_entries(own).success is False
+    assert follower.log == [] and follower.leader_id is None
+
+    # A genuinely newer leader is still obeyed.
+    newer = AppendEntriesArgs(term=4, leader_id="X", prev_log_index=0, prev_log_term=0, entries=[], leader_commit=0)
+    assert leader.handle_append_entries(newer).success is True
+    assert leader.role == NodeRole.FOLLOWER and leader.leader_id == "X"

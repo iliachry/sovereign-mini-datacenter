@@ -189,7 +189,10 @@ def test_knowledge_indexer_run_worker(tmp_path, caplog):
     test_doc.write_text("Hardware assembly instructions.")
 
     with patch("sovereign_dc.agents.knowledge_indexer.WATCH_DIR", str(tmp_path)):
-        with patch("sovereign_dc.agents.knowledge_indexer.ensure_qdrant_collection"):
+        with (
+            patch("sovereign_dc.agents.knowledge_indexer.ensure_qdrant_collection"),
+            patch("sovereign_dc.agents.knowledge_indexer.seed_indexed_sources", return_value=True),
+        ):
             with patch("sovereign_dc.agents.knowledge_indexer.index_file") as mock_idx:
                 with patch("time.sleep", side_effect=StopIteration("End loop")):
                     with pytest.raises(StopIteration):

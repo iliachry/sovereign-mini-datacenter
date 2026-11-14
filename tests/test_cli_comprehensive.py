@@ -275,12 +275,12 @@ def test_cmd_agent_index(tmp_path, capsys):
     (docs_dir / "guide.md").write_text("# Setup Guide")
 
     with patch("sovereign_dc.agents.knowledge_indexer.ensure_qdrant_collection"):
-        with patch("sovereign_dc.agents.knowledge_indexer.process_file", create=True):
-            cli.cmd_agent_index(Namespace(directory=str(docs_dir)))
+        with patch("sovereign_dc.agents.knowledge_indexer.process_file", create=True, return_value=True):
+            assert cli.cmd_agent_index(Namespace(directory=str(docs_dir))) == 0
 
     out = capsys.readouterr().out
     assert "Indexing documents from" in out
-    assert "Successfully indexed" in out
+    assert "Successfully indexed 1 document(s)" in out
 
     # Test missing dir
     cli.cmd_agent_index(Namespace(directory="/non/existent/dir"))

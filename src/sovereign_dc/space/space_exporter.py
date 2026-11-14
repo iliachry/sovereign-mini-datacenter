@@ -26,7 +26,21 @@ GROUND_NAME = os.getenv("GROUND_STATION_NAME", "Sovereign-Ground-01")
 ground_station = GroundStation(GROUND_NAME, GROUND_LAT, GROUND_LON)
 satellites = get_active_satellites()
 simulator = SpaceChannelSimulator(ground_station)
-router = DTNRouter(db_path=os.getenv("DTN_DB_PATH", "/tmp/dtn_spool.db"))
+# The spool is opened on first use, not at import: importing this module must not create
+# or open a database. Assign a DTNRouter here to inject one.
+router: DTNRouter | None = None
+
+
+def get_router() -> DTNRouter:
+    """Returns the exporter's spool router, opening it on first use.
+
+    The spool path is ``DTN_DB_PATH`` when set (the container image sets it to its spool
+    volume), else the private state-directory default of ``DTNRouter``.
+    """
+    global router
+    if router is None:
+        router = DTNRouter()
+    return router
 
 
 NO_PASS_IN_WINDOW = -1
@@ -66,7 +80,7 @@ def get_space_telemetry_metrics() -> str:
     next_pass_seconds = seconds_until_next_pass(passes, now)
 
     # 3. Get DTN spool queue metrics
-    spool_stats = router.get_queue_stats()
+    spool_stats = get_router().get_queue_stats()
     queue_count = spool_stats["queued_bundle_count"]
     queue_bytes = spool_stats["total_spool_bytes"]
 

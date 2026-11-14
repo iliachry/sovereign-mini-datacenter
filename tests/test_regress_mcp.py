@@ -13,6 +13,7 @@ from typing import Any
 import pytest
 import yaml
 
+from sovereign_dc import config as smdc_config
 from sovereign_dc.enterprise.schema import AppManifest
 from sovereign_dc.mcp import tools as mcp_tools
 from sovereign_dc.mcp.server import MCPServer
@@ -161,7 +162,7 @@ def broken_state_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     fake_tmp = tmp_path / "tmp"
     fake_tmp.mkdir()
     monkeypatch.setattr(tempfile, "tempdir", str(fake_tmp))
-    monkeypatch.setattr(mcp_tools, "_FALLBACK_STATE_DIR", None)
+    monkeypatch.setattr(smdc_config, "_FALLBACK_STATE_DIR", None)
     return fake_tmp
 
 
@@ -197,7 +198,7 @@ def test_state_dir_fallback_reuses_its_own_private_directory(broken_state_dir: P
     first = Path(mcp_tools._get_mcp_state_dir())
     assert first == broken_state_dir / f"smdc-{os.getuid()}"
     assert stat.S_IMODE(first.stat().st_mode) == 0o700
-    mcp_tools._FALLBACK_STATE_DIR = None
+    smdc_config._FALLBACK_STATE_DIR = None
     assert Path(mcp_tools._get_mcp_state_dir()) == first
 
 
@@ -237,3 +238,90 @@ def test_enterprise_app_state_is_reported_as_estimated(tmp_path: Path) -> None:
     assert started["state"]["metrics_source"] == "estimated"
     assert started["state"]["process_supervised"] is False
     assert started["state"]["pid"] is None
+
+
+# --------------------------------------------------------------------------------------
+# Tri-council round 1: provenance, DTN contract, truthful capability descriptions
+# --------------------------------------------------------------------------------------
+
+
+def test_telemetry_tools_and_resources_keep_simulation_provenance() -> None:
+    server = MCPServer()
+    telemetry = _call(server, "get_telemetry", {})
+    assert telemetry["power"]["is_simulated"] is True
+    assert telemetry["thermal"]["is_simulated"] is True
+    assert telemetry["telemetry_simulated"] is True
+    assert _call(server, "get_system_status", {})["telemetry_simulated"] is True
+
+    pricing = _call(server, "query_market_pricing", {})
+    assert pricing["inputs_source"] == "simulated_telemetry" and pricing["telemetry_simulated"] is True
+    what_if = _call(server, "query_market_pricing", {"battery_soc": 50, "solar_watts": 100})
+    assert what_if["inputs_source"] == "caller"
+
+    res = server.handle_request(
+        {"jsonrpc": "2.0", "id": 2, "method": "resources/read", "params": {"uri": "smdc://telemetry/current"}}
+    )
+    assert res is not None
+    resource = json.loads(res["result"]["contents"][0]["text"])
+    assert resource["power"]["is_simulated"] is True and resource["thermal"]["is_simulated"] is True
+
+
+def test_measured_readings_are_not_marked_simulated(monkeypatch: pytest.MonkeyPatch) -> None:
+    from sovereign_dc.hal.power import PowerReading
+    from sovereign_dc.hal.thermal import ThermalReading
+
+    measured_power = PowerReading(battery_soc=80.0, solar_watts=900.0, is_simulated=False)
+    measured_thermal = ThermalReading(
+        coolant_celsius=30.0, rack_inlet_celsius=24.0, rack_exhaust_celsius=33.0, is_simulated=False
+    )
+    monkeypatch.setattr(mcp_tools, "read_power", lambda **_k: measured_power)
+    monkeypatch.setattr(mcp_tools, "read_thermal", lambda **_k: measured_thermal)
+    telemetry = _call(MCPServer(), "get_telemetry", {})
+    assert telemetry["power"]["is_simulated"] is False
+    assert telemetry["telemetry_simulated"] is False
+
+
+def test_spool_dtn_bundle_follows_the_shared_contract() -> None:
+    import base64
+
+    from sovereign_dc.config import get_config
+    from sovereign_dc.space.dtn.router import DTNRouter
+
+    server = MCPServer()
+    default = _call(server, "spool_dtn_bundle", {"destination": "dtn://ground.earth/t", "payload": "ok"})
+    assert default["priority"] == "NORMAL" and default["priority_level"] == 1
+    assert default["source"] == "dtn://smdc-dgx-01/mcp"
+    assert default["ttl_seconds"] == 86400
+
+    binary = _call(
+        server,
+        "spool_dtn_bundle",
+        {"destination": "dtn://ground.earth/t", "payload_b64": base64.b64encode(b"\xff\x00").decode(), "priority": "3"},
+    )
+    assert binary["payload_bytes"] == 2 and binary["priority"] == "CRITICAL"
+    stored = {b.bundle_id: b for b in DTNRouter(db_path=get_config().dtn_db_path).get_outbound_queue()}
+    assert stored[binary["bundle_id"]].payload == b"\xff\x00"
+
+    bad = _call(server, "spool_dtn_bundle", {"destination": "dtn://ground.earth/t", "payload": "x", "priority": 9})
+    assert bad["success"] is False and bad["status"] == "REJECTED" and "priority" in bad["error"]
+
+
+def test_capability_descriptions_match_the_implementation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    server = MCPServer()
+    passes = server.tools["predict_satellite_passes"]
+    assert "sgp4 orbital mechanics" not in passes.description.lower()
+    assert "not sgp4" in passes.description.lower()
+    assert "not SGP4" in _call(server, "predict_satellite_passes", {"duration_hours": 1})["orbit_model"]
+
+    search = server.tools["query_knowledge_indexer"]
+    assert "semantic rag" not in search.description.lower()
+    assert "keyword search" in search.description.lower()
+
+    (tmp_path / "MANUAL.md").write_text("The coolant loop uses a radiator.\n\nBattery bank notes.\n\nCoolant only.\n")
+    monkeypatch.chdir(tmp_path)
+    result = _call(server, "query_knowledge_indexer", {"query": "Coolant radiator", "limit": 5})
+    assert result["search_mode"] == "keyword"
+    assert [c["keyword_score"] for c in result["chunks"]] == [1.0, 0.5]
+    assert result["chunks"][0]["matched_terms"] == ["coolant", "radiator"]
+    assert all("relevance_score" not in c for c in result["chunks"])
+    assert _call(server, "query_knowledge_indexer", {"query": "zz"})["results_count"] == 0

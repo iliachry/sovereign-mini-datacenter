@@ -27,6 +27,7 @@ from sovereign_dc.agents.technician_notifier import (
     MessageSeverity,
     TechnicianNotifierChain,
 )
+from sovereign_dc.config import default_dtn_db_path
 
 logger = logging.getLogger("BootstrapProvisioner")
 
@@ -340,7 +341,7 @@ class BootstrapProvisioner:
             unverified.append("network: no mesh peer reachable over WireGuard")
 
         # Space DTN store-and-forward is "armed" when its spool location is writable.
-        spool_db = os.getenv("DTN_DB_PATH", os.path.join(os.environ.get("TEMP", "/tmp"), "dtn_spool.db"))
+        spool_db = os.getenv("DTN_DB_PATH") or default_dtn_db_path()
         spool_dir = os.path.dirname(os.path.abspath(spool_db))
         net_info["tier4_space_dtn"] = os.path.isdir(spool_dir) and os.access(spool_dir, os.W_OK)
         if not net_info["tier4_space_dtn"]:
@@ -451,7 +452,7 @@ class BootstrapProvisioner:
         self.state.current_phase = 4
         unverified: list[str] = []
 
-        spool_db = os.getenv("DTN_DB_PATH", os.path.join(os.environ.get("TEMP", "/tmp"), "dtn_spool.db"))
+        spool_db = os.getenv("DTN_DB_PATH") or default_dtn_db_path()
         bundles = self._count_spool_bundles(spool_db)
         sync_info: dict[str, Any] = {
             "crdt_sync": NOT_IMPLEMENTED,

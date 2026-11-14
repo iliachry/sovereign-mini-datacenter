@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import tempfile
 import time
 from typing import Any
 
@@ -44,17 +45,52 @@ def decode_packet(raw_bytes: bytes) -> dict[str, Any]:
     return decoded
 
 
+_fallback_state_dir: str | None = None
+
+
+def _local_default_spool_path() -> str:
+    """``<state dir>/dtn_spool.db`` using only the standard library.
+
+    Used when ``sovereign_dc`` is not importable (this file also runs on its own inside the
+    LoRa container). Same rule as ``sovereign_dc.config.get_state_dir``: ``SMDC_STATE_DIR``
+    or ``~/.smdc`` with mode 0700, never a predictable name in shared ``/tmp``; if that
+    directory cannot be created, a fresh private ``mkdtemp()`` directory is used for the
+    rest of the process.
+    """
+    global _fallback_state_dir
+    state_dir = os.environ.get("SMDC_STATE_DIR") or os.path.expanduser("~/.smdc")
+    try:
+        os.makedirs(state_dir, mode=0o700, exist_ok=True)
+        os.chmod(state_dir, 0o700)
+    except OSError as err:
+        if _fallback_state_dir is None:
+            _fallback_state_dir = tempfile.mkdtemp(prefix="smdc-lora-")
+            logger.warning(
+                "State directory %s is unusable (%s); spooling to %s, which does NOT survive a reboot",
+                state_dir,
+                err,
+                _fallback_state_dir,
+            )
+        state_dir = _fallback_state_dir
+    return os.path.join(state_dir, "dtn_spool.db")
+
+
 def resolve_dtn_spool_path() -> str:
-    """Returns the configured DTN spool path (``DTN_DB_PATH`` env, then SMDC config)."""
+    """Returns the DTN spool path: ``DTN_DB_PATH`` if set, else the private state-dir default.
+
+    The environment variable is authoritative. Without it the default comes from
+    ``sovereign_dc.space.dtn.router.default_spool_path`` (which also honours a trusted
+    legacy ``/tmp/dtn_spool.db``) when that package is importable, else from
+    ``_local_default_spool_path``.
+    """
     env_path = os.getenv("DTN_DB_PATH")
     if env_path:
         return env_path
     try:
-        from sovereign_dc.config import get_config
-
-        return str(get_config().dtn_db_path)
-    except Exception:
-        return os.path.join(os.environ.get("TEMP", "/tmp"), "dtn_spool.db")
+        from sovereign_dc.space.dtn.router import default_spool_path
+    except ImportError:
+        return _local_default_spool_path()
+    return default_spool_path()
 
 
 def forward_to_space_dtn(sender: str, message: str) -> bool:

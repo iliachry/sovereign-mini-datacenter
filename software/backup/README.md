@@ -39,9 +39,13 @@ the `backup_storage` volume mounted at `/var/backups/sovereign`; if you change
 local path inside the container is not persistent:
 ```bash
 ./software/setup.sh --with-backup
-# or standalone:
-docker compose --project-directory software -f software/backup/docker-compose.backup.yml up -d
+# or standalone, attached to the running core stack's volumes (add -p <name> if the
+# core stack does not use the default project name "software"):
+docker compose --project-directory software \
+  -f software/docker-compose.attach.yml -f software/backup/docker-compose.backup.yml up -d
 ```
+The overlay never sets volume names of its own: merged or attached, it reads the very
+volumes the services write, whatever the Compose project name.
 
 ---
 

@@ -89,9 +89,13 @@ SKIP_LETS_ENCRYPT=y
 
 ### 4. Install the override (network + Traefik labels)
 
-The override attaches `nginx-mailcow` to the core stack's `software_sovereign_net`
-network and carries the Traefik labels that route `https://<MAILCOW_HOSTNAME>` to it.
-The core stack must already be running so that the network exists.
+The override attaches `nginx-mailcow` to the core stack's network
+(`${SOVEREIGN_NET_NAME:-software_sovereign_net}`) and carries the Traefik labels that
+route `https://<MAILCOW_HOSTNAME>` to it. The core stack must already be running so
+that the network exists. The network is named `<core project>_sovereign_net`; if the
+core stack does not run under the default project name `software`, add
+`SOVEREIGN_NET_NAME=<project>_sovereign_net` to `mailcow.conf` (check the real name
+with `docker network ls`).
 
 ```bash
 # inside software/mailcow/core

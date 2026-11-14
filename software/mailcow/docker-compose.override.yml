@@ -10,14 +10,18 @@
 #
 # Variables come from mailcow.conf (mailcow links it as .env): MAILCOW_HOSTNAME
 # and HTTP_PORT, the port nginx-mailcow listens on (see mailcow.conf.example).
-# The core stack must be running first so that software_sovereign_net exists.
+# The core stack must be running first so that its sovereign_net network exists.
+# That network is named <core project>_sovereign_net; the core project name
+# defaults to "software". If the core stack runs under another project name, set
+# SOVEREIGN_NET_NAME=<project>_sovereign_net in mailcow.conf (the same variable
+# software/mesh/lora/docker-compose.lora.yml uses).
 # ====================================================================
 version: '2.1'
 
 networks:
   sovereign_net:
     external: true
-    name: software_sovereign_net
+    name: ${SOVEREIGN_NET_NAME:-software_sovereign_net}
 
 services:
   nginx-mailcow:
@@ -26,7 +30,7 @@ services:
       - sovereign_net
     labels:
       - "traefik.enable=true"
-      - "traefik.docker.network=software_sovereign_net"
+      - "traefik.docker.network=${SOVEREIGN_NET_NAME:-software_sovereign_net}"
       - "traefik.http.routers.mailcow.rule=Host(`${MAILCOW_HOSTNAME}`)"
       - "traefik.http.routers.mailcow.entrypoints=websecure"
       - "traefik.http.routers.mailcow.tls.certresolver=le"

@@ -7,11 +7,18 @@ RFC 9171 Space Delay-Tolerant Networking (BPv7) on network partition.
 
 from __future__ import annotations
 
+import logging
 import random
 import time
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
+
+logger = logging.getLogger("sovereign_dc.mesh.consensus")
+
+
+class NotLeaderError(RuntimeError):
+    """Raised when a node that is not the leader is asked to produce leader-only RPCs."""
 
 
 class NodeRole(StrEnum):
@@ -182,6 +189,9 @@ class RaftNode:
                 self.current_term = reply.term
                 self.role = NodeRole.FOLLOWER
                 self.voted_for = None
+                # The leader of the newer term is not known yet; in particular a demoted
+                # leader must stop naming itself.
+                self.leader_id = None
             return False
 
         if reply.vote_granted:
@@ -203,7 +213,16 @@ class RaftNode:
         self.dtn_spool_fallback = False
 
     def create_append_entries(self, peer_id: str) -> AppendEntriesArgs:
-        """Generate AppendEntries RPC payload for a specific peer."""
+        """Generate AppendEntries RPC payload for a specific peer.
+
+        Only a leader may replicate. Raises NotLeaderError otherwise: a node that was demoted
+        by a higher-term reply still holds its old log, and sending that log under the newly
+        learned term would let it overwrite entries the real leader has already committed.
+        """
+        if self.role != NodeRole.LEADER:
+            raise NotLeaderError(
+                f"{self.node_id} is {self.role.value} in term {self.current_term} and cannot send AppendEntries"
+            )
         prev_log_index = self.next_index.get(peer_id, 1) - 1
         prev_log_term = self.log[prev_log_index - 1].term if (0 < prev_log_index <= len(self.log)) else 0
 
@@ -227,6 +246,23 @@ class RaftNode:
                 success=False,
                 responder_id=self.node_id,
                 match_index=len(self.log),
+            )
+
+        # At most one leader exists per term and a node never replicates to itself, so an
+        # AppendEntries naming this node, or reaching a node that is itself the leader of
+        # that term, cannot come from a legitimate leader. Refuse it without changing state.
+        if args.leader_id == self.node_id or (self.role == NodeRole.LEADER and args.term == self.current_term):
+            logger.error(
+                "%s refused AppendEntries from %s in term %d: sender is not the leader of that term",
+                self.node_id,
+                args.leader_id,
+                args.term,
+            )
+            return AppendEntriesReply(
+                term=self.current_term,
+                success=False,
+                responder_id=self.node_id,
+                match_index=self.commit_index,
             )
 
         # Valid leader recognized
@@ -255,6 +291,28 @@ class RaftNode:
                     success=False,
                     responder_id=self.node_id,
                     match_index=args.prev_log_index - 1,
+                )
+
+        # Raft safety: a committed entry is never removed or replaced. A legitimate leader's
+        # log contains every committed entry, so a conflict at or below commit_index proves
+        # the sender is not one. Checked before anything is modified.
+        for i, entry in enumerate(args.entries):
+            idx = args.prev_log_index + i
+            if idx >= len(self.log) or idx >= self.commit_index:
+                break
+            if self.log[idx].term != entry.term:
+                logger.error(
+                    "%s refused AppendEntries from %s in term %d: it conflicts with committed entry %d",
+                    self.node_id,
+                    args.leader_id,
+                    args.term,
+                    idx + 1,
+                )
+                return AppendEntriesReply(
+                    term=self.current_term,
+                    success=False,
+                    responder_id=self.node_id,
+                    match_index=self.commit_index,
                 )
 
         # 3. Append any new entries not already in the log
@@ -289,6 +347,9 @@ class RaftNode:
                 self.current_term = reply.term
                 self.role = NodeRole.FOLLOWER
                 self.voted_for = None
+                # The leader of the newer term is not known yet; in particular a demoted
+                # leader must stop naming itself.
+                self.leader_id = None
             return
 
         if reply.success:
@@ -376,10 +437,15 @@ class RaftCluster:
             return
 
         for peer_id in leader.peers:
+            if leader.role != NodeRole.LEADER:
+                # Demoted by a higher-term reply earlier in this round: stop at once. Its log
+                # is no longer authoritative and must not reach the remaining peers.
+                return
             if peer_id not in self.nodes or (reachable is not None and peer_id not in reachable):
                 continue
             args = leader.create_append_entries(peer_id)
             reply = self.nodes[peer_id].handle_append_entries(args)
             leader.handle_append_reply(peer_id, reply, len(self.nodes))
         # A leader with no reachable peers (single-node cluster) still commits on its own majority.
-        leader._advance_commit_index(len(self.nodes))
+        if leader.role == NodeRole.LEADER:
+            leader._advance_commit_index(len(self.nodes))

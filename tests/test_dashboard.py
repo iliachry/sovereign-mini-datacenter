@@ -32,7 +32,8 @@ class TestSystemStatusPayload:
         assert "space" in data
         assert "queued_bundles" in data["space"]
         assert "pqc" in data
-        assert data["pqc"]["status"] == "OPERATIONAL"
+        assert data["pqc"]["status"] == "SELF_TEST_PASSED"
+        assert data["pqc"]["self_test"] == "passed" and data["pqc"]["key_id"]
 
 
 class TestDashboardHandler:
@@ -88,10 +89,12 @@ class TestDashboardHandler:
 
     def test_options_cors_preflight(self):
         handler = self._make_handler("/api/control/rack-door")
+        handler.headers = {"Origin": "http://localhost:8088"}
         handler.do_OPTIONS()
 
         handler.send_response.assert_called_with(204)
-        handler.send_header.assert_any_call("Access-Control-Allow-Origin", "*")
+        handler.send_header.assert_any_call("Access-Control-Allow-Origin", "http://localhost:8088")
+        handler.send_header.assert_any_call("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
     def test_get_telemetry_stream_sse(self):
         handler = self._make_handler("/api/telemetry/stream")

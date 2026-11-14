@@ -15,6 +15,8 @@ let activeComponentKey = null;
 let isThermal = false;
 let isLiveConnected = false;
 let nodeBaseUrl = '';
+let nodeToken = ''; // Operator token for nodeBaseUrl's origin only (see loadNodeToken)
+let telemetryProvenance = 'unknown'; // 'measured' | 'simulated' | 'unknown' (connected node's own flags)
 let eventSource = null;
 let currentFanRpm = 2400;
 
@@ -45,28 +47,77 @@ export function init() {
   initTelemetryStream();
 }
 
-/**
- * Resolve which node (if any) to shadow.
- * - `?node=<http(s) url>` always wins.
- * - Without it, only a page served from localhost auto-connects to the local dashboard.
- * - Otherwise (e.g. the public GitHub Pages site) no network connection is attempted.
- */
-/**
- * Headers for control POSTs. A node exposed beyond loopback requires its operator token
- * (SMDC_DASHBOARD_TOKEN): pass it once as `?token=...`; it is kept in sessionStorage only.
- */
-function controlHeaders() {
-  const headers = { 'Content-Type': 'application/json' };
-  let token = '';
+const TOKEN_KEY_PREFIX = 'smdc_token::'; // + node origin
+const LEGACY_TOKEN_KEY = 'smdc_token'; // origin-wide key used by earlier versions: never read
+
+/** Origin (scheme://host:port) of a node base URL, or '' if it is not an http(s) URL. */
+function nodeOrigin(baseUrl) {
   try {
-    const fromUrl = new URLSearchParams(window.location.search).get('token');
-    if (fromUrl) sessionStorage.setItem('smdc_token', fromUrl);
-    token = sessionStorage.getItem('smdc_token') || '';
+    const url = new URL(baseUrl);
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.origin : '';
   } catch (e) {
-    // sessionStorage unavailable: send no token
+    return '';
   }
+}
+
+/**
+ * Load the operator token (the node's SMDC_DASHBOARD_TOKEN) for the node this page shadows.
+ *
+ * The token is bound to the node origin it was supplied for:
+ * - `?token=` in the page URL applies only to the node selected by that same URL, and is
+ *   stored in sessionStorage under a key that contains that node's origin;
+ * - a stored token is only ever returned for the exact origin it was stored for, so a link
+ *   with a different `?node=` never receives a token given for another node;
+ * - the token is removed from the address bar once read (it would otherwise stay in the
+ *   history and in any copied link).
+ */
+function loadNodeToken(baseUrl) {
+  const origin = nodeOrigin(baseUrl);
+  let fromUrl = '';
+  try {
+    const pageUrl = new URL(window.location.href);
+    fromUrl = pageUrl.searchParams.get('token') || '';
+    if (pageUrl.searchParams.has('token')) {
+      pageUrl.searchParams.delete('token');
+      window.history.replaceState(null, '', pageUrl.pathname + pageUrl.search + pageUrl.hash);
+    }
+  } catch (e) {
+    // No usable location/history: fall through with whatever was read
+  }
+  try {
+    sessionStorage.removeItem(LEGACY_TOKEN_KEY);
+    if (!origin) return '';
+    if (fromUrl) sessionStorage.setItem(TOKEN_KEY_PREFIX + origin, fromUrl);
+    return sessionStorage.getItem(TOKEN_KEY_PREFIX + origin) || '';
+  } catch (e) {
+    // sessionStorage unavailable: keep the token for this page load only
+    return origin ? fromUrl : '';
+  }
+}
+
+/** The operator token, but only for requests to the node origin it belongs to. */
+function tokenFor(requestUrl) {
+  if (!nodeToken) return '';
+  const origin = nodeOrigin(nodeBaseUrl);
+  return origin && nodeOrigin(requestUrl) === origin ? nodeToken : '';
+}
+
+/** Request headers for the node at `requestUrl` (bearer token only for its own origin). */
+function nodeHeaders(requestUrl, extra = {}) {
+  const headers = { ...extra };
+  const token = tokenFor(requestUrl);
   if (token) headers.Authorization = `Bearer ${token}`;
   return headers;
+}
+
+/** POST a JSON control request to the connected node. */
+function postControl(path, body) {
+  const url = `${nodeBaseUrl}${path}`;
+  return fetch(url, {
+    method: 'POST',
+    headers: nodeHeaders(url, { 'Content-Type': 'application/json' }),
+    body: JSON.stringify(body),
+  });
 }
 
 /** True (after telling the operator) when the node refused a control request. */
@@ -76,6 +127,12 @@ function controlDenied(res) {
   return true;
 }
 
+/**
+ * Resolve which node (if any) to shadow.
+ * - `?node=<http(s) url>` always wins.
+ * - Without it, only a page served from localhost auto-connects to the local dashboard.
+ * - Otherwise (e.g. the public GitHub Pages site) no network connection is attempted.
+ */
 function resolveNodeBaseUrl() {
   const nodeParam = new URLSearchParams(window.location.search).get('node');
   if (nodeParam) {
@@ -100,6 +157,7 @@ function resolveNodeBaseUrl() {
 
 function initTelemetryStream() {
   nodeBaseUrl = resolveNodeBaseUrl();
+  nodeToken = loadNodeToken(nodeBaseUrl);
   window.addEventListener('pagehide', stopTelemetry);
   window.addEventListener('pageshow', (e) => {
     if (e.persisted) startTelemetry(); // Restored from the back/forward cache
@@ -125,12 +183,14 @@ function startTelemetry() {
 function setConnected(connected) {
   const changed = connected !== isLiveConnected;
   isLiveConnected = connected;
+  if (changed) telemetryProvenance = 'unknown'; // decided by the next payload
   updateConnectionBadge(connected);
+  if (changed) updateSpaceLinkPill(null); // neutral until the next payload says otherwise
 
   if (connected) {
     clearInterval(simTimer);
     simTimer = null;
-    if (changed) showToast('🟢 Connected to Live Sovereign Node Digital Shadow');
+    if (changed) showToast('🟢 Connected to Sovereign Node (telemetry provenance shown in the badge)');
   } else if (!simTimer && !telemetryStopped) {
     updateSimulatedTelemetry();
     simTimer = setInterval(updateSimulatedTelemetry, SIM_INTERVAL_MS);
@@ -156,7 +216,10 @@ function connectSSE() {
 
   let delivered = false;
   try {
-    eventSource = new EventSource(`${nodeBaseUrl}/api/telemetry/stream`);
+    // EventSource cannot send headers: the node accepts the token for this stream as ?token=.
+    const streamUrl = `${nodeBaseUrl}/api/telemetry/stream`;
+    const token = tokenFor(streamUrl);
+    eventSource = new EventSource(token ? `${streamUrl}?token=${encodeURIComponent(token)}` : streamUrl);
   } catch (e) {
     console.warn('SSE not supported or blocked, trying /api/status polling', e);
     pollStatusOnce();
@@ -210,7 +273,8 @@ function connectSSE() {
 }
 
 async function fetchStatus() {
-  const res = await fetch(`${nodeBaseUrl}/api/status`, { mode: 'cors' });
+  const url = `${nodeBaseUrl}/api/status`;
+  const res = await fetch(url, { mode: 'cors', headers: nodeHeaders(url) });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }
@@ -255,20 +319,41 @@ export function stopTelemetry() {
   retryTimer = pollTimer = simTimer = null;
 }
 
+/**
+ * The badge separates two facts: whether a node is connected, and whether the values it
+ * sends are measured or come from its simulator (`is_simulated` on its power/thermal data).
+ */
 function updateConnectionBadge(connected) {
   const badge = document.getElementById('hud-conn-badge');
-  if (badge) {
-    if (connected) {
-      badge.className = 'telem-pill';
-      badge.innerHTML = `<div class="telem-dot"></div><span class="telem-label" style="color:var(--accent-emerald);">LIVE SHADOW:</span><span class="telem-val" style="color:#fff;">CONNECTED</span>`;
-    } else {
-      badge.className = 'telem-pill';
-      badge.innerHTML = `<div class="telem-dot amber"></div><span class="telem-label" style="color:var(--accent-amber);">AIR-GAPPED:</span><span class="telem-val">SIMULATION</span>`;
-    }
+  if (!badge) return;
+  badge.className = 'telem-pill';
+  if (!connected) {
+    badge.innerHTML = `<div class="telem-dot amber"></div><span class="telem-label" style="color:var(--accent-amber);">AIR-GAPPED:</span><span class="telem-val">SIMULATION</span>`;
+  } else if (telemetryProvenance === 'measured') {
+    badge.innerHTML = `<div class="telem-dot"></div><span class="telem-label" style="color:var(--accent-emerald);">LIVE SHADOW:</span><span class="telem-val" style="color:#fff;">MEASURED TELEMETRY</span>`;
+  } else if (telemetryProvenance === 'simulated') {
+    badge.innerHTML = `<div class="telem-dot amber"></div><span class="telem-label" style="color:var(--accent-amber);">NODE CONNECTED:</span><span class="telem-val">SIMULATED TELEMETRY</span>`;
+  } else {
+    badge.innerHTML = `<div class="telem-dot amber"></div><span class="telem-label" style="color:var(--accent-amber);">NODE CONNECTED:</span><span class="telem-val">TELEMETRY UNVERIFIED</span>`;
   }
 }
 
+/** 'simulated' if any section says so, 'measured' only if every present section says it is not. */
+function payloadProvenance(data) {
+  const flags = [data.power, data.thermal].filter(Boolean).map((section) => section.is_simulated);
+  if (flags.some((flag) => flag === true)) return 'simulated';
+  if (flags.length > 0 && flags.every((flag) => flag === false)) return 'measured';
+  return 'unknown';
+}
+
 function applyLiveTelemetry(data) {
+  // 0. Never present a node's simulated values as live measurements
+  const provenance = payloadProvenance(data);
+  if (provenance !== telemetryProvenance) {
+    telemetryProvenance = provenance;
+    updateConnectionBadge(isLiveConnected);
+  }
+
   // 1. Update HUD Ribbon Values
   if (data.power) {
     const solarWatts = data.power.solar_watts;
@@ -310,6 +395,8 @@ function applyLiveTelemetry(data) {
     }
   }
 
+  updateSpaceLinkPill(data.space);
+
   if (data.hardware) {
     currentFanRpm = data.hardware.fan_rpm || 2400;
 
@@ -325,7 +412,28 @@ function applyLiveTelemetry(data) {
   }
 }
 
+/** Labels of the node's predicted contact states (`space.contact_state` in /api/status). */
+const SPACE_LINK_LABELS = {
+  in_contact: 'IN CONTACT (PREDICTED)',
+  tracking: 'AWAITING PASS',
+  no_pass: 'NO PASS PREDICTED',
+  no_satellites: 'NO SATELLITES',
+};
+
+/**
+ * The space-link pill shows the connected node's own pass prediction (an orbit-model
+ * estimate, not a measured radio link). Without a node, or without that field, it says
+ * SIMULATION rather than claiming a contact.
+ */
+function updateSpaceLinkPill(space) {
+  const el = document.getElementById('hud-space-link');
+  if (!el) return;
+  const label = isLiveConnected && space ? SPACE_LINK_LABELS[space.contact_state] : undefined;
+  el.textContent = label || 'SIMULATION';
+}
+
 function updateSimulatedTelemetry() {
+  updateSpaceLinkPill(null);
   const baseSolar = 2660;
   const solarVariation = Math.round(baseSolar + (Math.random() - 0.5) * 40);
   const hudSolar = document.getElementById('hud-solar');
@@ -349,11 +457,7 @@ export async function triggerRemoteDoorToggle() {
   // 2. If connected to live node, dispatch POST /api/control/rack-door
   if (isLiveConnected) {
     try {
-      const res = await fetch(`${nodeBaseUrl}/api/control/rack-door`, {
-        method: 'POST',
-        headers: controlHeaders(),
-        body: JSON.stringify({ open: openState }),
-      });
+      const res = await postControl('/api/control/rack-door', { open: openState });
       if (res.ok) {
         const json = await res.json();
         showToast(json.door_open ? '🚪 Rack Door Solenoid Unlocked' : '🔒 Rack Door Solenoid Locked');
@@ -374,14 +478,10 @@ export async function triggerRemoteDTNTransmit() {
   // 2. Dispatch to live node DTN router
   if (isLiveConnected) {
     try {
-      const res = await fetch(`${nodeBaseUrl}/api/control/dtn-transmit`, {
-        method: 'POST',
-        headers: controlHeaders(),
-        body: JSON.stringify({
-          destination: 'dtn://ground-station-alpha.earth/telemetry',
-          payload: `STATUS_SNAP_${Date.now()}`,
-          priority: 2,
-        }),
+      const res = await postControl('/api/control/dtn-transmit', {
+        destination: 'dtn://ground-station-alpha.earth/telemetry',
+        payload: `STATUS_SNAP_${Date.now()}`,
+        priority: 2,
       });
       if (res.ok) {
         const json = await res.json();
@@ -500,11 +600,7 @@ export async function triggerUAVOptimization() {
   showToast('🎯 Triggering Scene-Aware PPO UAV Positioning Optimization...');
   if (isLiveConnected && nodeBaseUrl) {
     try {
-      const res = await fetch(`${nodeBaseUrl}/api/metaverse/optimize`, {
-        method: 'POST',
-        headers: controlHeaders(),
-        body: JSON.stringify({ cycles: 3 }),
-      });
+      const res = await postControl('/api/metaverse/optimize', { cycles: 3 });
       if (res.ok) {
         const data = await res.json();
         const pos = data.uav_position;

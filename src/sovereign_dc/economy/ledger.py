@@ -40,7 +40,12 @@ _SUPPORTED_HASH_VERSIONS = (HASH_VERSION_LEGACY, HASH_VERSION_CURRENT)
 PRIVILEGED_SENDERS = frozenset({"GENESIS", "SYSTEM", "MINT"})
 
 _HEX64 = re.compile(r"[0-9a-f]{64}")
+# Unit of account: one micro-credit (0.000001 credits). All balance arithmetic is done on
+# integers of this unit; floats only appear at the API and in the REAL database columns.
 _MICRO_CREDITS = 1_000_000
+# Largest micro-credit count a float (and a SQLite REAL) represents exactly: 2**53, about
+# 9.007 billion credits. Amounts and balances beyond it are refused.
+_MAX_MICRO = 2**53
 
 # Chain anchor: the head of the local chain digest is authenticated with a MAC key derived
 # from this node's persistent identity key, which lives in the SMDC state directory and not
@@ -104,8 +109,55 @@ def _anchor_mac(mac_key: bytes, key_id: str, tx_count: int, head_tx_id: str, hea
 
 
 def _to_micro(amount: float) -> int:
-    """Converts a credit amount to integer micro-credits (6 decimal places)."""
+    """Converts a credit amount to integer micro-credits, rounding to 6 decimal places.
+
+    This is the lenient conversion, used to quantise values that are already part of the
+    record (stored REAL balances, amounts of rows written by older releases, the amount of a
+    received promise whose signature covers 6 decimals). New amounts go through
+    ``_exact_micro``.
+    """
     return round(amount * _MICRO_CREDITS)
+
+
+def _from_micro(micro: int) -> float:
+    """The canonical float for a micro-credit count (the double nearest to ``micro / 1e6``)."""
+    return micro / _MICRO_CREDITS
+
+
+def _exact_micro(amount: float) -> int | None:
+    """Micro-credits for ``amount``, or None if it is not a whole number of micro-credits.
+
+    An amount is accepted when it is exactly the float a 6-decimal literal parses to
+    (``0.1``, ``0.25``, ``12.5``, ``0.000001``). ``0.1234567`` or ``0.1 + 0.2`` are not:
+    accounting never rounds an amount silently. Magnitudes above ``_MAX_MICRO`` micro-credits
+    are not exactly representable and are refused as well.
+    """
+    micro = _to_micro(amount)
+    if abs(micro) > _MAX_MICRO:
+        return None
+    return micro if _from_micro(micro) == amount else None
+
+
+def credits_to_micro(amount: float) -> int:
+    """Converts a credit amount to integer micro-credits (1 credit = 1,000,000).
+
+    Raises ValueError if ``amount`` is not a finite real number, has more than 6 decimal
+    places, or exceeds 2**53 micro-credits. This is the validation every new ledger amount
+    goes through.
+    """
+    if not _is_real_number(amount) or not math.isfinite(amount):
+        raise ValueError("Credit amount must be a finite real number")
+    micro = _exact_micro(amount)
+    if micro is None:
+        raise ValueError(
+            f"Credit amount {amount!r} is not a multiple of 0.000001 credits (or exceeds the representable range)"
+        )
+    return micro
+
+
+def micro_to_credits(micro: int) -> float:
+    """Converts integer micro-credits back to the canonical float credit amount."""
+    return _from_micro(micro)
 
 
 def _is_real_number(value: object) -> bool:
@@ -337,7 +389,20 @@ class StateChannelPromise:
 
 
 class StateChannel:
-    """Offline bidirectional micropayment channel for continuous micro-transfers."""
+    """Offline unidirectional micropayment channel: ``sender_address`` pays ``peer_address``.
+
+    Each party keeps its own ``StateChannel`` object for the same ``channel_id``:
+
+    * The **sender** calls ``stream_micropayment()``. Every call signs a promise for the new
+      *cumulative* amount; ``transferred_amount`` is the highest amount this side has signed.
+    * The **receiver** calls ``verify_promise()`` on each promise it is handed.
+      ``last_verified_amount`` / ``last_verified_promise`` are the highest cumulative amount
+      (and its signed evidence) this side has authenticated against the sender's key.
+
+    ``close()`` settles the highest cumulative amount this object knows the sender signed
+    for: what it signed itself (sender side) or what it verified (receiver side). All
+    comparisons and sums are done in integer micro-credits.
+    """
 
     def __init__(
         self,
@@ -348,8 +413,14 @@ class StateChannel:
         sequence: int = 0,
         transferred_amount: float = 0.0,
     ) -> None:
-        if not math.isfinite(deposit_amount) or deposit_amount <= 0:
+        if not _is_real_number(deposit_amount) or not math.isfinite(deposit_amount) or deposit_amount <= 0:
             raise ValueError("State channel deposit_amount must be strictly positive")
+        if not _is_real_number(transferred_amount) or not math.isfinite(transferred_amount) or transferred_amount < 0:
+            raise ValueError("State channel transferred_amount must be a finite, non-negative number")
+        if _exact_micro(deposit_amount) is None or _exact_micro(transferred_amount) is None:
+            raise ValueError("State channel amounts must not have more than 6 decimal places")
+        if _to_micro(transferred_amount) > _to_micro(deposit_amount):
+            raise ValueError("State channel transferred_amount exceeds the deposit")
         self.channel_id = channel_id
         self.sender_address = sender_address
         self.peer_address = peer_address
@@ -360,20 +431,26 @@ class StateChannel:
         # Receiver-side replay protection: highest promise accepted by verify_promise().
         self.last_verified_sequence = 0
         self.last_verified_amount = 0.0
+        # The promise behind last_verified_amount: the receiver's evidence for settlement.
+        self.last_verified_promise: StateChannelPromise | None = None
 
     def stream_micropayment(self, amount: float, wallet: NodeWallet) -> StateChannelPromise:
         """Generates a signed state update promise allocating micro-credits to peer."""
         if self.is_closed:
             raise ValueError(f"State channel {self.channel_id} is already closed")
-        if amount <= 0:
+        if not _is_real_number(amount) or amount <= 0:
             raise ValueError("Micropayment amount must be strictly positive")
         if not math.isfinite(amount):
             raise ValueError("Micropayment amount must be a finite number")
-        # Compare in integer micro-credits: 0.1 + 0.2 must be able to spend a 0.3 deposit.
-        if _to_micro(self.transferred_amount + amount) > _to_micro(self.deposit_amount):
+        amount_micro = _exact_micro(amount)
+        if amount_micro is None or amount_micro <= 0:
+            raise ValueError("Micropayment amount must not have more than 6 decimal places")
+        # Sum in integer micro-credits: 0.1 + 0.2 must be able to spend a 0.3 deposit.
+        total_micro = _to_micro(self.transferred_amount) + amount_micro
+        if total_micro > _to_micro(self.deposit_amount):
             raise ValueError("State channel collateral exhausted")
 
-        self.transferred_amount += amount
+        self.transferred_amount = _from_micro(total_micro)
         self.sequence += 1
         ts = datetime.now(UTC).isoformat()
 
@@ -423,14 +500,33 @@ class StateChannel:
         ):
             return False
         self.last_verified_sequence = promise.sequence
-        self.last_verified_amount = float(amount)
+        # The signature covers the amount rendered with 6 decimals, i.e. these micro-credits.
+        self.last_verified_amount = _from_micro(_to_micro(amount))
+        self.last_verified_promise = promise
         return True
 
+    def settled_amount(self) -> float:
+        """Cumulative credits owed to the peer according to this side's channel state.
+
+        The larger of ``transferred_amount`` (promises this object signed as the sender) and
+        ``last_verified_amount`` (the latest promise this object authenticated as the
+        receiver). On a receiver-side object ``transferred_amount`` stays 0 and on a
+        sender-side object ``last_verified_amount`` stays 0, so each side reports the latest
+        state it can prove; a receiver backs its claim with ``last_verified_promise``.
+        """
+        return _from_micro(max(_to_micro(self.transferred_amount), _to_micro(self.last_verified_amount)))
+
     def close(self) -> tuple[float, float]:
-        """Closes the state channel and returns (settled_to_peer, refund_to_sender)."""
+        """Closes the state channel and returns ``(settled_to_peer, refund_to_sender)``.
+
+        ``settled_to_peer`` is ``settled_amount()``; the refund is the rest of the deposit.
+        Both sides of a channel therefore agree once the receiver has verified the sender's
+        latest promise. Promises the receiver never verified are not counted on its side.
+        """
         self.is_closed = True
-        settled_to_peer = self.transferred_amount
-        refund_to_sender = max(0.0, self.deposit_amount - self.transferred_amount)
+        settled_micro = _to_micro(self.settled_amount())
+        settled_to_peer = _from_micro(settled_micro)
+        refund_to_sender = _from_micro(max(0, _to_micro(self.deposit_amount) - settled_micro))
         logger.info(
             "Closed channel %s: %.2f credits settled to %s, %.2f refunded to %s",
             self.channel_id,
@@ -630,10 +726,34 @@ class Ledger:
         return str(row["tx_id"]) if row else GENESIS_PREV_HASH
 
     @staticmethod
+    def _account_micro(conn: sqlite3.Connection, address: str) -> tuple[int, int]:
+        """Returns (balance in micro-credits, next_nonce) for ``address`` as seen by ``conn``.
+
+        The ``balance`` column is a REAL holding credits. It is quantised to micro-credits on
+        the way in, so a value left behind by the float arithmetic of older releases
+        (``0.19999999999999998``) reads as the balance it stands for (200000 micro-credits).
+        """
+        row = conn.execute("SELECT balance, nonce FROM balances WHERE address = ?", (address,)).fetchone()
+        return (_to_micro(float(row["balance"])), int(row["nonce"])) if row else (0, 0)
+
+    @staticmethod
     def _account(conn: sqlite3.Connection, address: str) -> tuple[float, int]:
         """Returns (balance, next_nonce) for ``address`` as seen by ``conn``."""
-        row = conn.execute("SELECT balance, nonce FROM balances WHERE address = ?", (address,)).fetchone()
-        return (float(row["balance"]), int(row["nonce"])) if row else (0.0, 0)
+        micro, nonce = Ledger._account_micro(conn, address)
+        return _from_micro(micro), nonce
+
+    @staticmethod
+    def _tx_micro(tx: Transaction) -> tuple[int, int]:
+        """``(amount, fee)`` of ``tx`` in micro-credits; TransactionRejected if either is finer than that."""
+        amount_micro = _exact_micro(tx.amount)
+        fee_micro = _exact_micro(tx.fee)
+        if amount_micro is None or fee_micro is None or amount_micro <= 0 or fee_micro < 0:
+            raise TransactionRejected(
+                "amount_precision",
+                f"Rejected transaction {tx.tx_id}: amount and fee must be positive multiples of "
+                f"0.000001 credits (got amount={tx.amount!r}, fee={tx.fee!r})",
+            )
+        return amount_micro, fee_micro
 
     @staticmethod
     def _row_to_transaction(r: sqlite3.Row) -> Transaction:
@@ -731,7 +851,10 @@ class Ledger:
         """Applies one already-authenticated transaction inside an open write transaction.
 
         Enforces uniqueness, the sender's expected nonce and sufficient balance, then debits,
-        credits and appends the transaction to the local hash chain. A transaction that
+        credits and appends the transaction to the local hash chain. Balances are validated
+        and updated in integer micro-credits (the REAL columns keep holding credits), and an
+        amount or fee finer than one micro-credit is refused (reason ``amount_precision``)
+        instead of being rounded. A transaction that
         carries a signed ``settlement_key`` is refused if its sender has already paid that key
         here, and otherwise records the key as paid, whether the transaction was created
         locally or reconciled from another ledger. Raises TransactionRejected (and changes
@@ -743,33 +866,44 @@ class Ledger:
         if settlement_key and self._settlement_recorded(conn, tx.sender, settlement_key):
             raise TransactionRejected("already_settled", f"Settlement {settlement_key} has already been paid")
 
+        amount_micro, fee_micro = self._tx_micro(tx)
+
         if tx.is_privileged:
             if not allow_privileged:
                 raise TransactionRejected("privileged_sender", f"Sender {tx.sender!r} is reserved for local minting")
         else:
-            balance, expected_nonce = self._account(conn, tx.sender)
+            balance_micro, expected_nonce = self._account_micro(conn, tx.sender)
             if tx.nonce != expected_nonce:
                 raise TransactionRejected(
                     "bad_nonce",
                     f"Unexpected nonce for {tx.sender}: transaction has {tx.nonce}, ledger expects {expected_nonce}",
                 )
-            total_debit = tx.amount + tx.fee
-            if balance < total_debit:
+            debit_micro = amount_micro + fee_micro
+            if balance_micro < debit_micro:
                 raise TransactionRejected(
                     "insufficient_balance",
-                    f"Insufficient balance: {tx.sender} has {balance:.2f} credits, requires {total_debit:.2f}",
+                    f"Insufficient balance: {tx.sender} has {_from_micro(balance_micro):.6f} credits, "
+                    f"requires {_from_micro(debit_micro):.6f}",
                 )
             conn.execute(
-                "UPDATE balances SET balance = balance - ?, nonce = nonce + 1 WHERE address = ?",
-                (total_debit, tx.sender),
+                "UPDATE balances SET balance = ?, nonce = nonce + 1 WHERE address = ?",
+                (_from_micro(balance_micro - debit_micro), tx.sender),
             )
 
+        # Read after the debit: the write lock is held, so this is the recipient's current balance.
+        recipient_micro, _ = self._account_micro(conn, tx.recipient)
+        if recipient_micro + amount_micro > _MAX_MICRO:
+            raise TransactionRejected(
+                "balance_overflow",
+                f"Rejected transaction {tx.tx_id}: balance of {tx.recipient} would exceed the representable range",
+            )
+        credited = _from_micro(recipient_micro + amount_micro)
         conn.execute(
             """
             INSERT INTO balances (address, balance, nonce) VALUES (?, ?, 0)
-            ON CONFLICT(address) DO UPDATE SET balance = balance + ?
+            ON CONFLICT(address) DO UPDATE SET balance = ?
             """,
-            (tx.recipient, tx.amount, tx.amount),
+            (tx.recipient, credited, credited),
         )
         # ``prev_hash`` is part of the signed hash and, for a foreign transaction, points into
         # its origin ledger. ``local_prev`` is this ledger's own chain link.
@@ -926,9 +1060,14 @@ class Ledger:
         return True
 
     def mint(self, recipient: str, amount: float, memo: str = "GENESIS_MINT") -> Transaction:
-        """Mints initial compute credits to an address."""
+        """Mints initial compute credits to an address.
+
+        ``amount`` must be a positive multiple of 0.000001 credits (ValueError otherwise).
+        """
         if not _is_real_number(amount) or not math.isfinite(amount) or amount <= 0:
             raise ValueError("Mint amount must be a finite, strictly positive number")
+        if _exact_micro(amount) is None:
+            raise ValueError("Mint amount must not have more than 6 decimal places")
         if not recipient:
             raise ValueError("Recipient address must not be empty")
         if not NodeWallet.is_valid_address(recipient):
@@ -965,6 +1104,10 @@ class Ledger:
         recorded as this sender's one and only payment for that key; a second transfer with
         the same key raises ValueError, on this ledger and on every ledger the transaction
         is reconciled into.
+
+        ``amount`` and ``fee`` must be multiples of 0.000001 credits; a finer value raises
+        ValueError rather than being rounded. The balance check and the debit/credit are
+        exact (integer micro-credits), so a sender can always spend its whole balance.
         """
         if settlement_key is not None and not isinstance(settlement_key, str):
             raise ValueError("settlement_key must be a string")
@@ -972,18 +1115,23 @@ class Ledger:
             raise ValueError("Transfer amount must be strictly positive")
         if not _is_real_number(fee) or not math.isfinite(fee) or fee < 0:
             raise ValueError("Transfer fee cannot be negative")
+        amount_micro = _exact_micro(amount)
+        fee_micro = _exact_micro(fee)
+        if amount_micro is None or fee_micro is None or amount_micro <= 0:
+            raise ValueError("Transfer amount and fee must not have more than 6 decimal places")
         if sender_wallet.address == recipient:
             raise ValueError("Cannot transfer credits to self")
         if not NodeWallet.is_valid_address(recipient):
             raise ValueError(f"Recipient {recipient!r} is not a valid sovereign wallet address")
 
         with self._write_transaction() as conn:
-            balance, nonce = self._account(conn, sender_wallet.address)
-            total_debit = amount + fee
-            if balance < total_debit:
+            balance_micro, nonce = self._account_micro(conn, sender_wallet.address)
+            debit_micro = amount_micro + fee_micro
+            if balance_micro < debit_micro:
                 raise TransactionRejected(
                     "insufficient_balance",
-                    f"Insufficient balance: {sender_wallet.address} has {balance:.2f} credits, requires {total_debit:.2f}",
+                    f"Insufficient balance: {sender_wallet.address} has {_from_micro(balance_micro):.6f} credits, "
+                    f"requires {_from_micro(debit_micro):.6f}",
                 )
             tx = Transaction(
                 sender=sender_wallet.address,
@@ -1153,7 +1301,10 @@ class Ledger:
         """Exports ledger snapshot state."""
         with self._lock, self._get_connection() as conn:
             bal_rows = conn.execute("SELECT address, balance, nonce FROM balances").fetchall()
-            balances = {r["address"]: {"balance": float(r["balance"]), "nonce": int(r["nonce"])} for r in bal_rows}
+            balances = {
+                r["address"]: {"balance": _from_micro(_to_micro(float(r["balance"]))), "nonce": int(r["nonce"])}
+                for r in bal_rows
+            }
         chain_ok, anchor_status = self._chain_report()
         return {
             "balances": balances,

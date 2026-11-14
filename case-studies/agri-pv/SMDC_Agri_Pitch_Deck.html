@@ -573,7 +573,7 @@
   <div class="slide-header">
     <div class="slide-title-group">
       <h2>The Core Innovation: <span class="accent">"Compute as a Virtual Battery"</span></h2>
-      <p class="subtitle">Transforming stranded solar kilowatt-hours into on-premise AI intelligence in sub-100 milliseconds</p>
+      <p class="subtitle">Transforming stranded solar kilowatt-hours into on-premise AI intelligence (design target: ~0.1 s shed actuation after detection)</p>
     </div>
     <div class="slide-badge">2. The Solution</div>
   </div>
@@ -599,7 +599,7 @@
           <span class="flow-step-title">Overvoltage Sense</span>
         </div>
         <div class="flow-step-desc">
-          Sentinel OS detects voltage rise at the PCC in <strong>&lt; 100ms</strong>.
+          Sentinel OS polls power telemetry (30 s loop today); PCC voltage sensing is a <strong>design target</strong>.
         </div>
       </div>
 
@@ -642,8 +642,8 @@
     <!-- 4 KPI Metrics -->
     <div class="grid-4">
       <div class="stat-box">
-        <div class="stat-value">&lt; 100ms</div>
-        <div class="stat-label">Load Step Response</div>
+        <div class="stat-value">45–110 ms</div>
+        <div class="stat-label">Shed Actuation (reference values)</div>
       </div>
       <div class="stat-box">
         <div class="stat-value cyan">&lt; 2%</div>
@@ -672,7 +672,7 @@
   <div class="slide-header">
     <div class="slide-title-group">
       <h2>Architecture &amp; <span class="accent">Zero-CapEx Validation Engine</span></h2>
-      <p class="subtitle">Validating sub-second dynamic load shedding on in-house DGX Spark hardware without equipment purchasing</p>
+      <p class="subtitle">Validating dynamic load shedding on in-house DGX Spark hardware without equipment purchasing (30 s polling today; sub-second is a design target)</p>
     </div>
     <div class="slide-badge">3. Technical Architecture</div>
   </div>
@@ -702,7 +702,7 @@
         <div class="card highlight-cyan" style="padding: 8px 12px;">
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px;">
             <span style="font-size: 11.5px; font-weight: 700; color: #ffffff;">Tier 2: Sentinel OS Orchestrator</span>
-            <span class="tag tag-cyan">Real-Time Shedding</span>
+            <span class="tag tag-cyan">Priority Shedding</span>
           </div>
           <p style="font-size: 10px; color: #cbd5e1; line-height: 1.35;">
             Hardware priority enforcement: guarantees <strong>L₀ Life Support</strong> (irrigation, ventilation) while dynamically throttling <strong>L₂–L₄ AI compute</strong>.
@@ -715,7 +715,7 @@
             <span class="tag tag-amber">Zero-CapEx Validation</span>
           </div>
           <p style="font-size: 10px; color: #cbd5e1; line-height: 1.35;">
-            Hardware-in-the-Loop (HIL) emulation on 2× NVIDIA DGX Spark (GB10, 128 GB unified memory each) with real PanePower I-V curves, simulating feeder voltage sags and sub-100ms load shedding.
+            Hardware-in-the-Loop (HIL) emulation on 2× NVIDIA DGX Spark (GB10, 128 GB unified memory each) with real PanePower I-V curves, simulating feeder voltage sags and load shedding (reference actuation: 45 ms GPU power cap, 110 ms relay shed).
           </p>
         </div>
       </div>
@@ -844,12 +844,12 @@
       </div>
     </div>
 
-    <!-- Zero-Blackout Islanding Highlight -->
+    <!-- UPS transfer highlight (MultiPlus-II datasheet: https://www.victronenergy.com/upload/documents/Datasheet-MultiPlus-II-inverter-charger-EN.pdf) -->
     <div class="grid-2">
       <div class="card highlight-green">
-        <h3 style="font-size: 12px; color: #34d399; margin-bottom: 3px;">🛡️ &lt; 15ms Zero-Blackout Microgrid Islanding</h3>
+        <h3 style="font-size: 12px; color: #34d399; margin-bottom: 3px;">🛡️ &lt; 20 ms UPS Transfer on Grid Loss</h3>
         <p style="font-size: 10.5px; color: #cbd5e1; line-height: 1.4;">
-          When weak rural feeders drop or suffer voltage sags, the solid-state transfer switch isolates in &lt;15ms. Greenhouse fans, pumps, and sensors stay operational without losing a single cycle.
+          When a weak rural feeder drops, the Victron MultiPlus-II 48/3000/35-32 inverter/charger takes over the loads on its AC output in less than 20 ms (Victron datasheet), so computers and electronics keep running. Backed-up load is limited by its 3 kVA rating.
         </p>
       </div>
 
@@ -872,8 +872,8 @@
         <div class="stat-label">Space BPv7 DTN Spooling</div>
       </div>
       <div class="stat-box">
-        <div class="stat-value amber">&lt; 15ms</div>
-        <div class="stat-label">Zero-Blackout Islanding</div>
+        <div class="stat-value amber">&lt; 20 ms</div>
+        <div class="stat-label">UPS Transfer (MultiPlus-II datasheet)</div>
       </div>
     </div>
   </div>
@@ -989,7 +989,7 @@
           Validation Stage
         </div>
         <p style="font-size: 11px; line-height: 1.45; color: #cbd5e1; max-width: 95%; margin: 0 auto;">
-          <strong>HIL Validation on DGX Spark:</strong> Sub-100ms dynamic load shedding demonstrated on live testbed.
+          <strong>HIL Validation on DGX Spark:</strong> Load shedding is simulated today (reference actuation 45–110 ms); measuring it on the live testbed is the milestone.
         </p>
       </div>
     </div>

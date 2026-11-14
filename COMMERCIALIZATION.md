@@ -212,7 +212,7 @@ Slide 04: Product Demo ─────── Live 3D WebGL Digital Twin & Physic
 Slide 05: Market Size ──────── $60.4B TAM / $6.4B SAM (Dual-Use Defense, Remote Industry)
 Slide 06: Unit Economics ───── 67.8% 3-Year TCO Savings ($81.3k saved per node, 7.0 mo payback)
 Slide 07: Business Model ───── Turnkey Hardware ($31.5k) + Sovereign SaaS ($199/node/mo)
-Slide 08: Traction & Code ──── 681 Automated Tests, 89.8% Coverage, Ready-to-Deploy Stacks
+Slide 08: Traction & Code ──── 844 Automated Tests, 91.2% Coverage, Ready-to-Deploy Stacks
 Slide 09: Technology Moat ──── Space DTN (RFC 9171), Energy Load-Shedder, PQC Zero-Trust
 Slide 10: Financials ───────── $1.78M Y1 -> $23.95M Y3 -> $161.25M Y5 (5.1% EBITDA in Y5, scenario)
 Slide 11: Team & Advisory ──── Metatopia Studio: DeepTech Systems, AI & Embedded Engineers

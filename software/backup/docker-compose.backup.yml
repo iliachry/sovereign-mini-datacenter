@@ -2,11 +2,18 @@
 #
 # Relative paths below are resolved against the Compose project directory,
 # which is `software/` when this file is merged with the core stack
-# (`./setup.sh --with-backup`). To run it standalone, pin the project directory:
-#   docker compose --project-directory software -f software/backup/docker-compose.backup.yml up -d
+# (`./setup.sh --with-backup`). To run it standalone against a core stack that is
+# already up, add the attach file, which declares the core stack's network and
+# volumes as external (use the same -p <name> as the core stack if it is not the
+# default "software"):
+#   docker compose --project-directory software \
+#     -f software/docker-compose.attach.yml -f software/backup/docker-compose.backup.yml up -d
+#
+# No `name:` is set on sovereign_net or on any volume key that docker-compose.yml
+# also declares: merged or attached, they resolve to the core stack's own
+# <project>_* objects for every project name (scripts/validate_compose.sh checks it).
 networks:
   sovereign_net:
-    name: software_sovereign_net
 
 services:
   backup-cron:
@@ -48,36 +55,25 @@ services:
     networks:
       - sovereign_net
 
-# Volume keys match software/docker-compose.yml so that, when merged, Compose
-# resolves them to the very same named volumes. Standalone, they bind to the
-# existing volumes created by the core stack (project name "software").
-# headscale_data exists only with the VPN overlay; without it an empty volume
-# is created and backed up.
+# Volume keys match software/docker-compose.yml and carry no `name:`, so that,
+# when merged, Compose resolves them to the very same <project>_* volumes the
+# services use. Standalone, docker-compose.attach.yml binds them to the existing
+# volumes of the core stack as external volumes (see the header).
+# headscale_data exists only with the VPN overlay; without it an empty
+# <project>_headscale_data volume is created and backed up.
 # Note: database volumes (openproject_pgdata, gitlab_data) are copied while the
 # services are running, so those snapshots are crash-consistent at best.
 volumes:
   backup_storage:
   traefik_certs:
-    name: software_traefik_certs
   webui_data:
-    name: software_webui_data
   gitlab_data:
-    name: software_gitlab_data
   gitlab_config:
-    name: software_gitlab_config
   openproject_data:
-    name: software_openproject_data
   openproject_pgdata:
-    name: software_openproject_pgdata
   nextcloud_data:
-    name: software_nextcloud_data
   vaultwarden_data:
-    name: software_vaultwarden_data
   grafana_data:
-    name: software_grafana_data
   prometheus_data:
-    name: software_prometheus_data
   qdrant_data:
-    name: software_qdrant_data
   headscale_data:
-    name: software_headscale_data

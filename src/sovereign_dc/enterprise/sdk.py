@@ -6,6 +6,8 @@ read SMDC power telemetry, publish app telemetry, spool DTN bundles and query pr
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import logging
 import os
@@ -13,7 +15,7 @@ import signal
 import time
 from collections.abc import Callable
 from typing import Any
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 logger = logging.getLogger("smdc.enterprise.sdk")
@@ -62,7 +64,17 @@ class SMDCClient:
         return {}
 
     def _http_post(self, endpoint: str, payload: dict[str, Any]) -> dict[str, Any]:
-        """Perform internal HTTP POST request against SMDC REST API."""
+        """Perform internal HTTP POST request against SMDC REST API.
+
+        Three outcomes are kept apart:
+
+        * the node accepted the request: its JSON object is returned;
+        * the node answered with an HTTP error (4xx/5xx, e.g. 400 invalid, 401/403 not
+          authorised): ``{"node_rejected": True, "http_status": <code>, "error": <message>}``.
+          The node made a decision, so callers must NOT fall back to an in-process path;
+        * the node could not be reached (connection refused, DNS, timeout, unusable reply):
+          ``{}``, the only case in which callers may fall back.
+        """
         url = f"{self.base_url}{endpoint}"
         try:
             data = json.dumps(payload).encode("utf-8")
@@ -72,9 +84,24 @@ class SMDCClient:
                     res_data = json.loads(response.read().decode("utf-8"))
                     if isinstance(res_data, dict):
                         return res_data
+        except HTTPError as e:
+            message = self._http_error_message(e)
+            logger.warning("POST %s was rejected by the node: HTTP %s %s", url, e.code, message)
+            return {"node_rejected": True, "http_status": int(e.code), "error": message}
         except (URLError, TimeoutError, Exception) as e:
             logger.debug("Failed POST %s: %s", url, e)
         return {}
+
+    @staticmethod
+    def _http_error_message(err: HTTPError) -> str:
+        """The node's own ``error`` text from a JSON error body, else the HTTP reason phrase."""
+        try:
+            body = json.loads(err.read().decode("utf-8", errors="replace"))
+            if isinstance(body, dict) and isinstance(body.get("error"), str) and body["error"]:
+                return str(body["error"])
+        except Exception:
+            logger.debug("HTTP %s error body was not JSON", err.code)
+        return str(err.reason or f"HTTP {err.code}")
 
     @staticmethod
     def _flatten_status_payload(data: dict[str, Any]) -> dict[str, Any] | None:
@@ -161,13 +188,16 @@ class SMDCClient:
     def emit_telemetry(self, app_id: str, metrics: dict[str, Any]) -> bool:
         """Publish custom application telemetry to the SMDC node.
 
-        Tries the node's REST API first and otherwise publishes on this process's shared
-        event bus. Returns True only if the API accepted the sample or at least one
-        in-process subscriber (e.g. an ``EnterpriseManager``) received it; False means the
-        sample reached nobody.
+        Tries the node's REST API first and, only if the node is unreachable, publishes on
+        this process's shared event bus. Returns True only if the API accepted the sample
+        or at least one in-process subscriber (e.g. an ``EnterpriseManager``) received it;
+        False means the sample reached nobody or the node rejected it (HTTP 4xx/5xx).
         """
         payload = {"app_id": app_id, "timestamp": time.time(), "metrics": metrics}
         res = self._http_post("/api/enterprise/telemetry", payload)
+        if res.get("node_rejected"):
+            # The node refused the sample: delivering it in-process would hide that refusal.
+            return False
         if res:
             return True
 
@@ -187,41 +217,86 @@ class SMDCClient:
             logger.debug("In-process telemetry publish failed: %s", e)
             return False
 
-    def send_dtn_bundle(self, destination: str, payload_data: str | bytes, ttl_sec: int = 86400 * 7) -> dict[str, Any]:
-        """Spool an RFC 9171 Delay-Tolerant Networking (BPv7) space bundle."""
-        if isinstance(payload_data, bytes):
-            payload_str = payload_data.decode("utf-8", errors="replace")
-            payload_bytes = payload_data
-        else:
-            payload_str = str(payload_data)
-            payload_bytes = payload_str.encode("utf-8")
+    def send_dtn_bundle(
+        self,
+        destination: str,
+        payload_data: str | bytes,
+        ttl_sec: int = 86400 * 7,
+        *,
+        priority: int | None = None,
+        source_eid: str | None = None,
+    ) -> dict[str, Any]:
+        """Spool an RFC 9171 Delay-Tolerant Networking (BPv7) bundle on the node.
 
-        req_payload = {
-            "source": "dtn://smdc-enterprise.local/app",
+        Uses the node's DTN submission contract (``sovereign_dc.web.dashboard``) on both
+        paths, the REST API and the in-process fallback, so the stored bundle is the same
+        either way: the payload bytes are carried losslessly (base64 over HTTP), ``ttl_sec``
+        is the bundle lifetime (positive, capped by the node), ``priority`` is 0 bulk /
+        1 normal (default) / 2 expedited / 3 critical, and the source is ``source_eid`` if it
+        is a valid endpoint ID, otherwise the node's own ``dtn://<node-id>/api``.
+
+        Returns ``status`` (``"spooled"``, ``"failed"`` or ``"error"``) and, when spooled,
+        what was actually stored: ``bundle_id``, ``source``, ``destination``, ``priority``,
+        ``ttl_seconds``, ``payload_bytes`` and ``payload_sha256``.
+        """
+        payload_bytes = payload_data if isinstance(payload_data, bytes) else str(payload_data).encode("utf-8")
+        payload_sha256 = hashlib.sha256(payload_bytes).hexdigest()
+
+        req_payload: dict[str, Any] = {
             "destination": destination,
-            "payload": payload_str,
+            "payload_b64": base64.b64encode(payload_bytes).decode("ascii"),
             "ttl": ttl_sec,
         }
+        try:
+            # Text is also sent in the legacy field, which is all an older node understands.
+            req_payload["payload"] = payload_bytes.decode("utf-8")
+        except UnicodeDecodeError:
+            pass
+        if priority is not None:
+            req_payload["priority"] = priority
+        if source_eid is not None:
+            req_payload["source"] = source_eid
+
         res = self._http_post("/api/control/dtn-transmit", req_payload)
+        if res.get("node_rejected"):
+            # A remote node's refusal must not turn into a bundle in THIS process's spool.
+            return {
+                "status": "rejected",
+                "success": False,
+                "http_status": res.get("http_status"),
+                "error": res.get("error", "rejected by the node"),
+            }
         if res:
-            return res
+            stored_sha256 = res.get("payload_sha256")
+            if "payload" not in req_payload and stored_sha256 != payload_sha256:
+                # A node that predates payload_b64 ignores it: do not report its bundle as ours.
+                return {
+                    **res,
+                    "status": "error",
+                    "error": "The node did not confirm the binary payload (it does not support payload_b64).",
+                }
+            return {**res, "status": "spooled" if res.get("success", True) else "failed"}
 
         # In-process DTN router fallback
         try:
             from sovereign_dc.config import get_config
-            from sovereign_dc.space.dtn.bundle import Bundle
             from sovereign_dc.space.dtn.router import DTNRouter
+            from sovereign_dc.web.dashboard import describe_dtn_bundle, parse_dtn_submission
 
+            cfg = get_config()
+            try:
+                submission = parse_dtn_submission(req_payload, cfg.node_id)
+            except ValueError as e:
+                return {"status": "failed", "success": False, "error": str(e)}
             # Use the node's configured spool, not DTNRouter's built-in default path.
-            router = DTNRouter(db_path=get_config().dtn_db_path)
-            bundle = Bundle(
-                source_eid="dtn://smdc-enterprise.local/app",
-                destination_eid=destination,
-                payload=payload_bytes,
-                lifetime_seconds=ttl_sec,
-            )
+            router = DTNRouter(db_path=cfg.dtn_db_path)
+            bundle = submission.to_bundle()
             ok = router.queue_bundle(bundle)
-            return {"status": "spooled" if ok else "failed", "bundle_id": bundle.bundle_id}
+            return {
+                "status": "spooled" if ok else "failed",
+                "success": bool(ok),
+                **describe_dtn_bundle(bundle, ttl_capped=submission.ttl_capped),
+            }
         except Exception as e:
             return {"status": "error", "error": str(e)}
 

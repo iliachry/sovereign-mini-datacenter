@@ -2,8 +2,9 @@
 # Sovereign Mini Datacenter — Multi-Arch Container Image Blueprint
 # Platforms: linux/amd64, linux/arm64 (NVIDIA Jetson Orin AGX / DGX)
 # ====================================================================
+# Plain Dockerfile syntax only (no BuildKit-specific instructions), so no
+# `# syntax=` frontend is pulled from a registry at build time.
 
-# syntax=docker/dockerfile:1.7
 FROM python:3.12-slim-bookworm AS base
 
 ENV PYTHONUNBUFFERED=1 \
@@ -28,12 +29,29 @@ COPY src/ ./src/
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir .
 
-# Non-root unprivileged execution
+# Persistent node state. Everything that must survive `docker rm` / image upgrades
+# lives under SMDC_STATE_DIR: the DTN store-and-forward spool (DTN_DB_PATH), the
+# wallet keystore and ledger, the PQC node identity keys, the technician alert
+# log and the sentinel mode file.
+ENV SMDC_STATE_DIR=/var/lib/smdc \
+    DTN_DB_PATH=/var/lib/smdc/dtn/spool.db
+
+# Non-root unprivileged execution. The state directory is created here, owned by
+# that user and private (0700), BEFORE the VOLUME declaration below, so a fresh
+# named or anonymous volume inherits the ownership and mode.
 RUN useradd -m -u 1000 smdc && \
-    mkdir -p /data/dtn /data/documents && \
-    chown -R smdc:smdc /data /app
+    mkdir -p /data/dtn /data/documents "${SMDC_STATE_DIR}/dtn" && \
+    chown -R smdc:smdc /data /app "${SMDC_STATE_DIR}" && \
+    chmod 700 "${SMDC_STATE_DIR}" "${SMDC_STATE_DIR}/dtn"
 
 USER smdc
+
+# Mount a NAMED volume here to keep the state across container re-creation:
+#   docker run -v smdc_state:/var/lib/smdc ...
+# Without -v Docker creates an anonymous volume, which survives a restart but is
+# orphaned when the container is removed. A bind-mounted host directory must be
+# writable by uid 1000.
+VOLUME ["/var/lib/smdc"]
 
 EXPOSE 8080 9101 9102
 
@@ -41,5 +59,12 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:8080/health || exit 1
 
 ENTRYPOINT ["smdc"]
-# Bind all interfaces inside the container; control POSTs then require SMDC_DASHBOARD_TOKEN.
+# Binds all interfaces inside the container, so every client reaching the published
+# port is a remote (non-loopback) peer. Set SMDC_DASHBOARD_TOKEN:
+#   docker run -e SMDC_DASHBOARD_TOKEN=<secret> -p 8080:8080 ...
+# With the token, control POSTs, the JSON read endpoints and the SSE stream all
+# require `Authorization: Bearer <token>` from such peers. Without it, control
+# POSTs from them are refused, so only /health and the page (which then cannot
+# control anything) are useful remotely; the JSON read endpoints stay readable
+# without authentication, so do not publish the port on an untrusted network.
 CMD ["dashboard", "--host", "0.0.0.0", "--port", "8080", "--no-browser"]

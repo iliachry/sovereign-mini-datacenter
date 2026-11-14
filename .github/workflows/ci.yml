@@ -41,6 +41,11 @@ jobs:
       - name: Mypy Static Type Checking
         run: mypy --ignore-missing-imports src/sovereign_dc
 
+      # software/{agents,mesh,space} carry standalone copies of package modules
+      # (software/space/Dockerfile assumes they are byte-identical).
+      - name: Standalone copies under software/ match src/sovereign_dc
+        run: bash scripts/check_mirrors.sh
+
   # ── Quality Gate 2: Shell Script Static Analysis ───────────────────
   quality-gate-shellcheck:
     name: "Quality Gate: ShellCheck Analysis"
@@ -53,7 +58,8 @@ jobs:
 
       - name: Lint all shell scripts
         run: |
-          find software/ -name "*.sh" -type f -exec shellcheck -S error {} +
+          find software/ scripts/ tests/firmware/ -name "*.sh" -type f \
+            -not -path "tests/firmware/build/*" -exec shellcheck -S error {} +
 
   # ── Quality Gate 3: Docker Compose Multi-Stack Validation ──────────
   quality-gate-compose-validation:

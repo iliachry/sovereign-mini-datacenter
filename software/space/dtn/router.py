@@ -9,6 +9,8 @@ import contextlib
 import logging
 import os
 import sqlite3
+import stat
+import tempfile
 import threading
 import time
 from collections.abc import Iterator
@@ -18,14 +20,88 @@ from .bundle import Bundle, BundlePriority
 
 logger = logging.getLogger("dtn.router")
 
+SPOOL_FILENAME = "dtn_spool.db"
+# Shared temp directory in which older releases kept the spool by default.
+LEGACY_TMP_DIR = "/tmp"
+_SQLITE_SIDECARS = ("-wal", "-shm", "-journal")
+_fallback_state_dir: str | None = None
+
+
+def _private_state_dir() -> str:
+    """``SMDC_STATE_DIR`` or ``~/.smdc``, created with mode 0700.
+
+    Same contract as ``sovereign_dc.config.get_state_dir``. It is implemented here because
+    this package also ships on its own inside the space-node container image, where the
+    rest of ``sovereign_dc`` is absent. If the directory cannot be created, a fresh private
+    ``mkdtemp()`` directory is used for the rest of the process.
+    """
+    global _fallback_state_dir
+    state_dir = os.environ.get("SMDC_STATE_DIR") or os.path.expanduser("~/.smdc")
+    try:
+        os.makedirs(state_dir, mode=0o700, exist_ok=True)
+        os.chmod(state_dir, 0o700)
+        return state_dir
+    except OSError as err:
+        if _fallback_state_dir is None:
+            _fallback_state_dir = tempfile.mkdtemp(prefix="smdc-dtn-")
+            logger.warning(
+                "State directory %s is unusable (%s); spooling to %s, which does NOT survive a reboot",
+                state_dir,
+                err,
+                _fallback_state_dir,
+            )
+        return _fallback_state_dir
+
+
+def _is_trusted_legacy_file(path: str) -> bool:
+    """True for a regular file (no symlink) owned by this user and not group/world-writable."""
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return False
+    return stat.S_ISREG(st.st_mode) and st.st_uid == os.getuid() and not (st.st_mode & 0o022)
+
+
+def default_spool_path() -> str:
+    """Default spool database: ``<state dir>/dtn_spool.db``, never a name in shared ``/tmp``.
+
+    Releases up to 1.x spooled to ``/tmp/dtn_spool.db``. If the new file does not exist yet
+    and such a legacy spool is present, it keeps being used (so queued bundles are not
+    orphaned) provided it and its SQLite side files are regular files owned by the current
+    user and not writable by group or others. A ``/tmp`` file that fails this check may have
+    been planted by another local user and is ignored.
+    """
+    path = os.path.join(_private_state_dir(), SPOOL_FILENAME)
+    if os.path.lexists(path):
+        return path
+    for legacy in dict.fromkeys(
+        (
+            os.path.join(os.environ.get("TEMP") or LEGACY_TMP_DIR, SPOOL_FILENAME),
+            os.path.join(LEGACY_TMP_DIR, SPOOL_FILENAME),
+        )
+    ):
+        if not _is_trusted_legacy_file(legacy):
+            continue
+        sidecars = [legacy + suffix for suffix in _SQLITE_SIDECARS]
+        if all(_is_trusted_legacy_file(s) for s in sidecars if os.path.lexists(s)):
+            logger.warning("Using legacy DTN spool %s; move it to %s to keep it across reboots", legacy, path)
+            return legacy
+    return path
+
 
 class DTNRouter:
+    """Persistent store-and-forward bundle spool.
+
+    ``db_path`` resolution: the explicit argument, else the ``DTN_DB_PATH`` environment
+    variable, else ``default_spool_path()``. ``":memory:"`` keeps the spool in RAM.
+    """
+
     def __init__(
         self,
-        db_path: str = "/tmp/dtn_spool.db",
+        db_path: str | None = None,
         local_node_eid: str = "dtn://smdc-node-01.sovereign.space",
     ) -> None:
-        self.db_path = db_path
+        self.db_path: str = db_path or os.getenv("DTN_DB_PATH") or default_spool_path()
         self.local_node_eid = local_node_eid
         self._lock = threading.RLock()
         self._memory_conn: sqlite3.Connection | None = None

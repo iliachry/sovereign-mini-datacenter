@@ -96,6 +96,10 @@ struct ArduinoFlavour {
   static std::optional<double> solar_watts() { return reading(M_PPV, R_SOLAR_POWER); }
   static std::optional<double> soc_percent() { return reading(M_SOC, R_BATTERY_SOC); }
   static double tolerance() { return 0.0051; }  // /metrics prints 2 decimals
+  static void advance_ms(unsigned long ms) {
+    smdc_host::now_ms += ms;  // freshness is evaluated when /metrics is rendered
+    loop();
+  }
 };
 
 void feed(const Bytes &b) { veSerial.testFeed(b.data(), b.size()); }

@@ -7,7 +7,7 @@ This module provides a **self-hosted, zero-trust peer-to-peer WireGuard mesh VPN
 ## ?? Why Headscale?
 
 - **Zero-Trust Access:** Connect securely to all sovereign datacenter services without opening public ports.
-- **End-to-End Encryption:** Direct peer-to-peer WireGuard tunnels with automatic NAT traversal via built-in DERP relay.
+- **End-to-End Encryption:** Direct peer-to-peer WireGuard tunnels with NAT traversal (STUN) and relay fallback through the DERP server embedded in Headscale — by default the only relay clients are given.
 - **No Third-Party Cloud:** Zero telemetry, keys and metadata never leave your hardware.
 - **Cross-Platform:** Works natively with official Tailscale client apps on macOS, iOS, Android, Linux, and Windows.
 
@@ -24,11 +24,44 @@ environment variables in this file.
 ```bash
 ./software/setup.sh --with-vpn
 # or standalone (the core stack's Traefik must be running to reach it over HTTPS):
-docker compose --project-directory software -f software/vpn/docker-compose.vpn.yml up -d
+docker compose --project-directory software \
+  -f software/docker-compose.attach.yml -f software/vpn/docker-compose.vpn.yml up -d
 ```
 
 The image is pinned to `headscale/headscale:0.23.0`; the config file follows that
 version's schema. Review both together when upgrading.
+
+#### Relays (DERP): self-hosted by default
+
+`config/headscale.yaml` enables Headscale's embedded DERP relay (region `999`,
+"Sovereign DERP") and sets `derp.urls: []` with `auto_update_enabled: false`, so no
+third-party relay map is downloaded and relayed traffic never passes through
+Tailscale Inc. relays. For it to work:
+
+- `server_url` must be an `https://` URL (DERP requires TLS); Traefik terminates TLS
+  for `DOMAIN_VPN` and forwards all paths, including `/derp`, to Headscale.
+- **UDP 3478 (STUN)** must be reachable from the internet. The overlay publishes it;
+  open it on the host firewall and forward it on the router.
+
+This means a single relay: peers that cannot reach each other directly are cut off
+while this node is unreachable. Adding Tailscale's public DERP map is an **opt-in
+fallback** — in `headscale.yaml` set
+`derp.urls: [https://controlplane.tailscale.com/derpmap/default]` and
+`auto_update_enabled: true`. Payloads stay WireGuard-encrypted end to end, but relay
+metadata and availability then depend on a third party.
+
+#### DNS: no resolver is pushed by default
+
+`dns.nameservers.global` is empty, so Headscale hands clients no upstream resolver:
+MagicDNS still resolves `<host>.sovereign.mesh` between mesh nodes, and every other
+name is resolved by the DNS servers of the network each client is on. No public
+resolver (Cloudflare, Quad9, ...) is imposed on the fleet. To push resolvers, list
+them under `dns.nameservers.global` in `config/headscale.yaml` (clients then use
+them instead of their local DNS) — ideally one you run on the mesh — or under
+`dns.nameservers.split` for selected domains only, then restart the container:
+`docker restart sovereign_headscale`. Headscale 0.23.0 has no
+`dns.override_local_dns` key; on a later release keep it `false` while the list is
+empty.
 
 ### 2. Create a User
 

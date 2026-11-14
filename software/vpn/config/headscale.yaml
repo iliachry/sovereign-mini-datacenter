@@ -19,6 +19,18 @@ prefixes:
   v6: fd7a:115c:a1e0::/48
   allocation: sequential
 
+# Relays (DERP). Sovereign default: the ONLY relay handed to clients is the
+# DERP server embedded in this Headscale instance (region 999 below). No
+# third-party relay map is fetched, so relayed traffic never transits Tailscale
+# Inc. infrastructure and Headscale makes no periodic outbound request.
+#
+# What the embedded relay needs:
+#   - server_url above must be https (DERP requires TLS). Traefik terminates TLS
+#     and forwards every path of DOMAIN_VPN, including /derp, to port 8080.
+#   - UDP 3478 (STUN) reachable from the internet; docker-compose.vpn.yml
+#     publishes it. Open it on the firewall / forward it on the router.
+# Trade-off: there is a single relay. Peers that cannot connect directly lose
+# connectivity while this node is unreachable.
 derp:
   server:
     enabled: true
@@ -27,10 +39,17 @@ derp:
     region_name: "Sovereign DERP"
     stun_listen_addr: "0.0.0.0:3478"
     private_key_path: /var/lib/headscale/derp_server_private.key
+    # Adds region 999 to the DERP map automatically (no derp.paths file needed).
     automatically_add_embedded_derp_region: true
-  urls:
-    - https://controlplane.tailscale.com/derpmap/default
-  auto_update_enabled: true
+  # OPT-IN fallback: to also offer Tailscale's public relays (relayed traffic
+  # stays end-to-end encrypted by WireGuard, but its metadata and availability
+  # then depend on Tailscale Inc.), replace `urls: []` with
+  #   urls:
+  #     - https://controlplane.tailscale.com/derpmap/default
+  # and set auto_update_enabled: true.
+  urls: []
+  paths: []
+  auto_update_enabled: false
   update_frequency: 24h
 
 disable_check_updates: true
@@ -42,10 +61,27 @@ database:
     path: /var/lib/headscale/db.sqlite
 
 dns:
+  # MagicDNS resolves <host>.sovereign.mesh between mesh nodes inside the
+  # client; it needs no upstream resolver.
   magic_dns: true
   # Must differ from the server_url domain.
   base_domain: sovereign.mesh
+  # Resolvers pushed to every client. Sovereign default: none. With an empty
+  # list Headscale 0.23 sends no resolver, so each client keeps the DNS servers
+  # of its own network for every non-mesh name and no third-party resolver is
+  # imposed on the fleet. (0.23.0 has no `dns.override_local_dns` key; if you
+  # move to a release that has it, keep it `false` while this list is empty.)
+  #
+  # To push resolvers, list them here; clients then use them INSTEAD of their
+  # local DNS. Prefer a resolver you run on the mesh (its 100.64.x.y address),
+  # or opt in to a public one:
+  #   global:
+  #     - 100.64.0.1        # e.g. your own Unbound / AdGuard Home node
+  #     - 9.9.9.9           # third party (Quad9)
+  # A resolver for selected domains only goes under `split`:
+  #   split:
+  #     corp.example.com:
+  #       - 100.64.0.1
   nameservers:
-    global:
-      - 1.1.1.1
-      - 9.9.9.9
+    global: []
+    split: {}

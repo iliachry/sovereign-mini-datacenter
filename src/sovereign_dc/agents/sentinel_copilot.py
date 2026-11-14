@@ -11,13 +11,17 @@ import time
 import urllib.error
 import urllib.request
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [SentinelCopilot] %(message)s")
+# Logging is configured only when this file runs as a script (see the bottom of the file):
+# importing it as a library must not touch the root logger.
+logger = logging.getLogger("SentinelCopilot")
+LOG_FORMAT = "%(asctime)s [SentinelCopilot] %(message)s"
 
 PROMETHEUS_URL = os.getenv("PROMETHEUS_URL", "http://prometheus:9090")
 POWER_EXPORTER_URL = os.getenv("POWER_EXPORTER_URL", "http://power-exporter:9101/metrics")
 # Shared mode file read by other agents (e.g. knowledge_indexer). When the agents run in
-# separate containers this path must be on a volume mounted into each of them.
-MODE_FILE = os.getenv("SOVEREIGN_MODE_FILE", "/tmp/sovereign_mode")
+# separate containers this path must be on a volume mounted into each of them. Empty means
+# "use the default in the private state directory" (see mode_file_path()).
+MODE_FILE = os.getenv("SOVEREIGN_MODE_FILE", "")
 # Offset (hours, east positive) added to UTC to approximate local solar time for the
 # forecast. Default 0 = the site is assumed to be on the Greenwich meridian; set it to
 # site_longitude_deg / 15 (e.g. 1.58 for Athens).
@@ -29,6 +33,26 @@ SOLAR_METRIC = "sovereign_solar_pv_power_watts"
 
 DEFAULT_MODE = "NORMAL"
 VALID_MODES = frozenset({"NORMAL", "SOLAR_SURPLUS_COMPUTE", "ECO_PRESERVATION", "CRITICAL_SHEDDING"})
+
+
+def mode_file_path() -> str:
+    """Path of the shared Sentinel mode file.
+
+    ``SOVEREIGN_MODE_FILE`` if set (the container deployment points it at a volume shared by
+    the agents), else ``sovereign_mode`` inside the private state directory
+    (``SMDC_STATE_DIR`` or ``~/.smdc``, mode 0700). The default is never a predictable name
+    in shared ``/tmp``, where any local user could pre-create or replace it.
+    """
+    configured = os.getenv("SOVEREIGN_MODE_FILE") or MODE_FILE
+    if configured:
+        return configured
+    state_dir = os.environ.get("SMDC_STATE_DIR") or os.path.expanduser("~/.smdc")
+    try:
+        os.makedirs(state_dir, mode=0o700, exist_ok=True)
+        os.chmod(state_dir, 0o700)
+    except OSError as e:
+        logger.warning("State directory %s is unusable: %s", state_dir, e)
+    return os.path.join(state_dir, "sovereign_mode")
 
 
 def get_telemetry() -> dict[str, float]:
@@ -44,7 +68,7 @@ def get_telemetry() -> dict[str, float]:
                         metrics[parts[0]] = float(parts[1])
             return metrics
     except Exception as e:
-        logging.warning("Could not reach power exporter: %s", e)
+        logger.warning("Could not reach power exporter: %s", e)
         return {}
 
 
@@ -85,9 +109,9 @@ def set_mode(mode: str) -> None:
             )
         )
     except Exception as e:
-        logging.debug("Event bus notification notice: %s", e)
+        logger.debug("Event bus notification notice: %s", e)
 
-    mode_file = os.getenv("SOVEREIGN_MODE_FILE", MODE_FILE)
+    mode_file = mode_file_path()
     try:
         directory = os.path.dirname(mode_file)
         if directory:
@@ -98,7 +122,7 @@ def set_mode(mode: str) -> None:
             f.write(mode)
         os.replace(tmp_file, mode_file)
     except Exception as e:
-        logging.warning("Failed to write mode state: %s", e)
+        logger.warning("Failed to write mode state: %s", e)
 
 
 def read_persisted_mode() -> str | None:
@@ -107,14 +131,14 @@ def read_persisted_mode() -> str | None:
     The file outlives this process (it sits on a volume shared with other agents), so a
     restarted sentinel must resume from it instead of assuming NORMAL.
     """
-    mode_file = os.getenv("SOVEREIGN_MODE_FILE", MODE_FILE)
+    mode_file = mode_file_path()
     try:
         with open(mode_file, encoding="utf-8") as f:
             mode = f.read(64).strip()
     except FileNotFoundError:
         return None
     except Exception as e:
-        logging.warning("Failed to read persisted mode state: %s", e)
+        logger.warning("Failed to read persisted mode state: %s", e)
         return None
     return mode if mode in VALID_MODES else None
 
@@ -153,11 +177,11 @@ def evaluate_mode(metrics: dict[str, float], forecast: float) -> tuple[str, str]
 
 
 def run_copilot() -> None:
-    logging.info("Starting Energy-Aware Datacenter Sentinel Copilot...")
+    logger.info("Starting Energy-Aware Datacenter Sentinel Copilot...")
     persisted_mode = read_persisted_mode()
     current_mode = persisted_mode or DEFAULT_MODE
     if persisted_mode is not None:
-        logging.info("Resuming from persisted mode %s.", persisted_mode)
+        logger.info("Resuming from persisted mode %s.", persisted_mode)
     # The mode file is only known to match the in-memory mode once this process has
     # written it. Until then the first evaluation writes it even if the mode is unchanged,
     # so a stale file (e.g. ECO_PRESERVATION left by a previous run) cannot survive.
@@ -169,7 +193,7 @@ def run_copilot() -> None:
         decision = evaluate_mode(metrics, forecast)
 
         if decision is None:
-            logging.warning(
+            logger.warning(
                 "Battery telemetry unavailable (%s missing); holding mode %s. No default values are assumed.",
                 SOC_METRIC,
                 current_mode,
@@ -181,19 +205,20 @@ def run_copilot() -> None:
                 set_mode(current_mode)
                 mode_file_synced = True
                 if target_mode == "ECO_PRESERVATION":
-                    logging.warning(
+                    logger.warning(
                         "⚡ Sentinel Trigger: %s. Throttling non-essential AI batch jobs to conserve power!", reason
                     )
                 elif target_mode == "SOLAR_SURPLUS_COMPUTE":
-                    logging.info(
+                    logger.info(
                         "☀️ Solar Surplus (%s): Unlocking full GPU compute capacity for model training & batch vectorization.",
                         reason,
                     )
                 else:
-                    logging.info("Nominal operating conditions (%s).", reason)
+                    logger.info("Nominal operating conditions (%s).", reason)
 
         time.sleep(POLL_INTERVAL_SECONDS)
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format=LOG_FORMAT)
     run_copilot()

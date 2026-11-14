@@ -64,3 +64,10 @@ def test_cli_dispatch_benchmark_and_demo() -> None:
 
     with patch("sys.argv", ["smdc", "mesh", "consensus", "--nodes", "3"]):
         main()
+
+
+def test_live_benchmark_without_a_reachable_model_exits_non_zero() -> None:
+    args = MockArgs(all=False, ai=True, dtn=False, system=False, live=True, model="m", export=None)
+    with patch("urllib.request.urlopen", side_effect=OSError("refused")):
+        assert cmd_benchmark(args) == 1
+    assert cmd_benchmark(MockArgs(all=False, ai=True, dtn=False, system=False, model="m", export=None)) == 0

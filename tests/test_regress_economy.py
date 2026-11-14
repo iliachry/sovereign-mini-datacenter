@@ -1109,3 +1109,211 @@ def test_in_memory_ledger_is_not_anchored_and_creates_no_key_file() -> None:
     assert ledger.verify_chain() is True
     assert ledger.chain_anchor_status() == "absent"
     assert not os.path.exists(os.environ["SMDC_STATE_DIR"])
+
+
+# --------------------------------------------------------------------------------------
+# Exact micro-credit accounting and state-channel settlement semantics
+# --------------------------------------------------------------------------------------
+
+
+def test_remaining_fractional_balance_is_spendable() -> None:
+    alice = NodeWallet.create(node_id="alice")
+    bob = NodeWallet.create(node_id="bob")
+    ledger = Ledger()
+    ledger.mint(alice.address, 0.3)
+    ledger.transfer(alice, bob.address, 0.1)
+    assert ledger.get_balance(alice.address) == 0.2  # was 0.19999999999999998
+    ledger.transfer(alice, bob.address, 0.2)  # was: "has 0.20 credits, requires 0.20"
+    assert ledger.get_balance(alice.address) == 0.0
+    assert ledger.get_balance(bob.address) == 0.3
+    with pytest.raises(ValueError, match="Insufficient balance"):
+        ledger.transfer(bob, alice.address, 0.300001)
+    assert ledger.verify_chain() is True
+
+
+def test_many_small_transfers_sum_exactly_including_fees() -> None:
+    alice = NodeWallet.create(node_id="alice")
+    bob = NodeWallet.create(node_id="bob")
+    ledger = Ledger()
+    ledger.mint(alice.address, 1.1)
+    for _ in range(10):
+        ledger.transfer(alice, bob.address, 0.1, fee=0.01)
+    assert ledger.get_balance(alice.address) == 0.0
+    assert ledger.get_balance(bob.address) == 1.0
+    assert ledger.export_state()["balances"][bob.address]["balance"] == 1.0
+
+
+@pytest.mark.parametrize("bad", [0.1234567, 0.1 + 0.2, 1e-7, 2.0**60])
+def test_amounts_finer_than_one_micro_credit_are_rejected_not_rounded(bad: float) -> None:
+    alice = NodeWallet.create(node_id="alice")
+    bob = NodeWallet.create(node_id="bob")
+    ledger = Ledger()
+    ledger.mint(alice.address, 10.0)
+    with pytest.raises(ValueError):
+        ledger.mint(alice.address, bad)
+    with pytest.raises(ValueError):
+        ledger.transfer(alice, bob.address, bad)
+    with pytest.raises(ValueError):
+        ledger.transfer(alice, bob.address, 1.0, fee=bad)
+    assert ledger.get_balance(alice.address) == 10.0
+    assert ledger.get_nonce(alice.address) == 0
+    assert len(ledger.get_history()) == 1
+
+
+def test_foreign_transaction_with_sub_micro_amount_is_rejected() -> None:
+    from sovereign_dc.economy import TransactionRejected
+
+    alice = NodeWallet.create(node_id="alice")
+    bob = NodeWallet.create(node_id="bob")
+    ledger = Ledger()
+    ledger.mint(alice.address, 10.0)
+    tx = Transaction(sender=alice.address, recipient=bob.address, amount=0.1234567, nonce=0)
+    tx.sign(alice)
+    assert tx.is_valid() is True  # authentic, just not expressible in the unit of account
+    with pytest.raises(TransactionRejected) as err:
+        ledger.apply_signed_transaction(tx)
+    assert err.value.reason == "amount_precision"
+    assert ledger.get_balance(alice.address) == 10.0
+    assert ledger.get_balance(bob.address) == 0.0
+
+
+def test_transaction_hashes_are_unchanged_by_exact_accounting() -> None:
+    import hashlib
+
+    fields = {
+        "sender": "sov_" + "a" * 40,
+        "recipient": "sov_" + "b" * 40,
+        "amount": 0.1,
+        "fee": 0.000001,
+        "nonce": 7,
+        "timestamp": "2026-01-01T00:00:00+00:00",
+        "memo": "m",
+        "prev_hash": "1" * 64,
+    }
+    legacy = Transaction(**fields, hash_version=1)
+    assert (
+        legacy.tx_id
+        == hashlib.sha256(
+            f"{'1' * 64}:{fields['sender']}:{fields['recipient']}:0.100000:0.000001:7:{fields['timestamp']}:m".encode()
+        ).hexdigest()
+    )
+    current = Transaction(**fields)
+    canonical = json.dumps(
+        {"v": 2, **fields}, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False
+    )
+    assert current.tx_id == hashlib.sha256(b"smdc-tx-v2\n" + canonical.encode("utf-8")).hexdigest()
+
+    # The amount a caller passes is the amount that is signed and stored: no re-quantisation.
+    alice = NodeWallet.create(node_id="alice")
+    bob = NodeWallet.create(node_id="bob")
+    ledger = Ledger()
+    ledger.mint(alice.address, 1.0)
+    tx = ledger.transfer(alice, bob.address, 0.3, fee=0.1)
+    assert (tx.amount, tx.fee) == (0.3, 0.1)
+    assert ledger.get_history(limit=1)[0].tx_id == tx.tx_id == tx.compute_hash()
+
+
+def test_existing_ledger_with_float_drift_verifies_and_spends_exactly(tmp_path: Path) -> None:
+    """A database written by the float-arithmetic release keeps verifying and becomes spendable."""
+    alice = NodeWallet.create(node_id="alice")
+    bob = NodeWallet.create(node_id="bob")
+    db_path = str(tmp_path / "drift.db")
+    ledger = Ledger(db_path=db_path)
+    ledger.mint(alice.address, 0.3)
+    tx = ledger.transfer(alice, bob.address, 0.1)
+    assert ledger.verify_chain(require_anchor=True) is True
+    # What the previous release left on disk for 0.3 - 0.1, plus an old row with 7 decimals.
+    conn = sqlite3.connect(db_path)
+    conn.execute("UPDATE balances SET balance = 0.3 - 0.1 WHERE address = ?", (alice.address,))
+    assert conn.execute("SELECT balance FROM balances WHERE address = ?", (alice.address,)).fetchone()[0] != 0.2
+    conn.commit()
+    conn.close()
+
+    reopened = Ledger(db_path=db_path)
+    assert reopened.verify_chain(require_anchor=True) is True
+    assert reopened.get_history(alice.address)[0].tx_id == tx.tx_id
+    assert reopened.get_balance(alice.address) == 0.2
+    reopened.transfer(alice, bob.address, 0.2)
+    assert reopened.get_balance(alice.address) == 0.0
+    assert reopened.get_balance(bob.address) == 0.3
+    conn = sqlite3.connect(db_path)
+    stored = dict(conn.execute("SELECT address, balance FROM balances").fetchall())
+    column_type = [r[2] for r in conn.execute("PRAGMA table_info(balances)") if r[1] == "balance"]
+    conn.close()
+    assert stored == {alice.address: 0.0, bob.address: 0.3}  # still credits in a REAL column
+    assert column_type == ["REAL"]
+    assert reopened.verify_chain(require_anchor=True) is True
+
+
+def test_proof_with_unpayable_precision_is_refused_before_any_transfer() -> None:
+    client = NodeWallet.create(node_id="client")
+    worker = NodeWallet.create(node_id="worker")
+    ledger = Ledger()
+    ledger.mint(client.address, 10.0)
+    proof = ProofOfCompute(
+        task_id="t-precision",
+        service_type="llm_inference",
+        units_processed=1.0,
+        client_address=client.address,
+        worker_node_id="worker",
+        worker_address=worker.address,
+        total_credits_due=1.0 / 3.0,
+        result_digest="d" * 64,
+    )
+    proof.sign(worker)
+    with pytest.raises(ValueError, match="cannot settle exactly"):
+        SettlementEngine.settle_proof_of_compute(proof, client, ledger, worker.keypair.public_key_hex)
+    assert ledger.get_balance(client.address) == 10.0
+    assert ledger.has_settled_proof(proof.settlement_key()) is False
+
+
+def test_receiver_side_channel_close_settles_the_verified_promise() -> None:
+    alice = NodeWallet.create(node_id="alice")
+    bob = NodeWallet.create(node_id="bob")
+    sender_side = StateChannel("chan", alice.address, bob.address, deposit_amount=10.0)
+    receiver_side = StateChannel("chan", alice.address, bob.address, deposit_amount=10.0)
+
+    p1 = sender_side.stream_micropayment(1.5, alice)
+    p2 = sender_side.stream_micropayment(2.5, alice)
+    assert receiver_side.verify_promise(p1, alice.keypair.public_key_hex) is True
+    assert receiver_side.verify_promise(p2, alice.keypair.public_key_hex) is True
+    assert receiver_side.settled_amount() == 4.0
+    assert receiver_side.last_verified_promise is p2
+
+    assert receiver_side.close() == (4.0, 6.0)  # was (0.0, 10.0)
+    assert sender_side.close() == (4.0, 6.0)  # both sides agree
+
+
+def test_receiver_side_channel_ignores_promises_it_never_verified() -> None:
+    alice = NodeWallet.create(node_id="alice")
+    bob = NodeWallet.create(node_id="bob")
+    mallory = NodeWallet.create(node_id="mallory")
+    sender_side = StateChannel("chan", alice.address, bob.address, deposit_amount=10.0)
+    receiver_side = StateChannel("chan", alice.address, bob.address, deposit_amount=10.0)
+
+    verified = sender_side.stream_micropayment(1.0, alice)
+    sender_side.stream_micropayment(2.0, alice)  # signed but never delivered to the receiver
+    forged = StateChannel("chan", alice.address, bob.address, deposit_amount=10.0).stream_micropayment(9.0, mallory)
+    assert receiver_side.verify_promise(verified, alice.keypair.public_key_hex) is True
+    assert receiver_side.verify_promise(forged, mallory.keypair.public_key_hex) is False
+
+    assert receiver_side.close() == (1.0, 9.0)
+    assert sender_side.close() == (3.0, 7.0)
+    assert receiver_side.verify_promise(verified, alice.keypair.public_key_hex) is False  # closed
+
+
+def test_state_channel_amounts_are_exact_micro_credits() -> None:
+    alice = NodeWallet.create(node_id="alice")
+    bob = NodeWallet.create(node_id="bob")
+    channel = StateChannel("chan", alice.address, bob.address, deposit_amount=1.0)
+    for _ in range(3):
+        promise = channel.stream_micropayment(0.1, alice)
+    assert promise.amount_transferred == 0.3  # not 0.30000000000000004
+    with pytest.raises(ValueError, match="6 decimal places"):
+        channel.stream_micropayment(0.0000001, alice)
+    assert channel.sequence == 3
+    assert channel.close() == (0.3, 0.7)
+    with pytest.raises(ValueError):
+        StateChannel("c", alice.address, bob.address, deposit_amount=1.0 / 3.0)
+    with pytest.raises(ValueError):
+        StateChannel("c", alice.address, bob.address, deposit_amount=1.0, transferred_amount=2.0)

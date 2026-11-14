@@ -7,7 +7,7 @@
 Developed by **[Metatopia Studio](https://metatopia.gr)** · Author & Lead Architect: **[Ilias Chrysovergis](https://iliachry.gr)** · License: MIT · © 2026
 
 [![CI & Quality Gates](https://github.com/iliachry/sovereign-mini-datacenter/actions/workflows/ci.yml/badge.svg)](https://github.com/iliachry/sovereign-mini-datacenter/actions/workflows/ci.yml)
-[![Quality Gate](https://img.shields.io/badge/Quality%20Gate-Strict%20Enforcement%20(89.8%25%20Cov)-10b981?style=flat&logo=githubactions)](https://github.com/iliachry/sovereign-mini-datacenter/actions/workflows/ci.yml)
+[![Quality Gate](https://img.shields.io/badge/Quality%20Gate-Strict%20Enforcement%20(91.2%25%20Cov)-10b981?style=flat&logo=githubactions)](https://github.com/iliachry/sovereign-mini-datacenter/actions/workflows/ci.yml)
 [![Enterprise Onboarding](https://img.shields.io/badge/Enterprise-Workload%20Coupling%20Framework-8b5cf6?style=flat)](ENTERPRISE_ONBOARDING.md)
 [![Commercialization](https://img.shields.io/badge/Commercialization-Investment%20Thesis-f59e0b?style=flat)](COMMERCIALIZATION.md)
 [![Benchmarks](https://img.shields.io/badge/Benchmarks-Empirical%20AI%20%26%20Power-06b6d4?style=flat)](BENCHMARKS.md)
@@ -122,7 +122,7 @@ sovereign-mini-datacenter/
 │       │   ├── schema.py        # Declarative manifest dataclass & validation (smdc-app.yaml)
 │       │   ├── registry.py      # App discovery, registry persistence & scaffolding
 │       │   ├── sdk.py           # Zero-dependency SMDCClient & AppLifecycleHandler SDK
-│       │   └── manager.py       # Supervision, load-shedding hooks & PQC packaging
+│       │   └── manager.py       # App state tracking (no process supervision), load-shedding hooks & PQC packaging
 │       ├── economy/             # Monetary & Compute Economy (Wallets, Ledger, State Channels, Dynamic Pricing)
 │       ├── mcp/                 # Native Model Context Protocol Server (2024-11-05 JSON-RPC 2.0)
 │       ├── mesh/                # Multi-node WireGuard, LoRa & Chaos engineering simulator
@@ -166,7 +166,7 @@ sovereign-mini-datacenter/
 │   ├── MANUFACTURING_GUIDE.md   # Laser cut, CNC bend, and assembly instructions
 │   └── render.jpg               # Photorealistic 3D product render
 ├── docs/                        # Interactive Three.js WebGL Digital Twin (ES Modules) & GitHub Pages
-├── tests/                       # 681 automated unit & integration tests (89.8% coverage)
+├── tests/                       # 844 automated unit & integration tests (91.2% coverage)
 └── .github/
     └── workflows/
         ├── ci.yml               # Complete CI pipeline + Pytest + GitHub Pages deploy
@@ -243,6 +243,14 @@ smdc space queue
 # Deploy all container stacks (Core, VPN, Backup, Telemetry, Space, Agents, Security)
 smdc deploy --all
 ```
+
+> **Dashboard access (`smdc dashboard`)**: the server binds `127.0.0.1` unless `--host` or `SMDC_DASHBOARD_HOST` says otherwise. Set `SMDC_DASHBOARD_TOKEN` before exposing it: control POSTs then require `Authorization: Bearer <token>`, and so do the JSON and SSE read endpoints for any non-local client (the SSE stream also accepts `?token=`); without a token, remote clients cannot control the node but can still read `/api/status`. Browser pages from other origins get no CORS access unless they are loopback origins or listed in `SMDC_CORS_ORIGIN` (comma-separated origins, or `*`), for example `SMDC_CORS_ORIGIN=https://iliachry.gr` to let the hosted 3D twin shadow a node opened as `?node=<node url>&token=<token>`.
+
+> **State and configuration**
+> - **`SMDC_STATE_DIR`** (default `~/.smdc`, mode 0700) holds wallets, ledgers, node keys and, by default, the DTN spool `dtn_spool.db` (override: `DTN_DB_PATH`), the technician alert log `sovereign_logs/technician_notifications.jsonl` (override the directory: `SOVEREIGN_LOG_DIR`) and the sentinel mode file `sovereign_mode` (override: `SOVEREIGN_MODE_FILE`). Nothing defaults to shared `/tmp` any more. A spool left by an older release at `/tmp/dtn_spool.db` keeps being used until `<state dir>/dtn_spool.db` exists, but only if it is a regular file owned by you and not group/world-writable; move it into the state directory to keep it across reboots.
+> - **DTN submission** (`POST /api/control/dtn-transmit`): `destination`, `payload` (text) or `payload_b64` (base64 binary), `ttl` (seconds; default 7 days, capped at 30), `priority` (0 bulk, 1 normal, 2 expedited, 3 critical) and optional `source` endpoint ID.
+> - **Knowledge indexer**: `DOCS_WATCH_DIR` (directory to index), `DOCS_INCLUDE_GLOB` (comma-separated globs relative to it; empty = everything, the agents overlay uses `*/files/**` for Nextcloud user files), `DOCS_EXCLUDE_DIRS` (directory names never entered; default `appdata_*,files_trashbin,files_versions,files_external,cache,uploads,.*`) and `DOCS_MAX_FILE_BYTES` (default 5 MiB; larger files are skipped). Qdrant point ids are UUIDs; points stored under the integer ids of earlier releases are replaced when their document is re-indexed.
+> - **Standalone overlay**: to run one overlay against a core stack that is already up, add the attach file: `docker compose --project-directory software -f software/docker-compose.attach.yml -f software/agents/docker-compose.agents.yml up -d` (add `-p <name>` if the core stack does not use the default project name `software`).
 
 
 ---
@@ -380,7 +388,7 @@ See [`software/backup/README.md`](software/backup/README.md) for automated cron 
 ## ☀️ Power, Solar & BMS Telemetry
 
 - **Real-time Metrics:** Collects solar PV generation, LiFePO4 battery pack SoC %, DC bus voltage, current, and coolant temperatures.
-- **Autonomous Load-Shedder:** If battery SoC drops below 20% or coolant exceeds 60°C, `software/telemetry/load_shedder.sh` automatically pauses intensive background AI batch processing.
+- **Load-Shedder (one pass per run, from cron or a systemd timer):** If battery SoC drops below 20% or coolant exceeds 60°C, `software/telemetry/load_shedder.sh` records a shed decision. By default (`LOAD_SHED_ACTION=log`) it only logs it and touches nothing; with `LOAD_SHED_ACTION=pause` it runs `docker pause` on `LOAD_SHED_CONTAINER` (default `sovereign_ollama`) and unpauses it once SoC is back to 40% or more and the coolant is at or below 60°C.
 
 ---
 
@@ -481,18 +489,22 @@ See [`terraform/README.md`](terraform/README.md) for full module documentation a
 ---
 
 ## 🛡️ Quality Gates & Automated Tests
-The project enforces strict automated Quality Gates covering Ruff linting, Ruff formatting, Mypy static typing, Docker Compose multi-stack integrity, and Pytest coverage with 681 automated tests ($\ge 85\%$ strict threshold, achieving **89.8%** coverage):
+The project enforces strict automated Quality Gates covering Ruff linting, Ruff formatting, Mypy static typing, Docker Compose multi-stack integrity, and Pytest coverage with 844 automated tests ($\ge 85\%$ strict threshold, achieving **91.2%** coverage):
 
 ```bash
 # Run all quality gates locally
 ./scripts/quality_gate.sh          # Linux / macOS / WSL
 powershell -File scripts/quality_gate.ps1  # Windows PowerShell
+#   (the mirror gate and the Compose invariant are bash scripts: the PowerShell runner
+#    calls them through Git Bash / WSL when available and otherwise reports them as skipped)
 
 # Run individual checks
 uv tool run ruff check src/ tests/
 uv tool run ruff format --check src/ tests/
 uv tool run mypy --ignore-missing-imports src/sovereign_dc
 uv run pytest tests/ --cov=src/sovereign_dc --cov-fail-under=85
+bash scripts/check_mirrors.sh      # software/ standalone copies == src/sovereign_dc
+bash scripts/validate_compose.sh   # Compose stacks, bind mounts, storage-identity invariant
 ```
 
 ---

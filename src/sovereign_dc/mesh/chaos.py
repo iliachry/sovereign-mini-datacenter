@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
-from sovereign_dc.mesh.consensus import RaftCluster
+from sovereign_dc.mesh.consensus import NotLeaderError, RaftCluster
 from sovereign_dc.space.dtn.bundle import Bundle, BundlePriority
 from sovereign_dc.space.dtn.router import DTNRouter
 
@@ -222,19 +222,27 @@ class MeshChaosSimulator:
         delivered_count = 0
         attempts = 0
         rounds = 0
-        while rounds < max_rounds and leader.commit_index < len(leader.log):
+        leader_demoted = False
+        while rounds < max_rounds and leader.commit_index < len(leader.log) and not leader_demoted:
             rounds += 1
             for peer_id in leader.peers:
                 attempts += 1
                 if random.random() >= loss_rate:
-                    args = leader.create_append_entries(peer_id)
+                    try:
+                        args = leader.create_append_entries(peer_id)
+                    except NotLeaderError as err:
+                        # Demoted by a higher-term reply: its log is no longer authoritative,
+                        # so replication stops here and the scenario is reported as failed.
+                        logger.warning("Packet-loss scenario aborted: %s", err)
+                        leader_demoted = True
+                        break
                     reply = cluster.nodes[peer_id].handle_append_entries(args)
                     leader.handle_append_reply(peer_id, reply, len(cluster.nodes))
                     delivered_count += 1
 
         elapsed = (time.perf_counter() - t0) * 1000.0
         committed = leader.commit_index
-        success = len(leader.log) == submitted and committed == submitted
+        success = not leader_demoted and len(leader.log) == submitted and committed == submitted
         delivery_ratio = (delivered_count / attempts) if attempts else 0.0
         return ChaosResult(
             scenario=ChaosScenario.PACKET_LOSS_REPLICATION,
@@ -248,9 +256,10 @@ class MeshChaosSimulator:
                 "transmission_attempts": attempts,
                 "successful_transmissions": delivered_count,
                 "delivery_ratio": round(delivery_ratio, 3),
+                "leader_demoted": leader_demoted,
             },
             elapsed_ms=round(elapsed, 2),
-            resilience_score=round(100.0 * committed / submitted, 1),
+            resilience_score=0.0 if leader_demoted else round(100.0 * committed / submitted, 1),
         )
 
     def run_all_scenarios(self) -> dict[str, ChaosResult]:

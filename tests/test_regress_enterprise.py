@@ -704,3 +704,94 @@ def test_sdk_sends_bearer_token_from_argument_or_environment(
 
     assert "secret-token" not in caplog.text
     assert "secret-token" not in repr(vars(explicit).keys())
+
+
+# --------------------------------------------------------------------------------------
+# Tri-council round 1: SDK <-> dashboard DTN contract (lossless payload, TTL, source, priority)
+# --------------------------------------------------------------------------------------
+
+
+def _through_dashboard(client: SMDCClient, monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
+    """Routes the client's HTTP POSTs into the real dashboard handler; returns the requests seen."""
+    import io
+    from unittest.mock import MagicMock
+
+    from sovereign_dc.web.dashboard import DashboardHandler
+
+    seen: list[dict[str, Any]] = []
+
+    def post(endpoint: str, payload: dict[str, Any]) -> dict[str, Any]:
+        body = json.dumps(payload).encode("utf-8")
+        seen.append(payload)
+        handler = DashboardHandler.__new__(DashboardHandler)
+        handler.path = endpoint
+        handler.headers = {"Content-Length": str(len(body))}
+        handler.client_address = ("127.0.0.1", 0)
+        handler.sse_max_events = 1
+        handler.rfile = io.BytesIO(body)
+        handler.wfile = io.BytesIO()
+        handler.send_response = MagicMock()
+        handler.send_header = MagicMock()
+        handler.end_headers = MagicMock()
+        handler.do_POST()
+        return json.loads(handler.wfile.getvalue()) if handler.send_response.call_args.args[0] == 200 else {}
+
+    monkeypatch.setattr(client, "_http_post", post)
+    return seen
+
+
+def _spool(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    import sovereign_dc.config as config_module
+
+    spool = tmp_path / "contract" / "spool.db"
+    monkeypatch.setenv("DTN_DB_PATH", str(spool))
+    config_module.reset_config()
+    return spool
+
+
+def test_sdk_bundle_survives_the_http_path_byte_for_byte(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import hashlib
+
+    spool = _spool(tmp_path, monkeypatch)
+    client = SMDCClient(base_url="http://node.test")
+    _through_dashboard(client, monkeypatch)
+
+    raw = b"\xff\x00\x80"
+    res = client.send_dtn_bundle("dtn://ground.earth/data", raw, ttl_sec=60)
+
+    (bundle,) = DTNRouter(db_path=str(spool)).get_outbound_queue()
+    assert bundle.payload == raw  # was ef bf bd 00 ef bf bd
+    assert bundle.lifetime_seconds == 60  # was the 7-day default
+    assert bundle.priority == 1  # NORMAL (the HTTP path used to default to EXPEDITED)
+    assert bundle.source_eid == "dtn://smdc-dgx-01/api"  # was the bare node id
+    assert res["status"] == "spooled" and res["bundle_id"] == bundle.bundle_id
+    assert res["ttl_seconds"] == 60 and res["payload_sha256"] == hashlib.sha256(raw).hexdigest()
+
+
+def test_sdk_http_and_fallback_paths_store_the_same_bundle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    spool = _spool(tmp_path, monkeypatch)
+    kwargs: dict[str, Any] = {"ttl_sec": 120, "priority": 2, "source_eid": "dtn://app.local/sensor"}
+
+    via_http = SMDCClient(base_url="http://node.test")
+    seen = _through_dashboard(via_http, monkeypatch)
+    http_res = via_http.send_dtn_bundle("dtn://ground.earth/data", "héllo", **kwargs)
+    fallback_res = SMDCClient(base_url=UNREACHABLE, timeout_sec=0.2).send_dtn_bundle(
+        "dtn://ground.earth/data", "héllo", **kwargs
+    )
+
+    assert seen[0]["payload"] == "héllo"  # text is also sent in the legacy field for older nodes
+    first, second = DTNRouter(db_path=str(spool)).get_outbound_queue()
+    for field in ("payload", "lifetime_seconds", "priority", "source_eid", "destination_eid"):
+        assert getattr(first, field) == getattr(second, field), field
+    assert first.source_eid == "dtn://app.local/sensor" and first.priority == 2
+    for key in ("source", "destination", "priority", "ttl_seconds", "payload_bytes", "payload_sha256", "status"):
+        assert http_res[key] == fallback_res[key], key
+
+
+def test_sdk_does_not_claim_a_binary_bundle_an_old_node_did_not_store(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = SMDCClient(base_url="http://node.test")
+    # A node that predates payload_b64 answers without confirming what it stored.
+    monkeypatch.setattr(client, "_http_post", lambda _e, _p: {"success": True, "bundle_id": "b1", "queued_bundles": 1})
+
+    assert client.send_dtn_bundle("dtn://g.earth/x", b"\xff\x00\x80")["status"] == "error"
+    assert client.send_dtn_bundle("dtn://g.earth/x", "plain text")["status"] == "spooled"

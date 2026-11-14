@@ -212,8 +212,9 @@ def cmd_audit(args):
 
 
 def cmd_mesh(args):
-    """Displays multi-node sovereign mesh cluster topology and peer status."""
-    print(f"\n{BOLD}{CYAN}🌐 Sovereign Global Mesh — Multi-Node Topology{RESET}\n")
+    """Displays the reference multi-node mesh topology (a design example; no peer is probed)."""
+    print(f"\n{BOLD}{CYAN}🌐 Sovereign Global Mesh — Reference Multi-Node Topology{RESET}")
+    print(f"{YELLOW}Illustrative three-site design: these peers are not discovered or probed by this command.{RESET}\n")
     peers = [
         (
             "smdc-node-01",
@@ -222,7 +223,7 @@ def cmd_mesh(args):
             "Primary Gateway",
             "2x DGX Spark",
             "10.24 kWh",
-            f"{GREEN}ONLINE{RESET}",
+            f"{YELLOW}NOT PROBED{RESET}",
         ),
         (
             "smdc-node-02",
@@ -231,7 +232,7 @@ def cmd_mesh(args):
             "Edge Node",
             "275 TOPS",
             "15.36 kWh",
-            f"{GREEN}ONLINE{RESET}",
+            f"{YELLOW}NOT PROBED{RESET}",
         ),
         (
             "smdc-node-03",
@@ -240,7 +241,7 @@ def cmd_mesh(args):
             "Edge Satellite Node",
             "275 TOPS",
             "20.48 kWh",
-            f"{CYAN}STANDBY (DTN ARMED){RESET}",
+            f"{YELLOW}NOT PROBED{RESET}",
         ),
     ]
     print(
@@ -302,9 +303,23 @@ def cmd_space_status(args):
         print("")
 
 
+def _dtn_spool_path() -> str:
+    """The node's DTN spool: DTN_DB_PATH if set, otherwise the configured ``dtn_db_path``.
+
+    Going through the node configuration keeps the CLI on the same spool as the dashboard,
+    the MCP server and the SDK when the path comes from a YAML config file.
+    """
+    from sovereign_dc.config import get_config
+
+    return os.getenv("DTN_DB_PATH") or get_config().dtn_db_path
+
+
 def cmd_space_send(args):
     """Queues a bundle into the DTN store-and-forward spool for the next pass."""
-    db_path = os.getenv("DTN_DB_PATH", "/tmp/dtn_spool.db")
+    from sovereign_dc.config import get_config
+    from sovereign_dc.web.dashboard import node_eid
+
+    db_path = _dtn_spool_path()
     router = DTNRouter(db_path=db_path)
 
     if os.path.isfile(args.message_or_file):
@@ -313,7 +328,7 @@ def cmd_space_send(args):
     else:
         payload = args.message_or_file.encode("utf-8")
 
-    src_eid = "dtn://smdc-node-01.sovereign.space"
+    src_eid = node_eid(get_config().node_id, "cli")
     prio_map = {
         0: BundlePriority.BULK,
         1: BundlePriority.NORMAL,
@@ -333,6 +348,7 @@ def cmd_space_send(args):
     if router.queue_bundle(bundle):
         print(f"\n{GREEN}✅ Bundle queued successfully!{RESET}")
         print(f"  • Bundle ID:     {bundle.bundle_id}")
+        print(f"  • Source:        {bundle.source_eid}")
         print(f"  • Destination:   {CYAN}{bundle.destination_eid}{RESET}")
         print(f"  • Size:          {len(payload)} bytes")
         print(f"  • Priority:      Tier {prio}")
@@ -344,7 +360,7 @@ def cmd_space_send(args):
 
 def cmd_space_queue(args):
     """Lists bundles currently queued in the DTN store-and-forward spool."""
-    db_path = os.getenv("DTN_DB_PATH", "/tmp/dtn_spool.db")
+    db_path = _dtn_spool_path()
     router = DTNRouter(db_path=db_path)
     stats = router.get_queue_stats()
 
@@ -395,6 +411,113 @@ def _env_placeholder_keys(env_file: str) -> list[str]:
     return keys
 
 
+# Keep in step with OPENPROJECT_* and check_openproject_pgdata_volume() in software/setup.sh:
+# the shell script exposes no pre-flight-only entry point, so the guard is implemented twice.
+_DEPLOY_MODULES = ("vpn", "backup", "telemetry", "space", "agents", "security")
+_OPENPROJECT_CONTAINER = "sovereign_openproject"
+_OPENPROJECT_PGDATA_PATH = "/var/openproject/pgdata"
+_OPENPROJECT_PGDATA_VOLUME_KEY = "openproject_pgdata"
+
+
+def _docker_stdout(cmd: list[str], cwd: str | None = None) -> tuple[int, str]:
+    """Runs a docker query; returns (exit code, stdout). A missing docker binary is exit 127."""
+    try:
+        res = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+    except OSError:
+        return 127, ""
+    return res.returncode, res.stdout if isinstance(res.stdout, str) else ""
+
+
+def _openproject_pgdata_guard(compose_cmd: list[str], soft_dir: str, rerun_command: str) -> str | None:
+    """Pre-flight guard for the OpenProject database volume; returns a refusal message or None.
+
+    docker-compose.yml mounts the named volume ``<project>_openproject_pgdata`` at
+    /var/openproject/pgdata. The openproject/community image declares that path as a VOLUME,
+    so a deployment created before the named volume existed keeps its PostgreSQL data in an
+    anonymous volume. Recreating the container would start OpenProject on the empty named
+    volume: the data would not be deleted, but orphaned. Deployment is refused until the
+    data has been copied across.
+
+    Returns None when the container does not exist or already uses the named volume.
+    """
+    rc, _ = _docker_stdout(["docker", "container", "inspect", _OPENPROJECT_CONTAINER])
+    if rc != 0:
+        return None
+
+    # Project name exactly as Compose resolves it (COMPOSE_PROJECT_NAME, `name:`, directory).
+    project = ""
+    rc, config_out = _docker_stdout([*compose_cmd, "config"], cwd=soft_dir)
+    if rc == 0:
+        for line in config_out.splitlines():
+            if line.startswith("name:"):
+                project = line[len("name:") :].strip().strip("\"'")
+                break
+    if not project:
+        _, label_out = _docker_stdout(
+            [
+                "docker",
+                "container",
+                "inspect",
+                "--format",
+                '{{ index .Config.Labels "com.docker.compose.project" }}',
+                _OPENPROJECT_CONTAINER,
+            ]
+        )
+        project = label_out.strip()
+    if not project or project == "<no value>":
+        return (
+            "Cannot determine the Compose project name; refusing to touch the existing "
+            f"{_OPENPROJECT_CONTAINER} container."
+        )
+    expected = f"{project}_{_OPENPROJECT_PGDATA_VOLUME_KEY}"
+
+    _, mounts_out = _docker_stdout(
+        ["docker", "container", "inspect", "--format", "{{ json .Mounts }}", _OPENPROJECT_CONTAINER]
+    )
+    try:
+        mounts = json.loads(mounts_out) if mounts_out.strip() else []
+    except ValueError:
+        mounts = []
+    mount = next(
+        (m for m in mounts or [] if isinstance(m, dict) and m.get("Destination") == _OPENPROJECT_PGDATA_PATH),
+        None,
+    )
+    # Only a Docker volume other than the named one is at risk (no mount / bind mount: nothing to orphan here).
+    if mount is None or mount.get("Type") != "volume":
+        return None
+    mount_name = str(mount.get("Name") or "")
+    if not mount_name or mount_name == expected:
+        return None
+
+    return f"""The existing {_OPENPROJECT_CONTAINER} container keeps its PostgreSQL data in the volume
+  {mount_name}
+but docker-compose.yml now mounts the named volume {expected} at {_OPENPROJECT_PGDATA_PATH}.
+Deploying now would start OpenProject with an EMPTY database (the old data would be orphaned, not deleted).
+Nothing was deployed. Migrate the data once, then re-run this command:
+
+  # 1. Stop OpenProject so PostgreSQL shuts down cleanly
+  docker stop {_OPENPROJECT_CONTAINER}
+
+  # 2. Create the named volume (labelled so Compose adopts it) and copy the data into it.
+  #    If {expected} already exists, make sure it is empty first.
+  docker volume create \\
+      --label com.docker.compose.project={project} \\
+      --label com.docker.compose.volume={_OPENPROJECT_PGDATA_VOLUME_KEY} \\
+      {expected}
+  docker run --rm -v {mount_name}:/from -v {expected}:/to alpine cp -a /from/. /to/
+
+  # 3. Remove the old container. Do NOT pass -v: that would delete the old volume,
+  #    which is your only copy until OpenProject is confirmed working again.
+  docker rm {_OPENPROJECT_CONTAINER}
+
+  # 4. Re-run
+  {rerun_command}
+
+  Once OpenProject is verified, the old volume can be removed with:
+  docker volume rm {mount_name}
+"""
+
+
 def cmd_deploy(args):
     """Deploys specified datacenter stacks using docker compose."""
     root = get_project_root()
@@ -442,6 +565,13 @@ def cmd_deploy(args):
     placeholders = _env_placeholder_keys(env_file)
     if placeholders:
         print(f"{RED}✖ Refusing to deploy: placeholder values remain in .env for: {', '.join(placeholders)}{RESET}")
+        return 1
+
+    # Never recreate OpenProject on an empty database volume (same guard as software/setup.sh).
+    flags = ["--all"] if args.all else [f"--with-{m}" for m in _DEPLOY_MODULES if getattr(args, f"with_{m}", False)]
+    refusal = _openproject_pgdata_guard(cmd, soft_dir, " ".join(["smdc", "deploy", *flags]))
+    if refusal:
+        print(f"{RED}✖ Refusing to deploy.{RESET}\n{refusal}", file=sys.stderr)
         return 1
 
     print(f"{BOLD}{GREEN}Launching Sovereign Datacenter Stack...{RESET}")
@@ -507,6 +637,8 @@ def cmd_agent_ask(args):
         print(
             f"{YELLOW}Ensure Ollama container is running (run 'smdc deploy' or 'docker compose up -d ollama').{RESET}"
         )
+        return 1
+    return 0
 
 
 def cmd_agent_review(args):
@@ -514,14 +646,14 @@ def cmd_agent_review(args):
     path = args.target
     if not os.path.exists(path):
         print(f"{RED}Error: Target file or diff '{path}' not found.{RESET}")
-        return
+        return 1
     with open(path, encoding="utf-8", errors="replace") as f:
         content = f.read()
 
     try:
-        from sovereign_dc.agents.gitlab_reviewer import query_ollama
+        from sovereign_dc.agents import gitlab_reviewer
     except ImportError:
-        from software.agents.gitlab_reviewer import query_ollama
+        from software.agents import gitlab_reviewer  # type: ignore[no-redef]
 
     prompt = f"""
 You are an expert security auditor and software architect running on the Sovereign Mini Datacenter.
@@ -532,8 +664,13 @@ Review the following code/diff and provide actionable feedback, security finding
 ```
 """
     print(f"{BOLD}{CYAN}Running AI Code Review on {path}...{RESET}\n")
-    review = query_ollama(prompt)
+    review = gitlab_reviewer.query_ollama(prompt)
     print(review)
+    # query_ollama reports an unreachable or silent model in-band; that is not a review.
+    failure_markers = [getattr(gitlab_reviewer, name, None) for name in ("LLM_UNAVAILABLE_PREFIX", "LLM_EMPTY_OUTPUT")]
+    if any(isinstance(m, str) and m and str(review).startswith(m) for m in failure_markers):
+        return 1
+    return 0
 
 
 def cmd_agent_index(args):
@@ -541,23 +678,45 @@ def cmd_agent_index(args):
     path = args.directory
     if not os.path.exists(path):
         print(f"{RED}Error: Target directory '{path}' does not exist.{RESET}")
-        return
+        return 1
 
     try:
-        from sovereign_dc.agents.knowledge_indexer import ensure_qdrant_collection, process_file
+        from sovereign_dc.agents.knowledge_indexer import ensure_qdrant_collection, is_oversized, process_file
     except ImportError:
-        from software.agents.knowledge_indexer import ensure_qdrant_collection, process_file
+        from software.agents.knowledge_indexer import ensure_qdrant_collection, is_oversized, process_file
 
     print(f"{BOLD}{CYAN}Indexing documents from {path} into Qdrant vector database...{RESET}")
-    ensure_qdrant_collection()
+    if ensure_qdrant_collection() is False:
+        print(f"{RED}✖ Qdrant collection is unavailable; nothing was indexed.{RESET}\n")
+        return 1
     indexed_count = 0
+    failed: list[str] = []
+    skipped: list[str] = []
     for root, _, files in os.walk(path):
-        for f in files:
+        for f in sorted(files):
             if f.endswith((".md", ".txt", ".yaml", ".json", ".py", ".sh")):
                 full_path = os.path.join(root, f)
-                process_file(full_path)
-                indexed_count += 1
-    print(f"{GREEN}✅ Successfully indexed {indexed_count} documents into Sovereign RAG collection.{RESET}\n")
+                if is_oversized(full_path):
+                    skipped.append(full_path)
+                elif process_file(full_path) is True:
+                    indexed_count += 1
+                else:
+                    failed.append(full_path)
+    for full_path in skipped:
+        print(f"  {YELLOW}⚠ Skipped (larger than DOCS_MAX_FILE_BYTES): {full_path}{RESET}")
+    for full_path in failed:
+        print(f"  {RED}✖ Failed: {full_path}{RESET}")
+    if failed:
+        print(
+            f"{RED}✖ Indexed {indexed_count} document(s); {len(failed)} failed"
+            f"{f', {len(skipped)} skipped' if skipped else ''}. See the log lines above for the cause.{RESET}\n"
+        )
+        return 1
+    print(
+        f"{GREEN}✅ Successfully indexed {indexed_count} document(s) into the Sovereign RAG collection"
+        f"{f' ({len(skipped)} skipped as too large)' if skipped else ''}.{RESET}\n"
+    )
+    return 0
 
 
 def cmd_docs(args):
@@ -579,7 +738,7 @@ def cmd_docs(args):
 
         if not docs_dir.exists():
             print(f"  {RED}✖ Docs directory not found at {docs_dir}{RESET}\n")
-            return
+            return 1
 
         handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(docs_dir))
         url = f"http://localhost:{port}/index.html"
@@ -599,6 +758,7 @@ def cmd_docs(args):
             print(f"\n  {YELLOW}3D Digital Twin server stopped.{RESET}\n")
         except OSError as e:
             print(f"  {RED}✖ Could not bind to port {port}: {e}{RESET}\n")
+            return 1
 
 
 def cmd_doctor(args):
@@ -895,6 +1055,11 @@ def cmd_benchmark(args):
             json.dump(results, f, indent=2)
         print(f"📄 Exported benchmark results to: {CYAN}{args.export}{RESET}\n")
 
+    # --live asked for a measurement: not getting one is a failure, not a quiet success.
+    if "error" in benchmarks_data.get("llm_generation", {}):
+        return 1
+    return 0
+
 
 def cmd_demo(args):
     """Runs a 1-click live demo sandbox displaying simulated power, space passes, and local agent prompts."""
@@ -994,7 +1159,12 @@ def cmd_mesh_chaos(args):
         for k, v in r.details.items():
             print(f"         • {k}: {v}")
 
+    failed = [r.scenario for r in results.values() if not r.success]
+    if failed:
+        print(f"\n{RED}✖ Chaos scenario(s) failed: {', '.join(failed)}.{RESET}\n")
+        return 1
     print(f"\n{GREEN}✅ Chaos engineering stress-tests completed.{RESET}\n")
+    return 0
 
 
 def cmd_security_pqc(args):
@@ -1045,7 +1215,11 @@ def cmd_security_pqc(args):
     print(f"  • Keygen Latency:  {t_kem_kg:.2f}ms | Encapsulate: {t_enc:.2f}ms | Decapsulate: {t_dec:.2f}ms")
     print(f"  • Shared Secret:   {GREEN if kem_ok else RED}{'MATCHED' if kem_ok else 'MISMATCH'}{RESET}")
 
+    if not (verified and kem_ok):
+        print(f"\n{RED}✖ Post-Quantum Cryptography self-test failed.{RESET}\n")
+        return 1
     print(f"\n{GREEN}✅ Post-Quantum Cryptography engines operating nominally.{RESET}\n")
+    return 0
 
 
 def cmd_economy_wallet(args):
@@ -1086,10 +1260,17 @@ def cmd_economy_wallet(args):
     print(f"  • Storage Path:    {wallet_path}\n")
 
 
+def _format_credits(amount: float) -> str:
+    """Formats a credit amount with 2 to 6 decimals, never hiding micro-credit digits."""
+    text = f"{amount:.6f}".rstrip("0")
+    whole, _, fraction = text.partition(".")
+    return f"{whole}.{fraction.ljust(2, '0')}"
+
+
 def cmd_economy_send(args):
     """Transfers compute credits to a peer node with cryptographic signature."""
 
-    from sovereign_dc.economy.ledger import Ledger
+    from sovereign_dc.economy.ledger import Ledger, credits_to_micro
     from sovereign_dc.economy.wallet import NodeWallet
 
     wallet_path = getattr(args, "wallet_file", None) or _economy_state_path("smdc_default_wallet.json")
@@ -1104,20 +1285,32 @@ def cmd_economy_send(args):
         ledger = Ledger(db_path=db_path)
 
     recipient = args.recipient
-    amount = float(args.amount)
     memo = getattr(args, "memo", "") or "M2M_TRANSFER"
+    try:
+        amount = float(args.amount)
+        # Validate before touching the ledger so an unusable amount gets a message of its
+        # own: credits have 6 decimal places (1 micro-credit = 0.000001).
+        credits_to_micro(amount)
+    except (TypeError, ValueError) as e:
+        print(
+            f"\n{RED}❌ Invalid amount {args.amount!r}: {e}. "
+            f"Amounts must be finite numbers with at most 6 decimal places (e.g. 1.5 or 0.000001).{RESET}\n"
+        )
+        return 1
 
     try:
         tx = ledger.transfer(sender_wallet=wallet, recipient=recipient, amount=amount, memo=memo)
-        print(f"\n{GREEN}✅ Transfer of {amount:.2f} credits completed!{RESET}\n")
+        print(f"\n{GREEN}✅ Transfer of {_format_credits(amount)} credits completed!{RESET}\n")
         print(f"  • Transaction ID: {CYAN}{tx.tx_id}{RESET}")
         print(f"  • Sender:         {tx.sender}")
         print(f"  • Recipient:      {tx.recipient}")
-        print(f"  • Amount:         {GREEN}{tx.amount:.2f} credits{RESET}")
+        print(f"  • Amount:         {GREEN}{_format_credits(tx.amount)} credits{RESET}")
         print(f"  • Signature Algo: {tx.signature_algorithm}")
         print(f"  • Timestamp:      {tx.timestamp}\n")
     except Exception as e:
         print(f"\n{RED}❌ Transfer failed: {e}{RESET}\n")
+        return 1
+    return 0
 
 
 def cmd_economy_market(args):
@@ -1234,11 +1427,14 @@ def cmd_bootstrap(args):
             st = f"{GREEN}OK{RESET}" if ok else f"{RED}FAILED{RESET}"
             print(f"  • {ch:<16}: {st}")
         failed = [ch for ch, ok in res.items() if not ok]
+        if failed and len(failed) == len(res):
+            print(f"\n{RED}✖ Notification test failed: no channel delivered the alert.{RESET}\n")
+            return 1
         if failed:
             print(f"\n{YELLOW}⚠ Notification test finished; unavailable channels: {', '.join(failed)}.{RESET}\n")
         else:
             print(f"\n{GREEN}✅ Multi-channel notification test complete.{RESET}\n")
-        return
+        return 0
 
     phase_target = getattr(args, "phase", None)
     if phase_target:
@@ -1250,14 +1446,24 @@ def cmd_bootstrap(args):
             4: ("Sync", provisioner.phase_4_sync),
             5: ("Ready", provisioner.phase_5_ready),
         }
-        if phase_target in phase_map:
-            name, fn = phase_map[phase_target]
-            output = fn()
-            print(f"\n{GREEN}Phase {phase_target} ({name}) completed successfully:{RESET}")
-            print(json.dumps(output, indent=2))
-        else:
+        if phase_target not in phase_map:
             print(f"{RED}Invalid phase {phase_target}. Choose from 1 to 5.{RESET}")
-        return
+            return 2
+        name, fn = phase_map[phase_target]
+        try:
+            output = fn()
+        except Exception as e:
+            print(f"\n{RED}✖ Phase {phase_target} ({name}) failed: {e}{RESET}")
+            return 1
+        if provisioner.state.errors:
+            print(f"\n{RED}✖ Phase {phase_target} ({name}) reported errors:{RESET}")
+            for err in provisioner.state.errors:
+                print(f"  • {err}")
+            print(json.dumps(output, indent=2))
+            return 1
+        print(f"\n{GREEN}Phase {phase_target} ({name}) completed:{RESET}")
+        print(json.dumps(output, indent=2))
+        return 0
 
     # Full sequence execution
     print(f"🚀 Initializing 5-Phase Autonomous Bootstrap for {BOLD}{node_id}{RESET} ({role})...\n")
@@ -1307,6 +1513,11 @@ def cmd_bootstrap(args):
         print("  • Technician Log: not dispatched (dry run)\n")
     else:
         print("  • Technician Log: dispatched to the available notifier channels (see log for per-channel results)\n")
+    if state.errors:
+        print(f"{RED}✖ Bootstrap finished with errors:{RESET}")
+        for err in state.errors:
+            print(f"  • {err}")
+        print()
 
     if getattr(args, "daemon", False):
         print(f"{CYAN}Entering continuous background health watchdog (interval: 120s)...{RESET}")
@@ -1317,6 +1528,8 @@ def cmd_bootstrap(args):
                 provisioner.phase_2_network()
         except KeyboardInterrupt:
             print("\nWatchdog terminated by operator.")
+    # A degraded-but-running node (optional tiers unverified) is not a failure; errors are.
+    return 1 if state.errors else 0
 
 
 # --- Model Context Protocol (MCP) Handlers ---
@@ -1534,19 +1747,20 @@ def cmd_app_validate(args):
 
     if not manifest_file.exists():
         print(f"  {RED}✖ Manifest file not found:{RESET} {manifest_file}")
-        return
+        return 1
 
     registry = EnterpriseRegistry()
     manifest = registry.load_manifest_file(manifest_file)
     if not manifest:
         print(f"  {RED}✖ Validation failed:{RESET} Unable to parse manifest at {manifest_file}")
-        return
+        return 1
 
     errors = manifest.validate()
     if errors:
         print(f"  {RED}✖ Validation errors found ({len(errors)}):{RESET}")
         for err in errors:
             print(f"    • {RED}{err}{RESET}")
+        return 1
     else:
         print(f"  {GREEN}✔ Manifest is valid:{RESET} {BOLD}{manifest.name}{RESET} ({manifest.app_id})")
         print(f"  • Version:       {manifest.version}")
@@ -1560,6 +1774,7 @@ def cmd_app_validate(args):
             print(f"  • GPU VRAM:      {manifest.resources.gpu_vram_mb} MB (Required)")
         print(f"  • Ports:         {manifest.network.ports or 'None'}")
         print(f"  • Storage Mount: {manifest.storage.mount_point or 'Ephemeral'}\n")
+    return 0
 
 
 def cmd_app_register(args):
@@ -1581,7 +1796,7 @@ def cmd_app_register(args):
     manifest = registry.load_manifest_file(manifest_file)
     if not manifest:
         print(f"  {RED}✖ Failed to load manifest from:{RESET} {manifest_file}")
-        return
+        return 1
 
     success, errors = registry.register_app(manifest, manifest_path=manifest_file, persist=True)
     if success:
@@ -1591,6 +1806,8 @@ def cmd_app_register(args):
         print(f"  • Run with: {CYAN}smdc app start {manifest.app_id}{RESET}\n")
     else:
         print(f"  {RED}✖ Registration rejected:{RESET} {'; '.join(errors)}\n")
+        return 1
+    return 0
 
 
 def cmd_app_unregister(args):
@@ -1602,6 +1819,8 @@ def cmd_app_unregister(args):
         print(f"\n  {GREEN}✔ Successfully unregistered application:{RESET} {BOLD}{args.app_id}{RESET}\n")
     else:
         print(f"\n  {YELLOW}○ Application not found in registry:{RESET} {args.app_id}\n")
+        return 1
+    return 0
 
 
 def cmd_app_list(args):
@@ -1645,8 +1864,9 @@ def cmd_app_start(args):
             print(f"  • Power Budget (estimate): {YELLOW}{state.power_draw_w:.1f} W{RESET}")
             print(f"  • Memory Budget (estimate): {state.ram_usage_mb:.1f} MB")
             print(f"  • CPU Budget (estimate):    {state.cpu_usage_percent:.1f}%\n")
-    else:
-        print(f"  {RED}✖ {msg}{RESET}\n")
+        return 0
+    print(f"  {RED}✖ {msg}{RESET}\n")
+    return 1
 
 
 def cmd_app_stop(args):
@@ -1657,8 +1877,9 @@ def cmd_app_stop(args):
     success, msg = manager.stop_app(args.app_id)
     if success:
         print(f"\n  {GREEN}✔ {msg}{RESET}\n")
-    else:
-        print(f"\n  {RED}✖ {msg}{RESET}\n")
+        return 0
+    print(f"\n  {RED}✖ {msg}{RESET}\n")
+    return 1
 
 
 def cmd_app_restart(args):
@@ -1669,8 +1890,9 @@ def cmd_app_restart(args):
     success, msg = manager.restart_app(args.app_id)
     if success:
         print(f"\n  {GREEN}✔ {msg}{RESET}\n")
-    else:
-        print(f"\n  {RED}✖ {msg}{RESET}\n")
+        return 0
+    print(f"\n  {RED}✖ {msg}{RESET}\n")
+    return 1
 
 
 def cmd_app_status(args):
@@ -1684,7 +1906,7 @@ def cmd_app_status(args):
         state = manager.get_runtime_state(args.app_id)
         if not state:
             print(f"  {RED}✖ Application '{args.app_id}' not found.{RESET}\n")
-            return
+            return 1
         states = [state]
     else:
         states = manager.list_runtime_states()
@@ -1738,8 +1960,9 @@ def cmd_app_package(args):
         else:
             print(f"  • PQC Signature:     {YELLOW}Omitted (--no-pqc){RESET}")
         print("\n  Package is ready for air-gapped deployment and Space DTN synchronization.\n")
-    else:
-        print(f"  {RED}✖ {msg}{RESET}\n")
+        return 0
+    print(f"  {RED}✖ {msg}{RESET}\n")
+    return 1
 
 
 def cmd_app_test(args):
