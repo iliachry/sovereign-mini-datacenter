@@ -64,28 +64,34 @@ No Qdrant latency or throughput has been measured, on any machine, and the repos
 
 ## 4. Load-Shedding Reaction Latency — MEASURED (software path, simulation) and DESIGN TARGET (hardware)
 
-The **Sentinel Copilot** agent (`sentinel_copilot.py`) polls the power exporter's `/metrics` endpoint every `SENTINEL_POLL_INTERVAL_SECONDS` (default 30 s, minimum 1 s; the agents overlay passes the variable through from `.env`). It does not read VE.Direct or the BMS directly, and a change in battery state is therefore noticed up to one polling interval after it happens. When the mode changes it writes the new mode to the shared mode file and publishes a `load_shedding.changed` event on the in-process event bus; it caps no GPU and switches no relay.
+The **Sentinel Copilot** agent (`sentinel_copilot.py`) polls the power exporter's `/metrics` endpoint every `SENTINEL_POLL_INTERVAL_SECONDS` (default 30 s, minimum 1 s; the agents overlay passes the variable through from `.env`). It does not read VE.Direct or the BMS directly, and a change in battery state is therefore noticed up to one polling interval after it happens. When the mode changes it writes the new mode to the shared mode file and publishes a `load_shedding.changed` event (mode, shedding level, SoC) on the in-process event bus; it caps no GPU and switches no relay.
 
 This section therefore has two kinds of numbers, and they must not be mixed:
 
 - **Design targets** for the full reaction pipeline on the target hardware ($L_0 \to L_1 \to L_2 \to L_3$). No code in this repository produces them and no hardware actuation has been measured. The cgroup / GPU power-cap stage and the relay stage are not implemented in the Python package (`software/telemetry/load_shedder.sh` can `docker pause` one container; nothing drives a relay).
-- **Measured in simulation**: the wall-clock time of the software path that does exist, taken with `smdc benchmark --shed` on one development machine. It starts at a telemetry sample that is already in memory (battery SoC 24.0%, below the 25% threshold) and excludes the polling interval, the HTTP scrape and all hardware.
+- **Measured in simulation**: the wall-clock time of the software path that does exist, taken with `smdc benchmark --shed` on one development machine. It starts at a telemetry sample that is already in memory (battery SoC 24.0%, below the 30% threshold of shedding level 2, at which the mode becomes `ECO_PRESERVATION` and `L3_DEFERRABLE` apps are paused) and excludes the polling interval, the HTTP scrape and all hardware.
 
 ### Reaction pipeline: design targets vs. what was measured
 
 | Stage | Design target (target hardware, not measured) | Measured in simulation on a Mac mini (Apple M4, 16 GB, macOS 27.2, Python 3.12.15) |
 | :--- | :---: | :--- |
 | Telemetry scraping (VE.Direct UART) | ~12.4 ms | Not measured (the benchmark starts from a sample in memory) |
-| State evaluator (sentinel mode decision) | ~4.2 ms | **0.0005 ms** median, 0.0007 ms p95 (`evaluate_mode`) |
-| Deferrable workloads paused | (part of the next stage) | **0.0125 ms** median, 0.0137 ms p95 from the sample until the enterprise manager has marked 3 deferrable apps `PAUSED` via the event bus (state tracking only; no process is signalled) |
-| Mode published (event dispatched and mode file written) | n/a | **0.1348 ms** median, 0.1677 ms p95 from the sample until `set_mode` returned |
+| State evaluator (sentinel mode decision) | ~4.2 ms | **0.0009 ms** median, 0.0011 ms p95 (`evaluate_mode`) |
+| Deferrable workloads paused | (part of the next stage) | **0.0128 ms** median, 0.0143 ms p95 from the sample until the enterprise manager has marked 3 deferrable apps `PAUSED` via the event bus (state tracking only; no process is signalled) |
+| Mode published (event dispatched and mode file written) | n/a | **0.1225 ms** median, 0.1435 ms p95 from the sample until `set_mode` returned |
 | Cgroup / GPU throttle (cgroups v2) | ~28.1 ms | Not measured, not implemented |
 | Physical relay shed (Modbus RS485) | ~65.0 ms | Not measured, not implemented |
 | **Total** | **109.7 ms** ($12.4 + 4.2 + 28.1 + 65.0$) | Not comparable: the measured path contains no I/O to hardware |
 
-Measured values: `smdc benchmark --shed --shed-iterations 1000`, run on 2026-11-14 (1,000 iterations, wall clock via `time.perf_counter`, nearest-rank p95; minimum and maximum of the same run: decision 0.0004 / 0.0027 ms, apps paused 0.0117 / 0.0546 ms, mode published 0.1295 / 3.9207 ms). Three consecutive runs agreed to within 0.001 ms on every median. They show that the Python decision and event path is negligible next to the 30 s polling interval, which dominates the real reaction time; they say nothing about how fast hardware would shed load.
+Measured values: `smdc benchmark --shed --shed-iterations 1000`, run three times in a row on 2026-11-14 with `SMDC_STATE_DIR` and `DTN_DB_PATH` in a temporary directory (1,000 iterations each, wall clock via `time.perf_counter`, nearest-rank p95). Each figure in the table is the middle value of the three runs. The three runs gave:
 
-A repeat of the same command on the same machine later on 2026-11-14 gave medians of 0.0005 ms (decision), 0.0121 ms (apps paused) and 0.1330 ms (mode published), with p95 values of 0.0008, 0.0156 and 0.1645 ms.
+| Stage | Median (ms), runs 1 / 2 / 3 | p95 (ms), runs 1 / 2 / 3 | Minimum / maximum over the three runs (ms) |
+| :--- | :---: | :---: | :---: |
+| Mode decision | 0.0009 / 0.0009 / 0.0010 | 0.0010 / 0.0011 / 0.0011 | 0.0008 / 0.0067 |
+| Apps paused | 0.0128 / 0.0124 / 0.0130 | 0.0143 / 0.0138 / 0.0144 | 0.0118 / 0.0491 |
+| Mode published | 0.1202 / 0.1225 / 0.1236 | 0.1429 / 0.1435 / 0.1435 | 0.1162 / 0.2560 |
+
+These runs replace the figures published earlier on the same day (0.0005 / 0.0125 / 0.1348 ms medians): the measured code path changed in between, because the sentinel now validates the four thresholds as one policy and computes the level through the shared `compute_shedding_level` function (with the hysteresis parameters), and `EnterpriseManager` records the level and SoC of every event. They show that the Python decision and event path is negligible next to the 30 s polling interval, which dominates the real reaction time; they say nothing about how fast hardware would shed load.
 
 ### Load-Shedding Transition Design Targets (Not Measured)
 

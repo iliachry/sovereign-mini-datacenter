@@ -15,7 +15,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-from sovereign_dc.config import default_dtn_db_path, default_log_dir
+from sovereign_dc.config import DEFAULT_NODE_ID, default_dtn_db_path, default_log_dir
 
 logger = logging.getLogger("TechnicianNotifier")
 
@@ -194,7 +194,7 @@ class TechnicianNotifierChain:
         notifiers: list[BaseNotifier] | None = None,
         node_id: str | None = None,
     ):
-        self.node_id: str = str(node_id or os.getenv("NODE_ID") or "smdc-dgx-01")
+        self.node_id: str = str(node_id or os.getenv("NODE_ID") or DEFAULT_NODE_ID)
         if notifiers is not None:
             self.notifiers = notifiers
         else:

@@ -55,7 +55,8 @@ start_time = time.time()
 #   the hotter of the two coolant-loop probes that answered              C      sovereign_temp_coolant_celsius
 #   sovereign_hw_vedirect_last_frame_age_seconds /
 #       "VE.Direct Last Valid Frame Age"                                 s      sovereign_telemetry_bridge_frame_age_seconds
-#   derived: 1 if SoC < 20 %, else 0 (only when SoC was read)                   sovereign_load_shedding_active
+#   derived: 1 if SoC < SHEDDING_L3_SOC (default 20 %), else 0
+#       (only when SoC was read)                                                sovereign_load_shedding_active
 #
 # Both DS18B20 probes sit on the coolant loop (firmware/README.md), so neither is an air
 # temperature: sovereign_temp_rack_inlet_celsius and sovereign_temp_rack_exhaust_celsius are
@@ -70,7 +71,31 @@ start_time = time.time()
 # readings are withheld; the coolant temperatures, which the firmware expires on their own
 # clock, are still exported.
 
-LOAD_SHEDDING_SOC_PERCENT = 20.0
+# sovereign_load_shedding_active is 1 at shedding level 3 and above, i.e. while SoC is below
+# the level-3 threshold of the node's one SoC policy (SovereignConfig.shedding_l3_soc, read
+# here from the same SHEDDING_L3_SOC environment variable with the same default).
+SHEDDING_L3_SOC_ENV = "SHEDDING_L3_SOC"
+DEFAULT_LOAD_SHEDDING_SOC_PERCENT = 20.0
+
+
+def load_shedding_soc_percent() -> float:
+    """SoC (percent) below which ``sovereign_load_shedding_active`` is 1: ``SHEDDING_L3_SOC``."""
+    raw = os.getenv(SHEDDING_L3_SOC_ENV, "").strip()
+    if not raw:
+        return DEFAULT_LOAD_SHEDDING_SOC_PERCENT
+    try:
+        percent = float(raw)
+    except ValueError:
+        percent = math.nan
+    if not math.isfinite(percent):
+        logger.warning(
+            "Ignoring %s=%r (need a number); using %g", SHEDDING_L3_SOC_ENV, raw, DEFAULT_LOAD_SHEDDING_SOC_PERCENT
+        )
+        return DEFAULT_LOAD_SHEDDING_SOC_PERCENT
+    return percent
+
+
+LOAD_SHEDDING_SOC_PERCENT = load_shedding_soc_percent()
 BRIDGE_CACHE_SECONDS = 1.0
 BRIDGE_MAX_BODY_BYTES = 262_144
 DEFAULT_BRIDGE_TIMEOUT_SECONDS = 2.0
@@ -158,7 +183,12 @@ CANONICAL_SERIES: tuple[tuple[str, str, str, int], ...] = (
         "coolant_exhaust",
         2,
     ),
-    ("sovereign_load_shedding_active", "1 if load shedding is active, 0 otherwise", "load_shedding", 0),
+    (
+        "sovereign_load_shedding_active",
+        "1 while battery SoC is below the level-3 shedding threshold (SHEDDING_L3_SOC, default 20 %), else 0",
+        "load_shedding",
+        0,
+    ),
     (
         "sovereign_telemetry_bridge_frame_age_seconds",
         "Seconds since the ESP32 bridge's last checksum-valid VE.Direct frame",

@@ -19,6 +19,10 @@ from typing import Any
 
 logger = logging.getLogger("SovereignConfig")
 
+# Node id used when neither NODE_ID nor a config file sets one. The mesh monitor
+# (mesh/mesh_sync.py, which also runs standalone) carries the same literal.
+DEFAULT_NODE_ID = "smdc-dgx-01"
+
 # File names of node-local state inside the private state directory.
 DTN_SPOOL_FILENAME = "dtn_spool.db"
 LOG_DIRNAME = "sovereign_logs"
@@ -27,6 +31,111 @@ MODE_FILENAME = "sovereign_mode"
 LEGACY_TMP_DIR = "/tmp"  # noqa: S108 - only read (after an ownership/mode check) to find a legacy file; never a default
 
 _FALLBACK_STATE_DIR: str | None = None
+
+
+# --- shared shedding policy: begin -----------------------------------------------------
+# This block is byte-identical in src/sovereign_dc/config.py and
+# src/sovereign_dc/agents/sentinel_copilot.py (the sentinel also ships as a standalone,
+# standard-library-only script and cannot import the package); tests/ compares the two.
+# It needs only ``math`` and the module's ``logger``.
+SHEDDING_ENV_NAMES = ("SHEDDING_L1_SOC", "SHEDDING_L2_SOC", "SHEDDING_L3_SOC", "SHEDDING_L4_SOC")
+DEFAULT_SHEDDING_THRESHOLDS = (50.0, 30.0, 20.0, 10.0)
+SHEDDING_HYSTERESIS_ENV = "SHEDDING_HYSTERESIS_SOC"
+DEFAULT_SHEDDING_HYSTERESIS_SOC = 2.0
+MAX_SHEDDING_HYSTERESIS_SOC = 10.0
+
+
+def shedding_policy_problem(thresholds: tuple[float, float, float, float]) -> str | None:
+    """Why ``thresholds`` (levels 1-4) are not a usable policy, or None when they are.
+
+    Usable means: four finite numbers within 0-100 with L1 > L2 > L3 > L4.
+    """
+    if len(thresholds) != 4:
+        return "four thresholds are needed"
+    for name, value in zip(SHEDDING_ENV_NAMES, thresholds, strict=True):
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+            return f"{name} is not a finite number"
+        if not 0.0 <= value <= 100.0:
+            return f"{name}={value:g} is outside 0-100"
+    for index in range(3):
+        if not thresholds[index] > thresholds[index + 1]:
+            return (
+                f"{SHEDDING_ENV_NAMES[index]}={thresholds[index]:g} is not above "
+                f"{SHEDDING_ENV_NAMES[index + 1]}={thresholds[index + 1]:g}"
+            )
+    return None
+
+
+def checked_shedding_thresholds(
+    thresholds: tuple[float, float, float, float],
+) -> tuple[float, float, float, float]:
+    """``thresholds`` if they are a usable policy, else the defaults (one warning names why).
+
+    A partly applied policy would be worse than the default one, so one bad value discards
+    all four: SHEDDING_L1_SOC > SHEDDING_L2_SOC > SHEDDING_L3_SOC > SHEDDING_L4_SOC.
+    """
+    problem = shedding_policy_problem(thresholds)
+    if problem is None:
+        return (float(thresholds[0]), float(thresholds[1]), float(thresholds[2]), float(thresholds[3]))
+    logger.warning(
+        "Ignoring the load-shedding thresholds %s (%s): they must be numbers within 0-100 with "
+        "%s; using the defaults %s.",
+        ", ".join(f"{name}={value!r}" for name, value in zip(SHEDDING_ENV_NAMES, thresholds, strict=False)),
+        problem,
+        " > ".join(SHEDDING_ENV_NAMES),
+        " / ".join(f"{value:g}" for value in DEFAULT_SHEDDING_THRESHOLDS),
+    )
+    return DEFAULT_SHEDDING_THRESHOLDS
+
+
+def checked_shedding_hysteresis(value: object) -> float:
+    """``value`` as SoC points of hysteresis (0 .. MAX_SHEDDING_HYSTERESIS_SOC), else the default."""
+    try:
+        points = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        points = math.nan
+    if isinstance(value, bool) or not math.isfinite(points) or not 0.0 <= points <= MAX_SHEDDING_HYSTERESIS_SOC:
+        logger.warning(
+            "Ignoring %s=%r (need a number from 0 to %g); using %g.",
+            SHEDDING_HYSTERESIS_ENV,
+            value,
+            MAX_SHEDDING_HYSTERESIS_SOC,
+            DEFAULT_SHEDDING_HYSTERESIS_SOC,
+        )
+        return DEFAULT_SHEDDING_HYSTERESIS_SOC
+    return points
+
+
+def compute_shedding_level(
+    soc: float,
+    thresholds: tuple[float, float, float, float],
+    previous_level: int | None = None,
+    hysteresis: float = 0.0,
+) -> int:
+    """Load-shedding level 0-4 for a battery SoC (percent). Pure.
+
+    Without ``previous_level`` this is the plain mapping: level N while SoC is below the
+    level-N threshold (the boundary itself belongs to the lower level).
+
+    With ``previous_level`` (the level decided on the previous evaluation) the level rises
+    exactly as in the plain mapping, but is left only once SoC is ``hysteresis`` points
+    above that level's threshold: with thresholds 50 / 30 / 20 / 10 and hysteresis 2, a
+    node at level 2 stays there until SoC reaches 32, so a SoC hovering around 30 does
+    not toggle the level (and with it applications) on every poll.
+    """
+    level = 0
+    for index, threshold in enumerate(thresholds):
+        if soc < threshold:
+            level = index + 1
+    if previous_level is None or hysteresis <= 0.0 or previous_level <= level:
+        return level
+    held = min(int(previous_level), len(thresholds))
+    while held > level and soc >= thresholds[held - 1] + hysteresis:
+        held -= 1
+    return held
+
+
+# --- shared shedding policy: end -------------------------------------------------------
 
 
 def _is_private_dir(path: str) -> bool:
@@ -156,7 +265,7 @@ class SovereignConfig:
     """
 
     # ── Node Identity ─────────────────────────────────────────────────────
-    node_id: str = "smdc-dgx-01"
+    node_id: str = DEFAULT_NODE_ID
     node_role: str = "Primary Compute Core"
 
     # ── Hardware Abstraction ──────────────────────────────────────────────
@@ -199,6 +308,9 @@ class SovereignConfig:
     shedding_l2_soc: float = 30.0
     shedding_l3_soc: float = 20.0
     shedding_l4_soc: float = 10.0
+    # SoC points a level's threshold must be exceeded by before that level is left again
+    # (SHEDDING_HYSTERESIS_SOC; used only by callers that pass ``previous_level``).
+    shedding_hysteresis_soc: float = DEFAULT_SHEDDING_HYSTERESIS_SOC
     # Seconds between sentinel telemetry polls. Read from SENTINEL_POLL_INTERVAL_SECONDS, the
     # variable the standalone sentinel agent reads (SENTINEL_POLL_INTERVAL also works here).
     sentinel_poll_interval: float = 30.0
@@ -225,6 +337,22 @@ class SovereignConfig:
         except (TypeError, ValueError):
             mesh_interval = math.nan
         self.mesh_poll_interval = max(1.0, mesh_interval) if math.isfinite(mesh_interval) else 60.0
+        # One SoC policy: L1 > L2 > L3 > L4, finite, within 0-100; otherwise all four defaults.
+        (
+            self.shedding_l1_soc,
+            self.shedding_l2_soc,
+            self.shedding_l3_soc,
+            self.shedding_l4_soc,
+        ) = checked_shedding_thresholds(
+            (self.shedding_l1_soc, self.shedding_l2_soc, self.shedding_l3_soc, self.shedding_l4_soc)
+        )
+        if self.shedding_hysteresis_soc != DEFAULT_SHEDDING_HYSTERESIS_SOC:
+            self.shedding_hysteresis_soc = checked_shedding_hysteresis(self.shedding_hysteresis_soc)
+
+    @property
+    def shedding_thresholds(self) -> tuple[float, float, float, float]:
+        """SoC thresholds (percent) of shedding levels 1-4."""
+        return self.shedding_l1_soc, self.shedding_l2_soc, self.shedding_l3_soc, self.shedding_l4_soc
 
     @classmethod
     def from_env(cls) -> SovereignConfig:
@@ -300,21 +428,20 @@ class SovereignConfig:
         """Check if HAL is running in simulation mode."""
         return self.hal_mode == HALMode.SIMULATION
 
-    def get_shedding_level(self, battery_soc: float) -> int:
+    def get_shedding_level(self, battery_soc: float, previous_level: int | None = None) -> int:
         """Determine load shedding level from battery State-of-Charge.
+
+        Stateless callers (a dashboard label, a recommendation) omit ``previous_level`` and
+        get the plain mapping. A caller that tracks the level over time passes the level it
+        decided last: the level is then left only once SoC is ``shedding_hysteresis_soc``
+        points above its threshold (see ``compute_shedding_level``).
 
         Returns:
             0 (L0 Nominal) through 4 (L4 Blackout Safe).
         """
-        if battery_soc < self.shedding_l4_soc:
-            return 4
-        if battery_soc < self.shedding_l3_soc:
-            return 3
-        if battery_soc < self.shedding_l2_soc:
-            return 2
-        if battery_soc < self.shedding_l1_soc:
-            return 1
-        return 0
+        return compute_shedding_level(
+            battery_soc, self.shedding_thresholds, previous_level, self.shedding_hysteresis_soc
+        )
 
 
 def _build_env_map() -> dict[str, list[str]]:

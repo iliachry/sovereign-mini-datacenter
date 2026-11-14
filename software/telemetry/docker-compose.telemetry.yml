@@ -29,6 +29,8 @@ services:
       # in the container). Empty = no hardware source, sovereign_telemetry_source_up 0.
       - ESP32_BRIDGE_URL=${ESP32_BRIDGE_URL:-}
       - ESP32_BRIDGE_MAX_FRAME_AGE_SECONDS=${ESP32_BRIDGE_MAX_FRAME_AGE_SECONDS:-10}
+      # sovereign_load_shedding_active is 1 while battery SoC is below this (shedding level 3).
+      - SHEDDING_L3_SOC=${SHEDDING_L3_SOC:-20}
     volumes:
       - ./telemetry/power_exporter.py:/app/power_exporter.py:ro
     networks:

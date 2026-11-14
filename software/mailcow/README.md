@@ -58,34 +58,58 @@ these steps. Step 1 runs from the repository root; the later steps run inside
 git clone https://github.com/mailcow/mailcow-dockerized.git software/mailcow/core
 ```
 
-### 2. Generate mailcow.conf
+### 2. Generate mailcow.conf (required)
 
 ```bash
 cd software/mailcow/core
 # Interactive generator
-bash generate_config.sh
+./generate_config.sh
 # When prompted:
 #   Hostname: mail.yourdomain.com
 #   Timezone: Europe/Athens
 ```
 
-Or, instead of the generator, copy and edit the template (still inside `core/`):
+`generate_config.sh` is the only supported way to create `mailcow.conf`
+([install guide](https://docs.mailcow.email/getstarted/install/)). It, not the first
+container start, generates the database and Redis passwords (`DBPASS`, `DBROOT`,
+`REDISPASS`), the SOGo and Dovecot secrets and a self-signed start certificate in
+`data/assets/ssl/`
+([source](https://github.com/mailcow/mailcow-dockerized/blob/master/generate_config.sh)).
+`../mailcow.conf.example` is **not** a configuration to copy: it lists only the
+settings that step 3 changes. A `mailcow.conf` written by hand has empty database
+passwords and MariaDB refuses to initialise.
+
+### 3. Put mailcow's web UI behind Traefik
+
+Change these six settings in the generated `software/mailcow/core/mailcow.conf` (the
+values and their reasons are in `../mailcow.conf.example`) and leave everything else as
+generated, including `COMPOSE_PROJECT_NAME`:
+
 ```bash
-cp ../mailcow.conf.example mailcow.conf
-# Edit MAILCOW_HOSTNAME, TZ, and other values
+# inside software/mailcow/core; keeps the generated file as mailcow.conf.bak
+sed -i.bak -E \
+  -e 's/^HTTP_BIND=.*/HTTP_BIND=127.0.0.1/' \
+  -e 's/^HTTP_PORT=.*/HTTP_PORT=8025/' \
+  -e 's/^HTTPS_BIND=.*/HTTPS_BIND=127.0.0.1/' \
+  -e 's/^HTTPS_PORT=.*/HTTPS_PORT=8443/' \
+  -e 's/^HTTP_REDIRECT=.*/HTTP_REDIRECT=n/' \
+  -e 's/^SKIP_LETS_ENCRYPT=.*/SKIP_LETS_ENCRYPT=y/' \
+  mailcow.conf
+# must print exactly the six lines of ../mailcow.conf.example
+grep -E '^(HTTPS?_(BIND|PORT)|HTTP_REDIRECT|SKIP_LETS_ENCRYPT)=' mailcow.conf
 ```
 
-### 3. Move mailcow's built-in nginx off ports 80/443
-
-Set in `software/mailcow/core/mailcow.conf` (already set in the template):
-```bash
-HTTPS_BIND=127.0.0.1
-HTTPS_PORT=8443
-HTTP_BIND=127.0.0.1
-HTTP_PORT=8025
-COMPOSE_PROJECT_NAME=mailcow
-SKIP_LETS_ENCRYPT=y
-```
+- `HTTP_BIND` / `HTTPS_BIND` / `HTTP_PORT` / `HTTPS_PORT`: Traefik owns host ports
+  80/443, so mailcow's nginx is published on loopback only. The ports also change what
+  nginx listens on inside the container, which is where the override points Traefik
+  ([reverse-proxy guide](https://docs.mailcow.email/post_installation/reverse-proxy/r_p/)).
+- `HTTP_REDIRECT=n`: Traefik terminates TLS and forwards plain HTTP. The generator's
+  default `y` makes nginx answer every request on `HTTP_PORT` with a redirect to HTTPS,
+  which loops through Traefik. Traefik's own `web` entrypoint already redirects HTTP to
+  HTTPS.
+- `SKIP_LETS_ENCRYPT=y`: Traefik obtains the certificate
+  ([Traefik v3 guide](https://docs.mailcow.email/post_installation/reverse-proxy/r_p-traefik3/));
+  see "TLS certificate for the mail ports" below for what that means for SMTP and IMAP.
 
 ### 4. Install the override (network + Traefik labels)
 
@@ -139,17 +163,64 @@ sudo ufw allow 993/tcp  comment 'IMAPS'
 sudo ufw allow 995/tcp  comment 'POP3S'
 ```
 
-## Integration with Other Services
+## TLS certificate for the mail ports
 
-Once mailcow is running, update `.env` in the main stack to use mailcow as SMTP:
+With `SKIP_LETS_ENCRYPT=y` mailcow requests no certificate. Traefik obtains one for
+`MAILCOW_HOSTNAME` (the `mailcow` router in the override) and serves the web UI with it,
+but Postfix and Dovecot read `data/assets/ssl/cert.pem` and `key.pem` inside
+`software/mailcow/core`, which hold the self-signed certificate written by
+`generate_config.sh`. Until that file is replaced, mail clients and the core services
+(see below) get an untrusted certificate on ports 25/465/587/993/995.
+
+Copy Traefik's certificate for `MAILCOW_HOSTNAME` to `data/assets/ssl/cert.pem` (full
+chain) and `data/assets/ssl/key.pem`, then restart the three containers that read it, and
+repeat that on every renewal:
 
 ```bash
-SMTP_HOST=mailcow-postfix   # Docker service name on sovereign_net
-SMTP_PORT=587
-SMTP_USER=notifications@yourdomain.com
-SMTP_PASSWORD=your_mailbox_password
-SMTP_FROM=noreply@yourdomain.com
+# inside software/mailcow/core
+docker compose restart postfix-mailcow dovecot-mailcow nginx-mailcow
 ```
 
-This routes GitLab, Vaultwarden, Nextcloud, and OpenProject emails
-through your own mailcow instance instead of an external SMTP provider.
+Traefik keeps its certificates in `/letsencrypt/acme.json` on the core stack's
+`traefik_certs` volume (`<core project>_traefik_certs`, by default
+`software_traefik_certs`). mailcow's
+[Traefik v3 guide](https://docs.mailcow.email/post_installation/reverse-proxy/r_p-traefik3/)
+shows a certificate-dumper container that extracts it into `data/assets/ssl` and restarts
+Postfix and Dovecot on renewal; the
+[reverse-proxy guide](https://docs.mailcow.email/post_installation/reverse-proxy/r_p/)
+describes the same copy-and-restart hook for other ACME clients. This repository ships
+neither: it is a manual step.
+
+## Integration with Other Services
+
+Once mailcow is running and has a trusted certificate (previous section), point the main
+stack's `.env` at mailcow's public name:
+
+```bash
+SMTP_HOST=mail.yourdomain.com   # = MAILCOW_HOSTNAME, not a container name
+SMTP_PORT=587                   # submission: STARTTLS + authentication
+SMTP_USER=notifications@yourdomain.com
+SMTP_PASSWORD=your_mailbox_password
+SMTP_FROM=notifications@yourdomain.com
+```
+
+- **Host.** Use `MAILCOW_HOSTNAME`. The core services verify the server certificate
+  against the name they connect to, and the certificate is issued for
+  `MAILCOW_HOSTNAME`. A container name cannot be used: mailcow's SMTP service is
+  `postfix-mailcow` (alias `postfix`) on mailcow's own network, the override attaches
+  only `nginx-mailcow` to `sovereign_net`, and no certificate would match such a name
+  anyway. Do not work around that by disabling certificate verification.
+- **Reachability.** The name must resolve, from inside the core containers, to an address
+  on which this host publishes port 587: its public address (the DNS `A` record above)
+  or, behind a NAT router without hairpin support, the host's LAN address through your
+  local DNS.
+- **Port and login.** 587 is mailcow's submission port (`SUBMISSION_PORT`): STARTTLS,
+  then authentication as a mailbox. Create the `SMTP_USER` mailbox in the mailcow admin
+  panel first.
+- **Sender.** mailcow rejects a sender the authenticated mailbox may not use. Either set
+  `SMTP_FROM` to the `SMTP_USER` address, or add the other address as an alias of that
+  mailbox (or allow it under the mailbox's "Allow to send as") in the admin panel.
+
+`software/docker-compose.yml` passes these variables to GitLab and Vaultwarden, the two
+core services with SMTP settings; both use STARTTLS on `SMTP_PORT`. Other services
+(Nextcloud, OpenProject) are configured for mail in their own admin interfaces.

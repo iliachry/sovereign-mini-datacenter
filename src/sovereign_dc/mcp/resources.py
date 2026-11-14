@@ -9,6 +9,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 from sovereign_dc import __version__
 from sovereign_dc.config import get_config
@@ -282,7 +283,7 @@ def get_mcp_resources() -> list[MCPResource]:
         MCPResource(
             uri="smdc://metaverse/uav/status",
             name="Metaverse UAV Positioning & DT Telemetry",
-            description="Real-time 3D UAV coordinates, per-receiver SINR values, and DePIN SLA status.",
+            description="Simulated 3D UAV coordinates, per-receiver SINR values and DePIN SLA status of this process's orchestrator (latest cycle; reading runs none).",
             mime_type="application/json",
             reader=read_metaverse_uav_status_resource,
         ),
@@ -297,27 +298,44 @@ def get_mcp_resources() -> list[MCPResource]:
 
 
 def read_metaverse_uav_status_resource() -> str:
-    """Returns real-time snapshot of the metaverse UAV positioning and DT ray-tracing state."""
-    from sovereign_dc.metaverse.engine import MetaverseOrchestrator
+    """Returns the UAV position and the latest ray-tracing trace of this process's orchestrator.
 
-    orch = MetaverseOrchestrator()
-    trace = orch.step(deterministic=True)
-    return dumps_strict(
-        {
-            "uri": "smdc://metaverse/uav/status",
-            "timestamp": time.time(),
-            "uav_position": trace.uav_position,
-            "per_receiver_sinr": trace.per_receiver_sinr,
-            "sum_capacity_bps_hz": trace.sum_capacity_bps_hz,
-            "decision_latency_ms": trace.decision_latency_ms,
-            "depin_sla": {
-                "valid": trace.sla_result.valid,
-                "block_hash": trace.sla_result.block_hash,
-                "signatures_count": trace.sla_result.validator_signatures_count,
-            },
-        },
-        indent=2,
-    )
+    Reading never advances the simulation. Like ``smdc://metaverse/5g/slices`` it reports the
+    process's own orchestrator singleton with a ``source``: ``"process_orchestrator"`` once
+    a cycle has run here, else ``"fresh_simulation"`` (the trace fields are then null and
+    ``uav_position`` is the initial position). The MCP stdio server is normally a separate
+    process from the dashboard and does not see the dashboard's cycles.
+    """
+    from sovereign_dc.web.dashboard import get_metaverse_orchestrator
+
+    orch = get_metaverse_orchestrator()
+    cycles = int(orch.total_cycles_executed)
+    trace = orch.traces[-1] if orch.traces else None
+    status: dict[str, Any] = {
+        "uri": "smdc://metaverse/uav/status",
+        "timestamp": time.time(),
+        "source": "process_orchestrator" if cycles > 0 else "fresh_simulation",
+        "total_cycles_executed": cycles,
+        "simulated": True,
+        "uav_position": orch.uav_position,
+        "per_receiver_sinr": trace.per_receiver_sinr if trace else None,
+        "sum_capacity_bps_hz": trace.sum_capacity_bps_hz if trace else None,
+        "decision_latency_ms": trace.decision_latency_ms if trace else None,
+        "depin_sla": {
+            "valid": trace.sla_result.valid,
+            "block_hash": trace.sla_result.block_hash,
+            "signatures_count": trace.sla_result.validator_signatures_count,
+        }
+        if trace
+        else None,
+    }
+    if trace is None:
+        status["note"] = (
+            "No simulation cycle has run in this process's orchestrator, so there is no trace "
+            "to report. A dashboard running in another process keeps its own state: read it "
+            "from its /api/metaverse/status endpoint."
+        )
+    return dumps_strict(status, indent=2)
 
 
 def read_metaverse_slices_resource() -> str:

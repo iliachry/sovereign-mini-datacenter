@@ -179,34 +179,49 @@ Where:
     ┌──────────────────────┐                                  ┌──────────────────────┐
     │ High-Power AI Batch  │                                  │ Low-Power Standby    │
     │ Vector Re-indexing   │                                  │ LoRa Heartbeat Only  │
-    │ Model Fine-Tuning    │                                  │ Load Shedding L3     │
+    │ Model Fine-Tuning    │                                  │ Load Shedding L2     │
     └──────────────────────┘                                  └──────────────────────┘
 ```
 
 ### Autonomous Dynamic Load-Shedding Levels
 
+One policy maps battery state of charge (SoC) to a shedding level from 0 to 4. The thresholds are `SovereignConfig.shedding_l1_soc` to `shedding_l4_soc` (environment variables `SHEDDING_L1_SOC` to `SHEDDING_L4_SOC`, defaults 50, 30, 20 and 10); every component below reads the same variables with the same defaults.
+
 ```mermaid
 stateDiagram-v2
     [*] --> L0_Nominal
-    
-    L0_Nominal --> L1_MildThrottling : SoC under 50% or Solar under 200W
-    L1_MildThrottling --> L0_Nominal : SoC over 65% and Solar over 500W
-    
-    L1_MildThrottling --> L2_HeavyShedding : SoC under 30%
-    L2_HeavyShedding --> L1_MildThrottling : SoC over 40%
-    
-    L2_HeavyShedding --> L3_CriticalPreservation : SoC under 20%
-    L3_CriticalPreservation --> L2_HeavyShedding : SoC over 25%
-    
-    L3_CriticalPreservation --> L4_BlackoutSafe : SoC under 10%
-    L4_BlackoutSafe --> L3_CriticalPreservation : SoC over 15% (Solar Recovery)
+
+    L0_Nominal --> L1_IdlePaused : "SoC under 50%"
+    L1_IdlePaused --> L0_Nominal : "SoC at or over 50%"
+
+    L1_IdlePaused --> L2_EcoPreservation : "SoC under 30%"
+    L2_EcoPreservation --> L1_IdlePaused : "SoC at or over 30%"
+
+    L2_EcoPreservation --> L3_BackgroundPaused : "SoC under 20%"
+    L3_BackgroundPaused --> L2_EcoPreservation : "SoC at or over 20%"
+
+    L3_BackgroundPaused --> L4_CriticalOnly : "SoC under 10%"
+    L4_CriticalOnly --> L3_BackgroundPaused : "SoC at or over 10%"
 ```
 
-* **Level 0 (Nominal, SoC > 50%)**: Full power. Both DGX Spark compute nodes active, full RAG indexing, continuous Git CI/CD builds, open peer-relay bandwidth.
-* **Level 1 (Mild Throttling, SoC 30–50%)**: GPU power capped to 50W (Dynamic FP16/INT8 quantizations), background CI jobs paused, non-critical telemetry scraped at 60s intervals instead of 5s.
-* **Level 2 (Heavy Shedding, SoC 20–30%)**: Secondary compute nodes powered down via Smart PDU / Relay. Only master control plane active. Local AI restricted to high-priority queries only.
-* **Level 3 (Critical Preservation, SoC 10–20%)**: Primary compute put into deep sleep (`suspend-to-RAM`). ESP32 telemetry bridge and MikroTik switch remain on low-power 12V DC rail. LoRa emergency beacons transmitted every 10 minutes.
-* **Level 4 (Blackout Safe State, SoC < 10%)**: All AC inverters isolated. Total shutdown of compute to prevent LiFePO4 cell undervoltage. ESP32 enters deep-sleep listening for Solar Wakeup Interrupt (>48V MPPT solar input).
+What the code in this repository does at each level:
+
+<!-- shedding-levels:begin (tests/test_regress_round4_shedding.py compares this table with the code defaults) -->
+| Shedding level | Battery SoC | Sentinel mode | App tiers the `EnterpriseManager` marks paused | Other components |
+| :---: | :--- | :--- | :--- | :--- |
+| **0** | at or above 50 % | `NORMAL` (`SOLAR_SURPLUS_COMPUTE` while PV power is above 1000 W and SoC above 75 %) | none | none |
+| **1** | below 50 % | `NORMAL` | `L4_IDLE` | none |
+| **2** | below 30 % | `ECO_PRESERVATION` | `L3_DEFERRABLE`, `L4_IDLE` | The knowledge indexer defers its batch work while the mode file says `ECO_PRESERVATION`. |
+| **3** | below 20 % | `ECO_PRESERVATION` | `L2_BACKGROUND`, `L3_DEFERRABLE`, `L4_IDLE` | The power exporter sets `sovereign_load_shedding_active` to 1; `load_shedder.sh` raises its low-battery cause. |
+| **4** | below 10 % | `ECO_PRESERVATION` | `L1_STANDARD`, `L2_BACKGROUND`, `L3_DEFERRABLE`, `L4_IDLE` | Same as level 3. |
+<!-- shedding-levels:end -->
+
+* **Sentinel copilot** (`sentinel_copilot.py`): computes the level from the exporter's SoC, writes the mode to the shared mode file and publishes `load_shedding.changed` with `mode`, `level` and `battery_soc` on the in-process event bus. The table gives the SoC at which a level is entered; the running sentinel leaves a level only once the SoC is `SHEDDING_HYSTERESIS_SOC` points (default 2) above that level's threshold (12, 22, 32 and 52 % with the defaults), so an SoC hovering at a threshold does not toggle the level on every poll. The thresholds are validated as one policy (numbers within 0–100, L1 > L2 > L3 > L4); on a violation one warning is logged and all four defaults are used. While the SoC is unknown the last mode and level are held.
+* **`EnterpriseManager`**: marks tracked applications paused by power tier as in the table, and additionally while a reported SoC is below an application's `power.min_battery_soc`; `L0_CRITICAL` is never paused. An application started while a level is in force is started paused by shedding. It tracks state and publishes events; it does not supervise processes. Details: [`ENTERPRISE_ONBOARDING.md`](ENTERPRISE_ONBOARDING.md), section 3.
+* **Power exporter**: `sovereign_load_shedding_active` is 1 from level 3 (SoC below `SHEDDING_L3_SOC`).
+* **`software/telemetry/load_shedder.sh`** (host script, one pass per run): raises its low-battery cause from level 3 and considers it over at level 0 (SoC at or above `SHEDDING_L1_SOC`). Its second cause is thermal: coolant above 60 °C, over at or below 55 °C. It only logs unless `LOAD_SHED_ACTION=pause`, in which case it runs `docker pause` / `docker unpause` on one container; while the container's state cannot be determined (`docker inspect` fails) it keeps its pause marker and retries on the next run.
+
+> **Design targets, not implemented.** The hardware actions originally planned for these levels are not performed by any code in this repository: capping GPU power at level 1, powering down the secondary compute node through a smart PDU or relay at level 2, suspending the primary compute node at level 3 (ESP32 bridge and switch staying on the 12 V rail, LoRa beacons every 10 minutes), and isolating the AC inverters at level 4 with an ESP32 solar wake-up. Nothing throttles a GPU, switches a relay or suspends a node.
 
 ---
 

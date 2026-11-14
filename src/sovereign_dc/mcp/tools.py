@@ -158,8 +158,11 @@ def tool_set_load_shedding(params: dict[str, Any]) -> dict[str, Any]:
 
     This does not actuate hardware (no PDU, GPU or TDP control is driven from here): the
     only effect is the ``load_shedding.changed`` event, to which the EnterpriseManager
-    reacts by pausing/resuming tracked background-tier apps.
+    reacts by pausing/resuming tracked apps by power tier (``schema.SHED_PAUSE_LEVEL``).
+    ``description`` and ``paused_tiers`` state that implemented effect;
+    ``design_targets_not_implemented`` lists the hardware actions the design foresees.
     """
+    from sovereign_dc.enterprise.schema import SHED_PAUSE_LEVEL
     from sovereign_dc.events import Event, EventType, get_event_bus
 
     level = str(params.get("level", "L0")).upper()
@@ -170,18 +173,29 @@ def tool_set_load_shedding(params: dict[str, Any]) -> dict[str, Any]:
             "error": f"Invalid level '{level}'. Must be one of {valid_levels}.",
         }
 
-    # What each level is *meant* to do at the hardware layer (policy description only).
-    actions = {
-        "L0": "Full AI Inference, Training & Space DTN active (Nominal power)",
-        "L1": "Background RAG indexing paused; high-priority LLM inference allowed",
-        "L2": "Secondary GPU disabled; primary Jetson throttled to 30W TDP",
-        "L3": "All GPU workloads halted; critical networking and BMS monitoring only",
-        "L4": "Emergency load shed; non-essential outlets powered down via PDU",
+    numeric_level = int(level[1])
+    # The implemented effect: which power tiers the EnterpriseManager marks paused.
+    paused_tiers = sorted(tier.value for tier, pause_level in SHED_PAUSE_LEVEL.items() if numeric_level >= pause_level)
+    if paused_tiers:
+        description = (
+            f"Tracked enterprise apps of power tier {', '.join(paused_tiers)} are marked paused; "
+            "L0_CRITICAL apps and all other tiers keep running. Apps paused for shedding are resumed "
+            "when the level falls below the one that pauses their tier."
+        )
+    else:
+        description = "No power tier is paused; apps paused for shedding are resumed."
+    # Hardware actions the design foresees per level. None of them is driven by this tool
+    # or by any other code path of this release.
+    design_targets = {
+        "L0": [],
+        "L1": [],
+        "L2": ["disable the secondary GPU", "throttle the primary compute module to 30 W TDP"],
+        "L3": ["halt all GPU workloads", "keep only critical networking and BMS monitoring powered"],
+        "L4": ["power down non-essential outlets through the PDU"],
     }
 
     # Ensure enterprise manager is subscribed and publish load shedding event
     get_enterprise_manager()
-    numeric_level = int(level[1])
     handlers_notified = get_event_bus().publish(
         Event(
             event_type=EventType.LOAD_SHEDDING_CHANGED,
@@ -194,13 +208,16 @@ def tool_set_load_shedding(params: dict[str, Any]) -> dict[str, Any]:
     return {
         "success": True,
         "level": level,
-        "description": actions[level],
+        "description": description,
+        "paused_tiers": paused_tiers,
+        "design_targets_not_implemented": design_targets[level],
         "effect": "event_published",
         "hardware_actuated": False,
         "handlers_notified": handlers_notified,
         "note": (
-            "Only a load_shedding.changed event was published; 'description' is the intended "
-            "policy for this level, not a confirmation that hardware changed state."
+            "Only a load_shedding.changed event was published. 'description' and 'paused_tiers' are "
+            "what the EnterpriseManager does with it (it tracks app state; it supervises no process); "
+            "'design_targets_not_implemented' are hardware actions of the design that nothing drives."
         ),
         "published_at": published_at,
         "applied_at": published_at,
@@ -276,8 +293,10 @@ def tool_spool_dtn_bundle(params: dict[str, Any]) -> dict[str, Any]:
     """Creates and queues an (unsigned) RFC 9171 BPv7 bundle into the store-and-forward spool.
 
     Follows the node's DTN submission contract (``sovereign_dc.web.dashboard``), the same one
-    the dashboard API and the enterprise SDK use: default priority NORMAL, validated TTL,
-    source EID ``dtn://<node-id>/mcp`` unless a valid ``source`` is given.
+    the dashboard API and the enterprise SDK use: default priority NORMAL, default lifetime
+    ``DTN_DEFAULT_TTL_SECONDS`` (an omitted ``ttl_seconds`` is left to the contract, never
+    replaced by a value of this tool's own), validated TTL, source EID
+    ``dtn://<node-id>/mcp`` unless a valid ``source`` is given.
     """
     from sovereign_dc.space.dtn.router import DTNRouter
     from sovereign_dc.web.dashboard import (
@@ -291,8 +310,9 @@ def tool_spool_dtn_bundle(params: dict[str, Any]) -> dict[str, Any]:
     request: dict[str, Any] = {
         "destination": params.get("destination", DTN_DEFAULT_DESTINATION),
         "payload": str(params.get("payload", "TELEMETRY_SNAPSHOT")),
-        "ttl": params.get("ttl_seconds", 86400),
     }
+    if params.get("ttl_seconds") is not None:
+        request["ttl"] = params["ttl_seconds"]
     for key in ("payload_b64", "priority", "source"):
         if params.get(key) is not None:
             request[key] = params[key]
@@ -514,6 +534,17 @@ def tool_dispatch_technician_alert(params: dict[str, Any]) -> dict[str, Any]:
 # --- Registry ---
 
 
+def _dtn_ttl_description() -> str:
+    """The ``ttl_seconds`` schema text, built from the shared DTN contract's own constants."""
+    from sovereign_dc.web.dashboard import DTN_DEFAULT_TTL_SECONDS, DTN_MAX_TTL_SECONDS
+
+    return (
+        f"Bundle Time-To-Live in seconds (default {DTN_DEFAULT_TTL_SECONDS} = "
+        f"{DTN_DEFAULT_TTL_SECONDS // 86400} days, the same as the HTTP API and the SDK; "
+        f"at most {DTN_MAX_TTL_SECONDS // 86400} days)"
+    )
+
+
 def get_mcp_tools() -> list[MCPTool]:
     """Returns the full list of registered MCP tools with JSON schemas."""
     return [
@@ -537,7 +568,12 @@ def get_mcp_tools() -> list[MCPTool]:
         ),
         MCPTool(
             name="set_load_shedding",
-            description="Publish a load-shedding level change (L0 nominal ... L4 emergency) on the node event bus; tracked background-tier enterprise apps are paused at L2+ and resumed at L0. Does not itself actuate hardware.",
+            description=(
+                "Publish a load-shedding level change (L0 nominal ... L4 emergency) on the node event bus. The "
+                "enterprise manager then marks tracked apps paused by power tier (L1: L4_IDLE; L2: also "
+                "L3_DEFERRABLE; L3: also L2_BACKGROUND; L4: also L1_STANDARD; L0_CRITICAL never) and resumes "
+                "them as the level falls. Does not actuate hardware."
+            ),
             input_schema={
                 "type": "object",
                 "properties": {
@@ -594,7 +630,7 @@ def get_mcp_tools() -> list[MCPTool]:
                     },
                     "ttl_seconds": {
                         "type": "integer",
-                        "description": "Bundle Time-To-Live in seconds (default 86400, at most 30 days)",
+                        "description": _dtn_ttl_description(),
                     },
                     "source": {
                         "type": "string",
@@ -746,7 +782,14 @@ def get_mcp_tools() -> list[MCPTool]:
                         "description": "Use deterministic policy inference",
                         "default": True,
                     },
-                    "seed": {"type": "integer", "description": "Random seed for reproducible training", "default": 111},
+                    "seed": {
+                        "type": "integer",
+                        "description": (
+                            "Optional. Omitted: the cycles run on this process's shared orchestrator, which the "
+                            "status tools read. Given: a separate orchestrator seeded with it runs them "
+                            "(reproducible, from a fresh state) and the status tools do not reflect the run."
+                        ),
+                    },
                 },
             },
             handler=tool_run_metaverse_sim_cycle,
@@ -865,22 +908,53 @@ def tool_scaffold_enterprise_app(params: dict[str, Any]) -> dict[str, Any]:
 
 
 def tool_run_metaverse_sim_cycle(params: dict[str, Any]) -> dict[str, Any]:
-    """Executes multi-layer metaverse simulation cycles (Algorithm 1: SA-PPO, Sionna Ray-Tracing, 5G Slicing, DePIN SLA)."""
+    """Executes multi-layer metaverse simulation cycles (Algorithm 1: SA-PPO, Sionna Ray-Tracing, 5G Slicing, DePIN SLA).
+
+    Without ``seed`` the cycles run on this process's shared orchestrator, the one the
+    ``get_5g_slices_status`` tool, the ``metaverse`` resources and (in the dashboard process)
+    ``/api/metaverse/*`` read, so those reflect the run. With ``seed`` a separate orchestrator
+    seeded with it runs the cycles (a reproducible run from a fresh state) and is discarded:
+    the result says so, and the shared orchestrator is left untouched.
+    """
     from sovereign_dc.metaverse.engine import MetaverseOrchestrator
+    from sovereign_dc.web.dashboard import get_metaverse_orchestrator
 
     cycles = max(1, min(int(params.get("cycles", 1)), 100))
     deterministic = bool(params.get("deterministic", True))
-    seed = int(params.get("seed", 111))
+    raw_seed = params.get("seed")
 
-    orch = MetaverseOrchestrator(seed=seed)
-    traces = orch.run_cycles(count=cycles, deterministic=deterministic)
+    result: dict[str, Any]
+    if raw_seed is None:
+        orch = get_metaverse_orchestrator()
+        traces = orch.run_cycles(count=cycles, deterministic=deterministic)
+        result = {
+            "orchestrator": "process_orchestrator",
+            "note": "Ran on this process's shared orchestrator: the status tools and resources reflect these cycles.",
+        }
+    else:
+        seed = int(raw_seed)
+        orch = MetaverseOrchestrator(seed=seed)
+        traces = orch.run_cycles(count=cycles, deterministic=deterministic)
+        result = {
+            "orchestrator": "separate_seeded_run",
+            "seed": seed,
+            "note": (
+                "A seed was passed, so a separate orchestrator seeded with it ran these cycles from a fresh "
+                "state and was discarded: get_5g_slices_status and the other status tools do not reflect them. "
+                "Omit 'seed' to run on the shared process orchestrator."
+            ),
+        }
 
-    return {
-        "cycles_executed": len(traces),
-        "latest_trace": traces[-1].to_dict() if traces else None,
-        "uav_final_position": orch.uav_position,
-        "emergency_stopped": orch.is_emergency_stopped,
-    }
+    result.update(
+        {
+            "cycles_executed": len(traces),
+            "total_cycles_executed": int(orch.total_cycles_executed),
+            "latest_trace": traces[-1].to_dict() if traces else None,
+            "uav_final_position": orch.uav_position,
+            "emergency_stopped": orch.is_emergency_stopped,
+        }
+    )
+    return result
 
 
 def get_5g_slices_snapshot() -> dict[str, Any]:

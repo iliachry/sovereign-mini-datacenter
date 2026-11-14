@@ -1,7 +1,8 @@
 """Load-shedding software-path latency, measured in simulation on the local machine.
 
 Measures how long the code in this repository takes, in one process, to go from a telemetry
-sample whose battery state of charge has crossed the sentinel's ECO threshold to:
+sample whose battery state of charge is below the level-2 shedding threshold (30 % by
+default, where the sentinel's mode becomes ECO_PRESERVATION) to:
 
 1. the sentinel's mode decision (``sentinel_copilot.evaluate_mode``),
 2. the enterprise manager having marked every deferrable application ``PAUSED`` after
@@ -33,7 +34,8 @@ from sovereign_dc.enterprise.registry import EnterpriseRegistry
 from sovereign_dc.enterprise.schema import AppStatus, PowerPriority
 from sovereign_dc.events import Event, get_event_bus
 
-# Battery state of charge of the synthetic sample: below evaluate_mode()'s 25 % ECO threshold.
+# Battery state of charge of the synthetic sample: below the level-2 threshold (SHEDDING_L2_SOC,
+# default 30 %), i.e. shedding level 2, the lowest level whose mode is ECO_PRESERVATION.
 SHED_SOC_PERCENT = 24.0
 SHED_MODE = "ECO_PRESERVATION"
 NOMINAL_MODE = "NORMAL"

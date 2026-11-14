@@ -82,6 +82,13 @@ services:
       # Seconds between polls of the power exporter (a change in battery state is
       # noticed up to this long after it happens). Minimum 1.
       - SENTINEL_POLL_INTERVAL_SECONDS=${SENTINEL_POLL_INTERVAL_SECONDS:-30}
+      # Battery SoC (%) below which shedding levels 1-4 start: the node's one SoC policy
+      # (SovereignConfig.shedding_l1..l4_soc). The mode is ECO_PRESERVATION from level 2.
+      - SHEDDING_L1_SOC=${SHEDDING_L1_SOC:-50}
+      - SHEDDING_L2_SOC=${SHEDDING_L2_SOC:-30}
+      - SHEDDING_L3_SOC=${SHEDDING_L3_SOC:-20}
+      - SHEDDING_L4_SOC=${SHEDDING_L4_SOC:-10}
+      - SHEDDING_HYSTERESIS_SOC=${SHEDDING_HYSTERESIS_SOC:-2}
     networks:
       - sovereign_net
     command: ["python3", "sentinel_copilot.py"]

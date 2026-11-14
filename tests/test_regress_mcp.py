@@ -291,7 +291,7 @@ def test_spool_dtn_bundle_follows_the_shared_contract() -> None:
     default = _call(server, "spool_dtn_bundle", {"destination": "dtn://ground.earth/t", "payload": "ok"})
     assert default["priority"] == "NORMAL" and default["priority_level"] == 1
     assert default["source"] == "dtn://smdc-dgx-01/mcp"
-    assert default["ttl_seconds"] == 86400
+    assert default["ttl_seconds"] == 7 * 86400  # the shared contract's default (was 86400 in MCP only)
 
     binary = _call(
         server,

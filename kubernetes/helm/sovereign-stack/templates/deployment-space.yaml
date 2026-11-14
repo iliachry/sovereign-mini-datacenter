@@ -32,8 +32,12 @@ spec:
           env:
             - name: SPACE_EXPORTER_PORT
               value: {{ .Values.space.dtnNode.port | quote }}
+            - name: NODE_ID
+              value: {{ .Values.space.dtnNode.nodeId | quote }}
+            {{- with .Values.space.dtnNode.localEid }}
             - name: DTN_LOCAL_EID
-              value: {{ .Values.space.dtnNode.localEid | quote }}
+              value: {{ . | quote }}
+            {{- end }}
             - name: DTN_DB_PATH
               value: "/var/spool/dtn/bundles.db"
             - name: GROUND_STATION_NAME

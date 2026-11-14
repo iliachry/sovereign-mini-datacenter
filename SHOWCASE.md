@@ -23,7 +23,7 @@ Status, up front: this is a design (CAD, BOM, wiring) plus a software stack vali
 The design is a 9U 19" aluminum rack system powered by 10.24 kWh LiFePO4 batteries and 3.28 kW solar PV, with:
 
 • 🤖 Private Local AI: 2x NVIDIA DGX Spark nodes (128GB unified memory each) running Ollama + Qdrant for semantic RAG, with an automated GitLab Code Reviewer and Nextcloud Knowledge Indexer.
-• ⚡ Solar Micro-Grid & Load Shedding: Victron MultiPlus-II inverter, SmartSolar MPPT, and a sentinel that switches the node to a power-saving mode when battery SoC drops below 25% (the document indexer then defers its batch work).
+• ⚡ Solar Micro-Grid & Load Shedding: Victron MultiPlus-II inverter, SmartSolar MPPT, and a sentinel that switches the node to a power-saving mode when battery SoC drops below 30% (the document indexer then defers its batch work).
 • 🛰️ Space Communications (DTN / BPv7): RFC 9171 Delay-Tolerant Networking store-and-forward spool with a simplified orbital pass predictor and a simulated link (no radio driver yet).
 • 🔌 ESP32 Microcontroller Bridge: firmware with a VE.Direct serial stream parser and DS18B20 1-Wire coolant telemetry (parser tested on the host, sketch cross-compiled for ESP32 in CI; not yet run on a rig).
 • 🛡️ Security: Headscale WireGuard mesh VPN + CrowdSec intrusion detection (detection only, no blocking yet) with the `smdc audit` Linux hardening audit. No certification; planned items (mutual TLS, TPM-sealed keys) are listed in COMPLIANCE.md.

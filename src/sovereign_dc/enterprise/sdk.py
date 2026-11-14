@@ -297,7 +297,7 @@ class SMDCClient:
         self,
         destination: str,
         payload_data: str | bytes,
-        ttl_sec: int = 86400 * 7,
+        ttl_sec: int | None = None,
         *,
         priority: int | None = None,
         source_eid: str | None = None,
@@ -307,7 +307,8 @@ class SMDCClient:
         Uses the node's DTN submission contract (``sovereign_dc.web.dashboard``) on both
         paths, the REST API and the in-process fallback, so the stored bundle is the same
         either way: the payload bytes are carried losslessly (base64 over HTTP), ``ttl_sec``
-        is the bundle lifetime (positive, capped by the node), ``priority`` is 0 bulk /
+        is the bundle lifetime (positive, capped by the node; omitted, the contract's default
+        of 7 days applies, the same as for the REST API and the MCP tool), ``priority`` is 0 bulk /
         1 normal (default) / 2 expedited / 3 critical, and the source is ``source_eid`` if it
         is a valid endpoint ID, otherwise the node's own ``dtn://<node-id>/api``.
 
@@ -321,8 +322,9 @@ class SMDCClient:
         req_payload: dict[str, Any] = {
             "destination": destination,
             "payload_b64": base64.b64encode(payload_bytes).decode("ascii"),
-            "ttl": ttl_sec,
         }
+        if ttl_sec is not None:
+            req_payload["ttl"] = ttl_sec
         try:
             # Text is also sent in the legacy field, which is all an older node understands.
             req_payload["payload"] = payload_bytes.decode("utf-8")

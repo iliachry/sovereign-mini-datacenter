@@ -311,9 +311,21 @@ def list_indexed_sources() -> set[str]:
 _cleanup_pending: set[str] = set()
 
 
+# Documents whose current chunks were written but whose stale-chunk deletion failed (see
+# ``index_file``). The collection holds their complete new version, possibly next to chunks
+# of an older one, and the caller does not record them as indexed. They are tracked here so
+# that ``scan_and_index`` removes their points if the file vanishes before a retry succeeds.
+_reconcile_pending: set[str] = set()
+
+
 def pending_cleanup_paths() -> frozenset[str]:
     """Documents whose partial points still have to be deleted from the collection."""
     return frozenset(_cleanup_pending)
+
+
+def pending_reconcile_paths() -> frozenset[str]:
+    """Documents whose points were written but whose stale-chunk deletion is still due."""
+    return frozenset(_reconcile_pending)
 
 
 def _roll_back_partial_index(filepath: str) -> bool:
@@ -330,6 +342,7 @@ def _roll_back_partial_index(filepath: str) -> bool:
         _cleanup_pending.add(filepath)
         return False
     _cleanup_pending.discard(filepath)
+    _reconcile_pending.discard(filepath)  # no point of the document is left
     return True
 
 
@@ -360,8 +373,11 @@ def index_file(filepath: str) -> bool:
     deleted, so a file that is removed before the next scan leaves nothing searchable behind.
     If that deletion fails too, the path is kept in a needs-cleanup set which
     ``scan_and_index`` retries on every scan. A failure of the first batch wrote nothing and
-    deletes nothing; a failure of the final stale-chunk deletion leaves the complete new
-    version in place. In every case the whole document is retried on the next scan.
+    deletes nothing. A failure of the final stale-chunk deletion leaves the complete new
+    version in place (searchable) and records the path in a pending-reconciliation set, so
+    that ``scan_and_index`` still removes its points if the file is deleted before a retry
+    succeeds: for a new document nothing else tracks them. In every case the whole document
+    is retried on the next scan.
 
     A document larger than ``MAX_FILE_BYTES`` is refused (see ``is_oversized``).
 
@@ -409,9 +425,15 @@ def index_file(filepath: str) -> bool:
                         "rolled back" if rolled_back else "NOT removed yet (cleanup pending)",
                     )
                 raise
-        delete_source_points(filepath, keep_ids=[str(p["id"]) for p in points])
+        try:
+            delete_source_points(filepath, keep_ids=[str(p["id"]) for p in points])
+        except Exception:
+            # The new chunks are stored but the document is not reconciled: keep track of it.
+            _reconcile_pending.add(filepath)
+            raise
         # The collection now holds exactly this version: nothing is left to clean up.
         _cleanup_pending.discard(filepath)
+        _reconcile_pending.discard(filepath)
         logger.info("Indexed %d chunks from '%s'.", len(points), os.path.basename(filepath))
         return True
     except Exception as e:
@@ -423,6 +445,8 @@ def remove_file(filepath: str) -> bool:
     """Removes every point of a document that no longer exists. Returns True on success."""
     try:
         delete_source_points(filepath)
+        _cleanup_pending.discard(filepath)
+        _reconcile_pending.discard(filepath)
         logger.info("Removed '%s' from the index (document no longer present).", os.path.basename(filepath))
         return True
     except Exception as e:
@@ -474,6 +498,11 @@ def scan_and_index(indexed_files: set[tuple[str, float]]) -> tuple[int, int]:
     indexing attempt could not roll back (``retry_pending_cleanup``; each one still pending
     counts as a failure). That does not depend on the file still existing or on WATCH_DIR
     being listable: such points belong to no recorded document.
+
+    A document whose chunks were written but whose stale-chunk deletion failed
+    (``pending_reconcile_paths``) is not in ``indexed_files`` either. While its file is
+    eligible it is simply indexed again; once the file is no longer eligible its points are
+    removed exactly like those of a recorded document (same WATCH_DIR safeguards).
     """
     succeeded = 0
     failed = retry_pending_cleanup()
@@ -505,7 +534,8 @@ def scan_and_index(indexed_files: set[tuple[str, float]]) -> tuple[int, int]:
             )
         return succeeded, failed
 
-    vanished = {path for path, _ in indexed_files if path not in present and _is_under_watch_dir(path)}
+    known = {path for path, _ in indexed_files} | _reconcile_pending
+    vanished = {path for path in known if path not in present and _is_under_watch_dir(path)}
     for path in sorted(vanished):
         if remove_file(path):
             indexed_files.difference_update({k for k in indexed_files if k[0] == path})

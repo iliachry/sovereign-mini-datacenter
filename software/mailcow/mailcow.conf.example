@@ -1,68 +1,48 @@
 # ====================================================================
-# mailcow.conf — Mailcow Configuration Template
-# Copy to software/mailcow/core/mailcow.conf after cloning mailcow-dockerized
-# Full reference: https://docs.mailcow.email/getstarted/install/
+# mailcow.conf — the settings this integration CHANGES
+#
+# This is NOT a complete mailcow.conf and must not be copied as one.
+# mailcow.conf has to be created by mailcow's own generator:
+#
+#     cd software/mailcow/core && ./generate_config.sh
+#
+# The generator, not the first container start, creates the database and
+# Redis passwords (DBPASS, DBROOT, REDISPASS), the SOGo and Dovecot secrets
+# and the self-signed start certificate. A hand-written file leaves them
+# empty and MariaDB then refuses to initialise.
+#   https://docs.mailcow.email/getstarted/install/
+#   https://github.com/mailcow/mailcow-dockerized/blob/master/generate_config.sh
+#
+# After generating, change the lines below in software/mailcow/core/mailcow.conf
+# (every key already exists there; software/mailcow/README.md, step 3, has a
+# command that does it) and leave everything else as generated, including
+# COMPOSE_PROJECT_NAME.
+#   https://docs.mailcow.email/post_installation/reverse-proxy/r_p/
+#   https://docs.mailcow.email/post_installation/reverse-proxy/r_p-traefik3/
 # ====================================================================
 
-# ── Primary hostname (FQDN) — must match your MX / PTR record ───────
-MAILCOW_HOSTNAME=mail.yourdomain.com
-
-# ── Timezone ─────────────────────────────────────────────────────────
-TZ=Europe/Athens
-
-# ── HTTP/HTTPS binding — disable direct 80/443 binding so Traefik handles it
+# -- Web UI behind the core stack's Traefik ---------------------------
+# Traefik owns host ports 80/443, so mailcow's nginx is published on
+# loopback only. HTTP_PORT is also the port nginx listens on inside the
+# container: ../docker-compose.override.yml points Traefik at it.
+# (mailcow reserves 8081, 9081, 9082 and 65510: do not use them.)
 HTTP_BIND=127.0.0.1
 HTTP_PORT=8025
 HTTPS_BIND=127.0.0.1
 HTTPS_PORT=8443
 
-# ── SMTP ports (bind directly to host) ───────────────────────────────
-SMTP_PORT=25
-SMTPS_PORT=465
-SUBMISSION_PORT=587
+# Traefik terminates TLS and forwards plain HTTP to HTTP_PORT. With the
+# generator's default (y) nginx answers every request on that port with a
+# redirect to HTTPS, which loops through Traefik for ever.
+HTTP_REDIRECT=n
 
-# ── IMAP / POP3 ports ────────────────────────────────────────────────
-IMAP_PORT=143
-IMAPS_PORT=993
-POP_PORT=110
-POPS_PORT=995
-
-# ── Sieve (server-side mail filtering) ───────────────────────────────
-SIEVE_PORT=4190
-
-# ── Database (auto-generated on first run, do not share) ─────────────
-DBNAME=mailcow
-DBUSER=mailcow
-# DBPASS and DBROOT are auto-generated — leave blank here
-DBPASS=
-DBROOT=
-
-# ── Docker Compose project name ───────────────────────────────────────
-COMPOSE_PROJECT_NAME=mailcow
-
-# ── Skip ClamAV (saves ~1 GB RAM) — set to y to disable antivirus ────
-SKIP_CLAMD=n
-
-# ── Skip Let's Encrypt inside mailcow (Traefik handles TLS) ──────────
+# Traefik obtains the certificate for MAILCOW_HOSTNAME; mailcow's own ACME
+# client cannot (it needs ports 80/443). SMTP and IMAP then keep the
+# self-signed start certificate until Traefik's certificate is copied to
+# data/assets/ssl/ (README.md, "TLS certificate for the mail ports").
 SKIP_LETS_ENCRYPT=y
 
-# ── Additional SAN domains for the certificate ───────────────────────
-ADDITIONAL_SAN=
-
-# ── Enable SOGo webmail ───────────────────────────────────────────────
-SKIP_SOGO=n
-
-# ── IPv6 — disable if your server has no IPv6 ────────────────────────
-SYSCTL_IPV6_DISABLED=1
-
-# ── Watchdog health notifications ────────────────────────────────────
-WATCHDOG_NOTIFY_EMAIL=admin@yourdomain.com
-WATCHDOG_NOTIFY_SUBJECT=Mailcow Alert
-
-# ── ACL — restrict admin panel to LAN ────────────────────────────────
-# MAILCOW_PASS_FILTER=
-
-# ── Core stack network (read by ../docker-compose.override.yml) ───────
-# Only needed when the core stack does not run under the default Compose
-# project name "software": the network is <project>_sovereign_net.
+# -- Not a mailcow setting: read by ../docker-compose.override.yml ----
+# Add this line only when the core stack does not run under the default
+# Compose project name "software": the network is <project>_sovereign_net.
 # SOVEREIGN_NET_NAME=software_sovereign_net

@@ -22,6 +22,7 @@ if hasattr(sys.stdout, "reconfigure"):
         pass
 
 from sovereign_dc import __version__, telemetry
+from sovereign_dc.config import DEFAULT_NODE_ID
 from sovereign_dc.space.dtn.bundle import Bundle, BundlePriority
 from sovereign_dc.space.dtn.router import DTNRouter
 from sovereign_dc.space.orbital.propagator import GroundStation
@@ -1018,7 +1019,7 @@ def cmd_benchmark(args):
             router = DTNRouter(db_path=os.path.join(bench_dir, "smdc_bench_spool.db"))
             for i in range(num_bundles):
                 b = Bundle(
-                    source_eid="dtn://smdc-node-01.space",
+                    source_eid=router.local_node_eid,
                     destination_eid=f"dtn://ground-station-{i}.earth/telemetry",
                     payload=f'{{"metric": "solar_yield", "seq": {i}, "val": 1240.5}}'.encode(),
                 )
@@ -1503,7 +1504,7 @@ def cmd_bootstrap(args):
 
     print(f"\n{BOLD}{CYAN}=== Sovereign Mini Datacenter — Autonomous Node Bootstrap ==={RESET}\n")
 
-    node_id = getattr(args, "node_id", None) or os.getenv("NODE_ID", "smdc-dgx-01")
+    node_id = getattr(args, "node_id", None) or os.getenv("NODE_ID") or DEFAULT_NODE_ID
     role = getattr(args, "role", None) or os.getenv("NODE_ROLE", "Primary Compute Core")
     dry_run = getattr(args, "dry_run", False)
 
@@ -1731,7 +1732,13 @@ def cmd_mcp_test(args: Any) -> int:
     }
     res = server.handle_request(tcall_req)
     if res and not res.get("result", {}).get("isError"):
-        print(f"  [{GREEN}PASS{RESET}] Tool Call: `get_telemetry` returned hardware payload")
+        tele_text = json.dumps(res.get("result", {}))
+        provenance = (
+            "simulated"
+            if '\\"is_simulated\\": true' in tele_text or '"is_simulated": true' in tele_text
+            else "measured"
+        )
+        print(f"  [{GREEN}PASS{RESET}] Tool Call: `get_telemetry` returned a telemetry payload ({provenance})")
     else:
         failures += 1
         print(f"  [{RED}FAIL{RESET}] Tool Call: `get_telemetry` failed: {res}")
@@ -1874,6 +1881,8 @@ def cmd_app_validate(args):
         print(
             f"  • Power Tier:    {YELLOW}{manifest.power.tier.value}{RESET} (Min SoC: {manifest.power.min_battery_soc}%)"
         )
+        for policy_line in manifest.power.enforcement_summary():
+            print(f"      - {policy_line}")
         print(f"  • Max Power:     {manifest.resources.max_power_w} W")
         print(f"  • Compute:       {manifest.resources.cpu_cores} Cores | {manifest.resources.ram_mb} MB RAM")
         if manifest.resources.gpu_required:
@@ -1925,6 +1934,9 @@ def cmd_app_unregister(args):
     registry = EnterpriseRegistry()
     if registry.unregister_app(args.app_id, persist=True):
         print(f"\n  {GREEN}✔ Successfully unregistered application:{RESET} {BOLD}{args.app_id}{RESET}\n")
+    elif registry.last_save_error:
+        print(f"\n  {RED}✖ Not unregistered:{RESET} {registry.last_save_error}\n")
+        return 1
     else:
         print(f"\n  {YELLOW}○ Application not found in registry:{RESET} {args.app_id}\n")
         return 1
@@ -1966,8 +1978,9 @@ def cmd_app_start(args):
     manager = EnterpriseManager()
     success, msg = manager.start_app(args.app_id)
     if success:
-        print(f"  {GREEN}✔ {msg}{RESET}")
         state = manager.get_runtime_state(args.app_id)
+        held = state is not None and state.status.value == "paused"
+        print(f"  {YELLOW}⏸ {msg}{RESET}" if held else f"  {GREEN}✔ {msg}{RESET}")
         if state:
             print(f"  • Power Budget (estimate): {YELLOW}{state.power_draw_w:.1f} W{RESET}")
             print(f"  • Memory Budget (estimate): {state.ram_usage_mb:.1f} MB")
@@ -2332,7 +2345,7 @@ def main():
     p_bootstrap = subparsers.add_parser(
         "bootstrap", help="Autonomous DGX/Jetson power-up hardware, mesh & service provisioner"
     )
-    p_bootstrap.add_argument("--node-id", type=str, help="Node ID override (e.g. smdc-dgx-01)")
+    p_bootstrap.add_argument("--node-id", type=str, help=f"Node ID override (default: NODE_ID, else {DEFAULT_NODE_ID})")
     p_bootstrap.add_argument("--role", type=str, help="Node role override (e.g. 'Primary Compute Core')")
     p_bootstrap.add_argument("--phase", type=int, choices=[1, 2, 3, 4, 5], help="Execute only specific phase (1-5)")
     p_bootstrap.add_argument(

@@ -4,6 +4,35 @@ Tracks the declared lifecycle state (registered / running / paused / stopped) of
 registered enterprise workloads, adapts that state to load-shedding events, and builds
 signed `.smdc-app` packages for air-gapped distribution.
 
+Load-shedding policy (the only one this manager implements; see ``schema.SHED_PAUSE_LEVEL``):
+
+====================  ==========================================================
+Shedding level        Tracked apps marked PAUSED (by power tier)
+====================  ==========================================================
+0                     none
+1                     ``L4_IDLE``
+2                     ``L3_DEFERRABLE``, ``L4_IDLE``
+3                     ``L2_BACKGROUND``, ``L3_DEFERRABLE``, ``L4_IDLE``
+4                     ``L1_STANDARD``, ``L2_BACKGROUND``, ``L3_DEFERRABLE``, ``L4_IDLE``
+====================  ==========================================================
+
+``L0_CRITICAL`` is never paused by shedding. The level arrives in a ``load_shedding.*``
+event (the sentinel derives it from battery SoC with ``SovereignConfig.shedding_l1..l4_soc``,
+50 / 30 / 20 / 10 % by default). An app is resumed when the level falls below the level
+that pauses its tier. In addition, when the event carries ``battery_soc``, an app (other
+than ``L0_CRITICAL``) is paused while that SoC is below its manifest's
+``power.min_battery_soc`` and resumed once the SoC is back at or above it plus
+``SOC_FLOOR_HYSTERESIS_PERCENT``. Pausing is the only action: nothing is throttled,
+scheduled or terminated, and only apps this manager paused for shedding are resumed by it.
+
+The policy is not applied on events only. The manager remembers the level and SoC of the
+last ``load_shedding.*`` event it understood, and ``start_app`` applies them at once: an app
+that the current level (or its SoC floor) would pause is started **paused by shedding**
+(status ``paused``, ``paused_by: load_shedding``) instead of running until the next event,
+and is resumed like every other shed app when shedding eases. ``start_app`` still returns
+success, with a message that says so. A manager that has seen no event yet (a new process,
+e.g. one CLI invocation) knows no level and starts the app running.
+
 Scope note: this manager is a state tracker, not a process supervisor. ``start_app`` /
 ``stop_app`` / ``pause_app`` / ``resume_app`` record the intended state and publish events;
 they do not launch, signal or probe an operating-system process, ``pid`` is never set, and
@@ -29,9 +58,9 @@ from typing import Any
 
 from sovereign_dc.enterprise.registry import EnterpriseRegistry
 from sovereign_dc.enterprise.schema import (
+    SHED_PAUSE_LEVEL,
     AppManifest,
     AppStatus,
-    PowerPriority,
     is_valid_app_id,
     is_valid_app_version,
 )
@@ -47,7 +76,15 @@ PACKAGE_SIGNATURE_SCHEME = "smdc-package-v2"
 METRICS_SOURCE_NONE = "none"
 METRICS_SOURCE_ESTIMATED = "estimated"
 
-_SHED_TIERS = (PowerPriority.L2_BACKGROUND, PowerPriority.L3_DEFERRABLE, PowerPriority.L4_IDLE)
+MAX_SHEDDING_LEVEL = 4
+# An app paused because the reported battery SoC fell below its manifest's
+# ``power.min_battery_soc`` is resumed only at or above that floor plus this margin.
+SOC_FLOOR_HYSTERESIS_PERCENT = 2.0
+# Event payload key that carries the battery state of charge (percent), when known.
+SOC_PAYLOAD_KEY = "battery_soc"
+CAUSE_TIER = "tier"
+CAUSE_SOC_FLOOR = "soc_floor"
+# Level implied by a mode name when an event carries no numeric level.
 _MODE_LEVELS: dict[str, int] = {
     "NORMAL": 0,
     "NOMINAL": 0,
@@ -204,7 +241,7 @@ def verify_package(
 
 
 class EnterpriseManager:
-    """Tracks enterprise application lifecycle state and applies solar-aware shedding to it."""
+    """Tracks enterprise application lifecycle state and applies tiered load shedding to it."""
 
     def __init__(
         self,
@@ -215,8 +252,13 @@ class EnterpriseManager:
         self.event_bus = event_bus or get_event_bus()
         self._lock = threading.RLock()
         self._runtimes: dict[str, AppRuntimeState] = {}
-        # Apps this manager paused because of load shedding (as opposed to an operator pause).
-        self._shed_paused: set[str] = set()
+        # Apps this manager paused because of load shedding (as opposed to an operator
+        # pause), with the causes still in force: CAUSE_TIER and/or CAUSE_SOC_FLOOR.
+        self._shed_paused: dict[str, set[str]] = {}
+        # Level and battery SoC of the last load-shedding event this manager understood
+        # (None until the first one / while the SoC is unknown); applied by start_app().
+        self._shedding_level: int | None = None
+        self._shedding_soc: float | None = None
 
         # Initialize runtime states from registry
         for app in self.registry.list_apps():
@@ -268,8 +310,38 @@ class EnterpriseManager:
             return level
         return cls._parse_level(payload.get("mode"))
 
+    @staticmethod
+    def _extract_soc(payload: dict[str, Any]) -> float | None:
+        """Battery SoC (percent) carried by the event, or None when absent or not a finite number."""
+        raw = payload.get(SOC_PAYLOAD_KEY)
+        if isinstance(raw, bool) or not isinstance(raw, (int, float)) or not math.isfinite(raw):
+            return None
+        return float(raw)
+
+    @staticmethod
+    def _shed_causes(manifest: AppManifest, level: int, soc: float | None, previous: set[str]) -> set[str]:
+        """Reasons for which ``manifest``'s app must be paused at this level / SoC.
+
+        ``previous`` is the set recorded for the app so far: an SoC-floor pause is kept while
+        the SoC is unknown or inside the hysteresis band (a recovery needs a reading).
+        """
+        tier = manifest.power.tier
+        pause_level = SHED_PAUSE_LEVEL.get(tier)
+        if pause_level is None:  # L0_CRITICAL
+            return set()
+        causes: set[str] = set()
+        if level >= pause_level:
+            causes.add(CAUSE_TIER)
+        floor = manifest.power.min_battery_soc
+        if soc is None:
+            if CAUSE_SOC_FLOOR in previous:
+                causes.add(CAUSE_SOC_FLOOR)
+        elif soc < floor or (CAUSE_SOC_FLOOR in previous and soc < floor + SOC_FLOOR_HYSTERESIS_PERCENT):
+            causes.add(CAUSE_SOC_FLOOR)
+        return causes
+
     def _on_load_shedding_event(self, event: Event) -> None:
-        """Handle power load shedding signals and adjust tracked enterprise workload state."""
+        """Apply the tiered shedding policy (module docstring) to the tracked app states."""
         payload = event.payload if isinstance(event.payload, dict) else {}
         level = self._extract_shedding_level(payload)
         if level is None:
@@ -279,28 +351,48 @@ class EnterpriseManager:
                 payload.get("mode"),
             )
             return
-        logger.info("EnterpriseManager received load shedding signal level %s", level)
+        level = min(level, MAX_SHEDDING_LEVEL)
+        soc = self._extract_soc(payload)
+        logger.info(
+            "EnterpriseManager received load shedding signal level %s (battery SoC %s)",
+            level,
+            "unknown" if soc is None else f"{soc:.1f}%",
+        )
 
-        if level >= 2:  # Severe/Low Battery Shedding
-            with self._lock:
-                targets = [
-                    app_id
-                    for app_id, runtime in self._runtimes.items()
-                    if runtime.status == AppStatus.RUNNING and runtime.manifest.power.tier in _SHED_TIERS
-                ]
-            for app_id in targets:
-                self._pause(app_id, reason=f"Load shedding level {level}", by_shedding=True)
-        elif level == 0:  # Nominal / Solar Surplus
-            # Resume only what shedding paused; an operator's pause stays in force.
-            with self._lock:
-                targets = [
-                    app_id
-                    for app_id in sorted(self._shed_paused)
-                    if app_id in self._runtimes and self._runtimes[app_id].status == AppStatus.PAUSED
-                ]
-                self._shed_paused.clear()
-            for app_id in targets:
-                self.resume_app(app_id, reason="Solar power recovery (Level 0)")
+        to_pause: list[tuple[str, set[str]]] = []
+        to_resume: list[str] = []
+        with self._lock:
+            self._shedding_level = level
+            self._shedding_soc = soc
+            for app_id, runtime in self._runtimes.items():
+                previous = self._shed_paused.get(app_id, set())
+                causes = self._shed_causes(runtime.manifest, level, soc, previous)
+                if runtime.status == AppStatus.RUNNING:
+                    if causes:
+                        to_pause.append((app_id, causes))
+                elif runtime.status == AppStatus.PAUSED and app_id in self._shed_paused:
+                    # Paused by shedding: keep the causes current, resume when none is left.
+                    # An operator's pause is not in _shed_paused and stays in force.
+                    if causes:
+                        self._shed_paused[app_id] = causes
+                    else:
+                        to_resume.append(app_id)
+            # Forget apps that are no longer paused (stopped, removed) or no longer tracked.
+            for app_id in list(self._shed_paused):
+                tracked = self._runtimes.get(app_id)
+                if tracked is None or tracked.status != AppStatus.PAUSED:
+                    del self._shed_paused[app_id]
+
+        soc_text = "" if soc is None else f", battery SoC {soc:.1f}%"
+        for app_id, causes in to_pause:
+            self._pause(
+                app_id,
+                reason=f"Load shedding level {level}{soc_text} ({' + '.join(sorted(causes))})",
+                by_shedding=True,
+                causes=causes,
+            )
+        for app_id in sorted(to_resume):
+            self.resume_app(app_id, reason=f"Load shedding eased to level {level}{soc_text}")
 
     def _on_enterprise_telemetry(self, event: Event) -> None:
         """Ingest custom telemetry published by enterprise app instances."""
@@ -332,6 +424,13 @@ class EnterpriseManager:
 
         No process is launched: the caller (or an external supervisor) is responsible for
         actually executing the manifest's entrypoint.
+
+        The shedding policy is applied immediately, with the level and SoC of the last
+        load-shedding event: an app the policy pauses right now is started **paused by
+        shedding** (``enterprise.<app_id>.started`` followed by ``enterprise.<app_id>.paused``
+        with ``paused_by: load_shedding``) and resumed when shedding eases. The call still
+        succeeds; the message names the level. An operator ``resume_app`` overrides it until
+        the next event.
         """
         manifest = self.registry.get_app(app_id)
         if not manifest:
@@ -346,18 +445,39 @@ class EnterpriseManager:
             if runtime.status == AppStatus.RUNNING:
                 return True, f"Application '{app_id}' is already running."
 
-            runtime.status = AppStatus.RUNNING
+            level, soc = self._shedding_level, self._shedding_soc
+            causes = set() if level is None else self._shed_causes(runtime.manifest, level, soc, set())
             runtime.started_at = time.time()
             runtime.health_status = "not_probed"
             runtime.error_message = None
-            self._apply_estimates(runtime, paused=False)
-            self._shed_paused.discard(app_id)
+            if causes:
+                runtime.status = AppStatus.PAUSED
+                self._apply_estimates(runtime, paused=False)  # RAM estimate of a loaded app
+                self._apply_estimates(runtime, paused=True)
+                self._shed_paused[app_id] = causes
+            else:
+                runtime.status = AppStatus.RUNNING
+                self._apply_estimates(runtime, paused=False)
+                self._shed_paused.pop(app_id, None)
             payload = runtime.to_dict()
 
-        logger.info("Marked enterprise app '%s' running (Power Tier: %s)", app_id, manifest.power.tier.value)
         self.event_bus.publish(
             Event(event_type=f"enterprise.{app_id}.started", source="enterprise_manager", payload=payload)
         )
+        if causes:
+            soc_text = "" if soc is None else f", battery SoC {soc:.1f}%"
+            reason = f"Load shedding level {level}{soc_text} ({' + '.join(sorted(causes))})"
+            logger.warning("Started enterprise app '%s' paused: %s", app_id, reason)
+            paused_payload: dict[str, Any] = {"reason": reason, "paused_by": "load_shedding"}
+            paused_payload.update(payload)
+            self.event_bus.publish(
+                Event(event_type=f"enterprise.{app_id}.paused", source="enterprise_manager", payload=paused_payload)
+            )
+            return True, (
+                f"Application '{app_id}' started but held paused by load shedding: {reason}. "
+                "It resumes automatically when shedding eases (state tracked; no process is supervised by this manager)."
+            )
+        logger.info("Marked enterprise app '%s' running (Power Tier: %s)", app_id, manifest.power.tier.value)
         return True, f"Application '{app_id}' started (state tracked; no process is supervised by this manager)."
 
     def stop_app(self, app_id: str) -> tuple[bool, str]:
@@ -377,7 +497,7 @@ class EnterpriseManager:
             runtime.ram_usage_mb = 0.0
             runtime.metrics_source = METRICS_SOURCE_NONE
             runtime.health_status = "stopped"
-            self._shed_paused.discard(app_id)
+            self._shed_paused.pop(app_id, None)
             payload = runtime.to_dict()
 
         logger.info("Marked enterprise app '%s' stopped", app_id)
@@ -397,7 +517,9 @@ class EnterpriseManager:
                     runtime.restart_count += 1
         return success, msg
 
-    def _pause(self, app_id: str, reason: str, *, by_shedding: bool) -> tuple[bool, str]:
+    def _pause(
+        self, app_id: str, reason: str, *, by_shedding: bool, causes: set[str] | None = None
+    ) -> tuple[bool, str]:
         with self._lock:
             runtime = self._runtimes.get(app_id)
             if not runtime or runtime.status != AppStatus.RUNNING:
@@ -406,9 +528,9 @@ class EnterpriseManager:
             runtime.status = AppStatus.PAUSED
             self._apply_estimates(runtime, paused=True)
             if by_shedding:
-                self._shed_paused.add(app_id)
+                self._shed_paused[app_id] = set(causes) if causes else {CAUSE_TIER}
             else:
-                self._shed_paused.discard(app_id)
+                self._shed_paused.pop(app_id, None)
             payload = {"reason": reason, "paused_by": "load_shedding" if by_shedding else "operator"}
             payload.update(runtime.to_dict())
 
@@ -419,7 +541,7 @@ class EnterpriseManager:
         return True, f"Application '{app_id}' paused: {reason}"
 
     def pause_app(self, app_id: str, reason: str = "Energy preservation") -> tuple[bool, str]:
-        """Mark an application paused on request. Such a pause is not lifted by solar recovery."""
+        """Mark an application paused on request. Such a pause is not lifted when shedding eases."""
         return self._pause(app_id, reason, by_shedding=False)
 
     def resume_app(self, app_id: str, reason: str = "Solar surplus") -> tuple[bool, str]:
@@ -431,7 +553,7 @@ class EnterpriseManager:
 
             runtime.status = AppStatus.RUNNING
             self._apply_estimates(runtime, paused=False)
-            self._shed_paused.discard(app_id)
+            self._shed_paused.pop(app_id, None)
             payload = {"reason": reason}
             payload.update(runtime.to_dict())
 

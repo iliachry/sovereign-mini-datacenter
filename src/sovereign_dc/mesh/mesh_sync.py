@@ -21,7 +21,10 @@ from typing import Any
 logger = logging.getLogger("MeshSync")
 LOG_FORMAT = "%(asctime)s [MeshSync] %(message)s"
 
-NODE_ID = os.getenv("NODE_ID", "smdc-node-01")
+# This node's id. The default is the same as ``sovereign_dc.config.DEFAULT_NODE_ID`` (this file
+# also runs standalone, so it cannot import it; tests check that the two are equal).
+DEFAULT_NODE_ID = "smdc-dgx-01"
+NODE_ID = os.getenv("NODE_ID", DEFAULT_NODE_ID)
 # Cluster topology file. Empty means "cluster_config.yaml next to this file, if present"
 # (see cluster_config_path()); the standalone copy in software/mesh/ ships one.
 CLUSTER_CONFIG_PATH = os.getenv("CLUSTER_CONFIG_PATH", "")
@@ -139,13 +142,21 @@ def poll_interval_seconds(raw: str | None = None) -> float:
     return max(MIN_POLL_INTERVAL_SECONDS, value)
 
 
+def remote_peers(peers: list[MeshNode], local_node_id: str) -> list[MeshNode]:
+    """The peers other than the local node, which the caller names explicitly.
+
+    Nothing here guesses which node is local: a caller whose node id differs from this
+    module's ``NODE_ID`` (the bootstrap provisioner takes its own) passes that id.
+    """
+    return [peer for peer in peers if peer.node_id != local_node_id]
+
+
 def check_peer_health(peer: MeshNode) -> bool:
     """True if the peer's exporter answers HTTP 200 on ``http://<wireguard_ip>:9101/metrics`` within 2 s.
 
-    The local node is always reported reachable without a request.
+    Every call makes the request: no node, not even the local one, is reported reachable
+    without an answer. Callers that only want other nodes filter with ``remote_peers`` first.
     """
-    if peer.node_id == NODE_ID:
-        return True
     try:
         url = f"http://{peer.wireguard_ip}:9101/metrics"
         req = urllib.request.Request(url, headers={"User-Agent": "smdc-mesh"})
@@ -166,13 +177,12 @@ def run_mesh_daemon() -> None:
     peers = load_peers()
 
     while True:
-        for p in peers:
-            if p.node_id != NODE_ID:
-                p.is_online = check_peer_health(p)
-                if p.is_online:
-                    log_peer_reachable(p)
-                else:
-                    logger.warning("Mesh peer '%s' (%s) is unreachable.", p.node_id, p.wireguard_ip)
+        for p in remote_peers(peers, NODE_ID):
+            p.is_online = check_peer_health(p)
+            if p.is_online:
+                log_peer_reachable(p)
+            else:
+                logger.warning("Mesh peer '%s' (%s) is unreachable.", p.node_id, p.wireguard_ip)
         time.sleep(interval)
 
 

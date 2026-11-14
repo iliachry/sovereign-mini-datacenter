@@ -24,6 +24,26 @@ SPOOL_FILENAME = "dtn_spool.db"
 # Shared temp directory in which older releases kept the spool by default.
 LEGACY_TMP_DIR = "/tmp"  # noqa: S108 - only read (after an ownership/mode check) to find a legacy spool; never a default
 _SQLITE_SIDECARS = ("-wal", "-shm", "-journal")
+# This node's id when NODE_ID is not set: the same literal as
+# ``sovereign_dc.config.DEFAULT_NODE_ID`` (this package also ships on its own inside the
+# space-node image, so it cannot import it; tests check that the two are equal).
+DEFAULT_NODE_ID = "smdc-dgx-01"
+LOCAL_EID_ENV = "DTN_LOCAL_EID"
+
+
+def default_local_eid() -> str:
+    """This node's DTN endpoint id, so that one node has one identity.
+
+    ``DTN_LOCAL_EID`` if set, else ``dtn://<NODE_ID>.sovereign.space`` with the node id every
+    other component uses (``NODE_ID``, default ``DEFAULT_NODE_ID``).
+    """
+    configured = os.environ.get(LOCAL_EID_ENV, "").strip()
+    if configured:
+        return configured
+    node_id = os.environ.get("NODE_ID", "").strip() or DEFAULT_NODE_ID
+    return f"dtn://{node_id}.sovereign.space"
+
+
 _fallback_state_dir: str | None = None
 
 
@@ -123,15 +143,16 @@ class DTNRouter:
 
     ``db_path`` resolution: the explicit argument, else the ``DTN_DB_PATH`` environment
     variable, else ``default_spool_path()``. ``":memory:"`` keeps the spool in RAM.
+    ``local_node_eid`` defaults to ``default_local_eid()`` (derived from ``NODE_ID``).
     """
 
     def __init__(
         self,
         db_path: str | None = None,
-        local_node_eid: str = "dtn://smdc-node-01.sovereign.space",
+        local_node_eid: str | None = None,
     ) -> None:
         self.db_path: str = db_path or os.getenv("DTN_DB_PATH") or default_spool_path()
-        self.local_node_eid = local_node_eid
+        self.local_node_eid = local_node_eid or default_local_eid()
         self._lock = threading.RLock()
         self._memory_conn: sqlite3.Connection | None = None
         if self.db_path == ":memory:":

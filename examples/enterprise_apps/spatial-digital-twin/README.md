@@ -6,7 +6,7 @@ This template shows how an **$L_1$ Standard** digital-twin streaming workload is
 
 
 ## Architecture
-- **Power Priority**: `L1_STANDARD` (`min_battery_soc: 25` is declarative metadata; an in-process `EnterpriseManager` marks the app paused on load shedding).
+- **Power Priority**: `L1_STANDARD` (an in-process `EnterpriseManager` marks the app paused at load-shedding level 4, battery SoC below 10 %, or while an event reports a battery SoC below the manifest's `min_battery_soc: 25`).
 - **Visualization (not implemented)**: a real implementation would stream node telemetry to a Three.js WebGL client.
 - **Resource Footprint (declared, not measured)**: 2.0 CPU Cores, 2048 MB RAM, 25 W max power budget.
 

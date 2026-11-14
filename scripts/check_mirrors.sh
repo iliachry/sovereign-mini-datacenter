@@ -66,7 +66,7 @@ for rel in "${MIRRORS[@]}"; do
         failed=$((failed + 1))
     elif ! cmp -s "${SRC}/${rel}" "${SW}/${rel}"; then
         echo "DRIFT    software/${rel} differs from src/sovereign_dc/${rel}" >&2
-        diff -u "${SRC}/${rel}" "${SW}/${rel}" | head -n 20 >&2 || true
+        diff -u "${SRC}/${rel}" "${SW}/${rel}" | sed -n '1,20p' >&2 || true
         failed=$((failed + 1))
     fi
 done

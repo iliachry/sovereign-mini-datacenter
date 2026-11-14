@@ -8,13 +8,15 @@ can come from different moments, and the copy may not start. `restic check` cann
 that, because it verifies the archive, not the database inside it. So `backup.sh` never
 hands restic a live database directory. It works in two phases:
 
-1. **Dump** (on the host). Every database is exported with its own tool into
-   `BACKUP_DUMP_DIR/smdc-dumps/`, each dump is checked, and a `MANIFEST` records the
-   result together with the size and SHA-256 of every dump file. Nextcloud is put into
-   maintenance mode while its database is dumped and its volume is copied to
-   `BACKUP_DUMP_DIR/smdc-nextcloud-files/`, then switched back on. If any dump fails,
-   the run stops with a non-zero exit code **before restic is called**: there is no
-   snapshot, rather than a snapshot that looks fine and is not.
+1. **Dump** (on the host). Every database is exported with its own tool into a new
+   **generation** directory, `BACKUP_DUMP_DIR/generations/<epoch>/smdc-dumps/`, each
+   dump is checked, and a `MANIFEST` records the result together with the size and
+   SHA-256 of every dump file. Nextcloud is put into maintenance mode while its database
+   is dumped and its volume is copied to `.../generations/<epoch>/smdc-nextcloud-files/`,
+   then switched back on. If any dump fails, the run stops with a non-zero exit code
+   **before restic is called**: there is no snapshot, rather than a snapshot that looks
+   fine and is not. A complete generation is published by switching the symlink
+   `BACKUP_DUMP_DIR/current` to it (see "Layout of `BACKUP_DUMP_DIR`").
 2. **Files.** restic backs up the dump directory, the Nextcloud copy, the deployment
    configuration and the static files of the other volumes. Live database files are
    excluded.
@@ -36,9 +38,18 @@ place:
 | A dump file named in the `MANIFEST` is missing, has another size, or (container mode) another SHA-256; the Nextcloud copy has another number of files or belongs to another run | The dump directory was damaged or only partly copied after the dump |
 | Nextcloud is already in maintenance mode and this script did not switch it on | An upgrade or an administrator is at work; the script leaves it alone |
 | Another dump run holds the lock `BACKUP_DUMP_DIR/.smdc-backup.lock` | A lock whose process no longer exists is taken over with a warning |
+| `BACKUP_DUMP_DIR/current` is not a symlink to `generations/<epoch>`, or the `MANIFEST` in a generation names another creation time than the generation's directory | The dump directory was rearranged by hand |
 
-The retention step (`restic forget --prune`) runs only after a successful `restic backup`
-of a run whose coverage is not reduced.
+One condition is only visible **after** the upload: the `MANIFEST` is fingerprinted
+(size and SHA-256) before it is verified and again after `restic backup` returns. If it
+changed or disappeared while restic was reading, the run exits non-zero and does not
+prune; the snapshot it just wrote is named in the error and must not be relied on
+(`restore.sh --verify` tells). The next run or pass backs up the current generation.
+
+The retention step (`restic forget --prune --group-by host`) runs only after a successful
+`restic backup` of a run whose coverage is not reduced and whose `MANIFEST` was still the
+verified one. Snapshots are grouped by host only, because the dump directory is a
+different path in every snapshot.
 
 ## What a snapshot contains
 
@@ -83,15 +94,15 @@ by `BACKUP_NEXTCLOUD_MODE`:
 | Database | consistent | consistent |
 | Files against the database | **same window**: what the database describes is what the copy holds, in the host job and in the container alike, because restic backs up the copy and never the live volume | **not guaranteed**: files changed, renamed or deleted between the dump and the walk do not match the database. After a restore, `occ files:scan --all` repairs the file index; shares and versions of files that moved are not recovered |
 | Downtime | Nextcloud answers with its maintenance page (HTTP 503) for the length of the window: `BACKUP_NEXTCLOUD_SETTLE_SECONDS` (5 s) + the database backup + the copy. The measured length is written to the log and to the `MANIFEST` (`maintenance mode for N s`). It depends on the copy method below; it has not been measured on real data here | none |
-| Extra disk space in `BACKUP_DUMP_DIR` | one copy of the volume, or none with `reflink` | none |
+| Extra disk space in `BACKUP_DUMP_DIR` | the copies of two generations (the published one and the one before it): with `rsync` one copy plus the files that changed between the two, with `copy` two full copies, with `reflink` none until files change | none |
 
 How the copy is made (`BACKUP_NEXTCLOUD_SNAPSHOT`, default `auto` = the first that works):
 
 | Method | What it does | Window | Extra space |
 |---|---|---|---|
 | `reflink` | `cp -a --reflink=always`: copy-on-write clone. Needs GNU `cp`, and the volume and `BACKUP_DUMP_DIR` on the same Btrfs or reflink-enabled XFS filesystem | seconds to a few minutes (metadata only) | none until files change |
-| `rsync` | `rsync -a --link-dest=<previous copy>`: unchanged files become hard links to the **previous copy**, only new and changed files are copied | first run: a full copy; afterwards the time to compare every file plus the changed data | one copy of the volume |
-| `copy` | `cp -a`: a full copy on every run | proportional to the size of the volume, every run | one copy of the volume (two while a run is in progress) |
+| `rsync` | `rsync -a --link-dest=<previous copy>`: unchanged files become hard links to the **previous copy** (the published generation's), only new and changed files are copied | first run: a full copy; afterwards the time to compare every file plus the changed data | one copy of the volume, plus the files that differ between the two kept generations |
+| `copy` | `cp -a`: a full copy on every run | proportional to the size of the volume, every run | two copies of the volume (the two kept generations) |
 
 Hard links to the live files (`cp -al`) are deliberately not used: a hard link shares
 the file's content, and a file that Nextcloud rewrites in place after the window would
@@ -142,21 +153,52 @@ default password.
 
 The dump directory (`BACKUP_DUMP_DIR`, default `/var/backups/sovereign-dumps`, mode
 0700) holds **plaintext** database dumps and, in `maintenance` mode, a plaintext copy of
-the Nextcloud volume with every user file. Keep it on an encrypted disk. Size: one copy
-of every SQLite database, one compressed OpenProject dump, and one copy of the Nextcloud
-volume (none with `reflink`); GitLab's archives stay in its own volume
+the Nextcloud volume with every user file. Keep it on an encrypted disk. Two generations
+are kept (the published one and the one it replaced), so the size is: two copies of
+every SQLite database, two compressed OpenProject dumps, and the Nextcloud copies as in
+the table above; GitLab's archives stay in its own volume
 (`gitlab_rails['backup_keep_time']` keeps 2 days of them).
 
-Layout of `BACKUP_DUMP_DIR`:
+#### Layout of `BACKUP_DUMP_DIR`
 
 ```
-smdc-dumps/MANIFEST                 format 2; see below
-smdc-dumps/sqlite/<service>.sqlite  SQLite dumps
-smdc-dumps/postgres/openproject.pgdump
-smdc-dumps/smdc-state/              SMDC state directory (if configured)
-smdc-nextcloud-files/SNAPSHOT       creation time of the MANIFEST this copy belongs to
-smdc-nextcloud-files/volume/        copy of the nextcloud_data volume, without the live database files
+current -> generations/<epoch>      relative symlink to the published generation
+generations/<epoch>/                one dump run; <epoch> is the MANIFEST's created_epoch
+    smdc-dumps/MANIFEST                 format 2; see below
+    smdc-dumps/sqlite/<service>.sqlite  SQLite dumps
+    smdc-dumps/postgres/openproject.pgdump
+    smdc-dumps/smdc-state/              SMDC state directory (if configured)
+    smdc-nextcloud-files/SNAPSHOT       creation time of the MANIFEST this copy belongs to
+    smdc-nextcloud-files/volume/        copy of the nextcloud_data volume, without the live database files
+generations/<epoch>.partial/        a dump run in progress (removed when it fails)
 ```
+
+How a dump run hands its result to a reader (the backup container may be reading at any
+time, and it takes no lock: its mount is read-only):
+
+1. The run writes into `generations/<epoch>.partial/`. Nothing reads that directory.
+2. When every dump has succeeded, the directory is renamed to `generations/<epoch>` and
+   a new symlink is renamed over `current`. Both are single `rename(2)` calls: a reader
+   finds the old generation or the new one, never a mixture, and the database dumps and
+   the Nextcloud copy are switched together.
+3. A generation is never modified after it has been published.
+4. The generation that `current` pointed at before stays on disk until the **next** dump
+   run starts. That run deletes it (and anything a killed run left behind) before it
+   writes. A reader that resolved `current` just before a switch therefore has a whole
+   dump interval to finish on a complete set.
+5. A reader resolves `current` **once**, to `generations/<epoch>`, and reads only that
+   path. A reader that is still at work when its generation is deleted (it ran longer
+   than a whole dump interval) fails: restic reports unreadable files, or the
+   fingerprint of the `MANIFEST` taken after the upload does not match the one taken
+   before. It exits non-zero and does not prune.
+
+**Upgrading from the fixed-name layout.** Earlier versions kept
+`BACKUP_DUMP_DIR/smdc-dumps` and `BACKUP_DUMP_DIR/smdc-nextcloud-files` and swapped them
+in place. While `current` does not exist those directories are still read (with a
+warning), by the container and as the "previous manifest" of the coverage guard and the
+`--link-dest` source of the first new dump run. The first dump run with this version
+creates `generations/` and `current` and leaves them alone; the second one removes them.
+Nothing has to be migrated by hand.
 
 `MANIFEST` records, one per line and pipe-separated: `dump|name|kind|path|ok or
 skipped|detail` for every service; `file|path|bytes|sha256` for every dump file;
@@ -185,28 +227,56 @@ The exit code is non-zero when a dump or the restic run failed; alert on it.
 ### B. Backup container + host dump job
 
 `./software/setup.sh --with-backup` starts `sovereign_backup`, which runs the **files
-phase only**, every `BACKUP_INTERVAL_SECONDS` (default 24 h). The dumps still come from
-the host:
+phase only**. The dumps still come from the host, and the host job is the schedule:
 
 ```cron
-# root crontab - before the container's run
+# root crontab: this job decides when a backup is taken
 30 2 * * * /bin/sh /path/to/sovereign-mini-datacenter/software/backup/backup.sh --dump-only >> /var/log/sovereign-backup.log 2>&1
 ```
 
-If the `MANIFEST` is missing, not marked complete, older than
-`BACKUP_DUMP_MAX_AGE_SECONDS` (default 26 h), or names a dump file that is missing or
-does not have the recorded size and SHA-256, the container's run exits non-zero,
-uploads nothing, logs `[ERROR] Backup run failed: NO snapshot was taken`, and the
-container becomes `unhealthy` (`docker ps`). It does not fall back to copying live
+There is no second clock to align with it. Every `BACKUP_POLL_SECONDS` (default 300) the
+container runs one pass of `backup.sh`:
+
+1. It resolves `BACKUP_DUMP_DIR/current` once and fingerprints that generation's
+   `MANIFEST`.
+2. If the repository already holds a snapshot of this generation, the pass ends with
+   exit 0 and uploads nothing: **each generation is uploaded exactly once**. The record
+   is the repository itself: a snapshot whose `restic backup` exited 0 and whose
+   `MANIFEST` was still the verified one afterwards gets the tag
+   `dumps-<epoch>-<first 16 hex digits of the MANIFEST's SHA-256>` (`restic tag --add`).
+   A snapshot of a failed pass (restic writes one even when it exits 3 because files
+   were unreadable) never gets it, so that generation is uploaded again. A small cache file
+   inside the container (`/tmp/smdc-backup.uploaded`, never in the dump directory) saves
+   asking the repository on every poll; a re-created container has no cache and asks
+   once. If the repository cannot answer that question, the generation is uploaded.
+3. Otherwise it verifies the generation (below), runs `restic backup` on the resolved
+   `generations/<epoch>` directories, fingerprints the `MANIFEST` again, tags the
+   snapshot, and only then applies the retention policy.
+
+A dump job that finishes while restic is reading switches `current` to a new generation;
+the pass in progress finishes on the generation it started with, and the next pass
+uploads the new one. Snapshots are therefore taken a few minutes after each host dump,
+whenever that runs.
+
+A pass exits non-zero (nothing is pruned) when the `MANIFEST` is missing, not marked
+complete, older than `BACKUP_DUMP_MAX_AGE_SECONDS` (default 26 h; this also holds for a
+generation that is already uploaded, so a host job that has stopped is noticed), names a
+dump file that is missing or does not have the recorded size and SHA-256, or is no
+longer the verified one after the upload. The container logs
+`[ERROR] Backup pass failed`, tries again after `BACKUP_POLL_SECONDS`, and becomes
+`unhealthy` (`docker ps`) until a pass succeeds. It does not fall back to copying live
 databases.
+
+`BACKUP_INTERVAL_SECONDS` of earlier versions is no longer read: remove it from `.env`.
+The interval between backups is the schedule of the host job.
 
 **Why the container does not dump by itself.** Dumping needs `docker exec` into the
 database containers, which means mounting the Docker socket: root on the host for a
 container that is attached to the service network and, with an `s3:`/`sftp:` repository,
 talks to the internet. The dump phase therefore stays on the host, where root is
 already required, and the container gets read-only mounts and no socket
-(`scripts/validate_compose.sh` rejects a socket mount). The cost is a second scheduled
-job and a host directory with plaintext dumps.
+(`scripts/validate_compose.sh` rejects a socket mount). The cost is a host cron job and
+a host directory with plaintext dumps.
 
 The local repository is kept in the `backup_storage` volume mounted at
 `/var/backups/sovereign`; if you change `RESTIC_REPOSITORY`, use a remote backend
@@ -239,7 +309,10 @@ snapshot holds no dumps at all. Needs free space for one GitLab archive in `$TMP
 The Nextcloud file copy is not restored by `--verify` (it holds every user file): the
 number of files the snapshot lists under `smdc-nextcloud-files/volume/` is compared with
 the number the dump phase recorded; their contents are not read. A snapshot taken with
-`BACKUP_ALLOW_COVERAGE_DROP=1` is reported as such.
+`BACKUP_ALLOW_COVERAGE_DROP=1` is reported as such. `--verify` also reports the dump
+generation the snapshot holds and fails when the generation directory's name is not the
+`created_epoch` of the `MANIFEST` inside it; a snapshot from before dump generations is
+reported as "fixed-name directory" and verified as before.
 
 `restore.sh check` runs `restic check` (archive integrity only). Neither replaces a
 real restore rehearsal on a spare node.
@@ -254,8 +327,10 @@ sudo bash software/backup/restore.sh plan /mnt/restore             # prints the 
 `restore-latest` only extracts; it never writes into a live volume. In the extracted
 tree, volume files are under `.../<project>_<volume>/_data` (host job) or
 `data/<volume>` (container), the configuration is the `software` / `config` directory,
-the dumps are in `smdc-dumps/`, and the Nextcloud volume (in `maintenance` mode) is in
-`smdc-nextcloud-files/volume/` next to it instead of among the volumes.
+the dumps are in `.../generations/<epoch>/smdc-dumps/` (directly in `smdc-dumps/` in a
+snapshot from before dump generations), and the Nextcloud volume (in `maintenance` mode)
+is in `smdc-nextcloud-files/volume/` next to it instead of among the volumes. `plan`
+finds both by name and prints the real paths and the generation.
 
 On a fresh node:
 
@@ -293,9 +368,9 @@ against real services. Rehearse them before you depend on them.
 | `RESTIC_REPOSITORY` | `/var/backups/sovereign` | restic repository |
 | `RESTIC_PASSWORD` | none (required) | repository password |
 | `RESTIC_S3_KEY` / `RESTIC_S3_SECRET` | empty | credentials for an `s3:` repository |
-| `BACKUP_INTERVAL_SECONDS` | `86400` | container: pause between runs |
-| `BACKUP_DUMP_DIR` | `/var/backups/sovereign-dumps` | host directory for dumps (mounted read-only at `/dumps` in the container) |
-| `BACKUP_DUMP_MAX_AGE_SECONDS` | `93600` | container: oldest acceptable dump set |
+| `BACKUP_POLL_SECONDS` | `300` | container: seconds between looks at `BACKUP_DUMP_DIR/current` for a generation that is not in the repository yet. Not the backup interval: that is the schedule of the host's `--dump-only` job |
+| `BACKUP_DUMP_DIR` | `/var/backups/sovereign-dumps` | host directory for the dump generations (mounted read-only at `/dumps` in the container) |
+| `BACKUP_DUMP_MAX_AGE_SECONDS` | `93600` | container: oldest acceptable dump set, uploaded or not; the health check allows twice this plus one hour without a finished pass |
 | `BACKUP_SMDC_STATE_DIR` | `$SMDC_STATE_DIR`, else skipped | SMDC state directory to include |
 | `COMPOSE_PROJECT_NAME` | read from `sovereign_traefik`, else `software` | project whose volumes are backed up |
 | `GITLAB_BACKUP_ARGS` | empty | extra arguments for `gitlab-backup create` (e.g. `STRATEGY=copy`) |
@@ -357,9 +432,22 @@ under `dash`), not against real services:
 | Nextcloud in maintenance mode without this script's marker | non-zero exit, maintenance mode left as it was |
 | `restic backup` exits 3 | non-zero exit, `forget --prune` never called |
 | `BACKUP_NEXTCLOUD_MODE=online`; copy methods `reflink`, `rsync` (with `--link-dest` on the second run) and `copy` | expected commands issued |
+| Dump generations: three dump runs in a row; a failing run; leftovers of a killed run | `current` is a relative symlink to `generations/<epoch>`; the previous generation is kept and the one before it removed; a failed run leaves `current` and the published generation untouched and no `.partial` directory |
+| Container: two passes on one generation; cache file removed; repository query failing | one `restic backup` only; with the cache gone the repository is asked and the generation is not uploaded again; when the query fails the generation is uploaded |
+| A host dump run executes while the container's `restic backup` is reading (the stand-in reads the `MANIFEST`, runs the dump job, then reads the dump files) | exit 0; the snapshot holds the `MANIFEST` and dump files of the generation the pass started with; the next pass uploads the new generation |
+| Two host dump runs during one container pass (its generation is deleted mid-read); the generation vanishes right after `restic backup` returned 0 | non-zero exit, `forget --prune` not called, generation not recorded as uploaded; the following pass succeeds |
+| Fixed-name layout of earlier versions: container pass; the directory swapped in place during the pass; host run with a coverage drop; two dump runs after the upgrade | accepted with a warning and uploaded once; the swap is detected after the upload (non-zero exit, no prune); the drop is detected against the old `MANIFEST`; the first run keeps the old directories, the second removes them |
+| `current` is a directory, points outside `generations/`, dangles, or its generation's `MANIFEST` names another creation time | non-zero exit, nothing uploaded |
+| Container: `restic backup` exits 3 (a snapshot is written all the same); `restic tag` fails after a good upload | non-zero exit, no prune, the snapshot does not carry the generation's tag; the next pass uploads the generation again and tags it, the pass after that uploads nothing |
 
-Not tested against real services: the Nextcloud maintenance window (`occ` against a real
-Nextcloud, the length of the window on real data, `cp --reflink` on Btrfs or XFS), the
-Open WebUI, CrowdSec and DTN-spool dumps (their containers were not part of the test),
-the restic upload phase, `restore.sh --verify` against a real repository, and loading
+The generation hand-off was then run with a real restic 0.19.1 repository (Vaultwarden
+and Grafana as the services): the host job published `generations/<epoch>` through
+`current`; the backup container uploaded that generation once across three polls and
+tagged the snapshot `dumps-<epoch>-<manifest digest>`; a second host run produced a
+second generation and exactly one more snapshot; and `restore.sh --verify` restored
+the dumps of the latest snapshot from the repository and loaded both databases.
+
+Not tested against real services: the Open WebUI, CrowdSec and DTN-spool dumps (their
+containers were not part of the tests), `cp --reflink` on a copy-on-write filesystem,
+retention (`forget --prune`) over many days, a remote (S3/SFTP) repository, and loading
 any dump back into a live service. Rehearse a restore before relying on these backups.

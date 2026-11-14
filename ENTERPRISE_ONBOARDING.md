@@ -12,7 +12,7 @@ The **Sovereign Mini Datacenter (SMDC)** enterprise framework enables organizati
 
 Whether deploying industrial IoT pipelines, computer vision models, geospatial digital twins, or confidential databases, the SMDC runtime provides:
 
-1. **Energy-Aware Power Tiers**: Workloads adapt to available solar generation and battery State-of-Charge (SoC) through graduated power tiers ($L_0 \to L_4$).
+1. **Energy-Aware Power Tiers**: Tracked workloads are marked paused and resumed according to the battery State-of-Charge (SoC) through graduated power tiers ($L_0 \to L_4$); section 3 states exactly what is enforced.
 2. **Post-Quantum Package Signatures**: Application bundles can be signed with ML-DSA-87 (the FIPS 204 algorithm), and node wallets can use it for ledger transactions. The implementation is a pure-Python library that is not FIPS-validated; see [`COMPLIANCE.md`](COMPLIANCE.md) for what is implemented and what is planned.
 3. **Delay-Tolerant Space Relaying**: Integrated RFC 9171 BPv7 DTN communication spools critical event payloads for a Low Earth Orbit (LEO) satellite contact window during terrestrial link outages (the repository ships the bundle spool and a pass predictor, not a radio driver; bundle payloads are not encrypted).
 4. **Autonomous AI Multi-Agent Supervision**: Built-in Sentinel and Technician Copilots monitor workload health, resource quotas, and thermals.
@@ -83,13 +83,13 @@ resources:
   gpu_required: true     # NVIDIA CUDA / TensorRT dependency
   max_power_w: 35.0      # Maximum expected electrical draw in Watts
 
-# Power Shedding & Environmental Policies
+# Load-Shedding Policy (section 3 says exactly what is enforced)
 power:
   tier: "L2_BACKGROUND"  # L0_CRITICAL | L1_STANDARD | L2_BACKGROUND | L3_DEFERRABLE | L4_IDLE
-  min_battery_soc: 40.0  # Minimum battery SoC percentage required to run
-  max_ambient_temp_c: 55.0 # Thermal throttling cutoff temperature in Celsius
-  allow_solar_burst: true # Allow bursting when solar harvest exceeds 500 W
-  min_solar_watts: 250.0  # Minimum solar PV wattage required to resume execution
+  min_battery_soc: 40.0  # Enforced: marked paused while a reported battery SoC is below this (ignored for L0_CRITICAL)
+  max_ambient_temp_c: 55.0 # Reserved, not enforced: validated and stored only
+  allow_solar_burst: true # Reserved, not enforced: validated and stored only
+  min_solar_watts: 250.0  # Reserved, not enforced: validated and stored only
 
 # Network & Multi-Spectral Connectivity
 network:
@@ -125,32 +125,72 @@ health_check:
 
 ## 3. Power Shedding Tiers ($L_0 \to L_4$)
 
-The SMDC Sentinel Copilot dynamically manages running workloads according to battery and solar availability:
+Load shedding has one policy and one set of thresholds. The battery state of charge (SoC) maps to a **shedding level** from 0 to 4, and each application's `power.tier` decides from which level the application is paused.
 
-| Tier | Priority Name | Target Workloads | Shedding Trigger | Behavior |
+**What "paused" means.** The `EnterpriseManager` is a state tracker, not a process supervisor: it marks the tracked application `paused` and publishes `enterprise.<app_id>.paused`, and an application that uses `AppLifecycleHandler` gets its `on_pause` / `on_resume` callbacks and stops its own work. Nothing in this repository throttles, reschedules or terminates an application, and no hardware is switched. The events travel on the in-process event bus, so they reach a manager (and an SDK handler) that runs in the same process as the publisher, such as `smdc benchmark --shed` or the MCP tool `set_load_shedding`; the containerised sentinel shares only its mode file.
+
+### Shedding levels
+
+<!-- shedding-levels:begin (tests/test_regress_round4_shedding.py compares this table with the code defaults) -->
+| Shedding level | Battery SoC | Sentinel mode | App tiers the `EnterpriseManager` marks paused | Other components |
+| :---: | :--- | :--- | :--- | :--- |
+| **0** | at or above 50 % | `NORMAL` (`SOLAR_SURPLUS_COMPUTE` while PV power is above 1000 W and SoC above 75 %) | none | none |
+| **1** | below 50 % | `NORMAL` | `L4_IDLE` | none |
+| **2** | below 30 % | `ECO_PRESERVATION` | `L3_DEFERRABLE`, `L4_IDLE` | The knowledge indexer defers its batch work while the mode file says `ECO_PRESERVATION`. |
+| **3** | below 20 % | `ECO_PRESERVATION` | `L2_BACKGROUND`, `L3_DEFERRABLE`, `L4_IDLE` | The power exporter sets `sovereign_load_shedding_active` to 1; `load_shedder.sh` raises its low-battery cause. |
+| **4** | below 10 % | `ECO_PRESERVATION` | `L1_STANDARD`, `L2_BACKGROUND`, `L3_DEFERRABLE`, `L4_IDLE` | Same as level 3. |
+<!-- shedding-levels:end -->
+
+The thresholds are `SovereignConfig.shedding_l1_soc` to `shedding_l4_soc`, set with the environment variables `SHEDDING_L1_SOC`, `SHEDDING_L2_SOC`, `SHEDDING_L3_SOC` and `SHEDDING_L4_SOC` (defaults 50, 30, 20 and 10). The sentinel copilot, the dashboard's SoC tier label, the MCP `recommended_level`, the power exporter (`SHEDDING_L3_SOC`) and `load_shedder.sh` (`SHEDDING_L3_SOC`, `SHEDDING_L1_SOC`) read the same variables with the same defaults. The four thresholds are one policy: they must be numbers within 0–100 with L1 > L2 > L3 > L4, otherwise the Python components log one warning and use all four defaults, and `load_shedder.sh` exits 2 without deciding. The table gives the SoC at which a level is **entered**. The sentinel, which tracks the level over time, **leaves** a level only once the SoC is `SHEDDING_HYSTERESIS_SOC` points (default 2, range 0–10) above that level's threshold: 12, 22, 32 and 52 % with the defaults, so an SoC hovering at a threshold does not pause and resume applications on every poll. Stateless readers (the dashboard's SoC tier label, the MCP `recommended_level`) and a sentinel that has just started use the table as it stands. While the SoC is unknown the sentinel holds its last mode and level and publishes nothing.
+
+### Application tiers
+
+| Tier | `power.tier` | Typical workloads | Marked paused from | Resumed when |
 | :--- | :--- | :--- | :--- | :--- |
-| **$L_0$** | `L0_CRITICAL` | BMS, Life Support, Telemetry, LoRa Gateway, Security Vault | $\text{SoC} < 15\%$ | **Never throttled**; highest priority. |
-| **$L_1$** | `L1_STANDARD` | Core Web APIs, Spatial Twins, Low-Power Inference | $\text{SoC} < 30\%$ | Gracefully throttled or throttled to lower frequency. |
-| **$L_2$** | `L2_BACKGROUND` | Computer Vision Pipelines, Real-Time Ingestion | $\text{SoC} < 50\%$ or High Thermals | **Automatically paused**; resumes upon solar surplus. |
-| **$L_3$** | `L3_DEFERRABLE` | Model Retraining, Document Vectorization (RAG), Archival Sync | $\text{SoC} < 65\%$ | Scheduled strictly during daylight solar peaks ($> 500\text{ W}$). |
-| **$L_4$** | `L4_IDLE` | Speculative Compute, Benchmark Sweeps, DePIN Idle Relays | $\text{SoC} < 80\%$ | Immediately terminated during any power deficit. |
+| **$L_0$** | `L0_CRITICAL` | Telemetry, security vault, LoRa gateway | never | n/a |
+| **$L_1$** | `L1_STANDARD` | Core web APIs, spatial twins, low-power inference | level 4 | the level is 3 or lower |
+| **$L_2$** | `L2_BACKGROUND` | Computer vision pipelines, real-time ingestion | level 3 | the level is 2 or lower |
+| **$L_3$** | `L3_DEFERRABLE` | Model retraining, document vectorisation, archival sync | level 2 | the level is 1 or lower |
+| **$L_4$** | `L4_IDLE` | Speculative compute, benchmark sweeps | level 1 | the level is 0 |
+
+Rules that hold for every tier:
+
+- Only a tracked application in state `running` is paused, and only an application that shedding paused is resumed. An operator's `smdc app pause` stays in force until the operator resumes the application.
+- The policy is applied when a `load_shedding.*` event arrives, and again when an application is started: the manager remembers the level and SoC of the last event, and `smdc app start` (or `start_app`) on an application that this level, or its `min_battery_soc`, would pause starts it **paused by shedding** (`enterprise.<app_id>.started` followed by `enterprise.<app_id>.paused` with `paused_by: load_shedding`). The call succeeds, its message names the level, and the application is resumed like any other shed application when shedding eases. A manager that has not seen an event yet (a new process, such as one `smdc app start` invocation) knows no level and starts the application running.
+- The sentinel publishes an event when its mode or the level changes, and again whenever the SoC has moved by 1 percentage point since the last event.
+
+### Per-application manifest fields
+
+| Field | Status | Behaviour |
+| :--- | :--- | :--- |
+| `power.tier` | **Enforced** | See the two tables above. |
+| `power.min_battery_soc` | **Enforced** (not for `L0_CRITICAL`) | When an event carries `battery_soc` (the sentinel's events do; the MCP tool's do not), the application is marked paused while that SoC is below the value, in addition to the tier rule. It is resumed once an event reports an SoC at or above the value plus 2 points and the tier rule no longer applies. An event without `battery_soc` neither pauses nor resumes on this rule. |
+| `power.max_ambient_temp_c` | Reserved, not enforced | Validated and stored only. No component pauses an application because of a temperature. |
+| `power.allow_solar_burst` | Reserved, not enforced | Stored only. |
+| `power.min_solar_watts` | Reserved, not enforced | Validated and stored only. No component compares it with PV power. |
+
+`smdc app validate` prints the enforced rule and the reserved fields for the manifest it checks.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> L0_Nominal : "Solar Harvest > 800W (SoC > 80%)"
-    
-    state "Full Power (L0 to L4 Active)" as L0_Nominal
-    state "Conservation (L3 and L4 Shed)" as L1_State
-    state "Critical Saving (L2 to L4 Shed)" as L2_State
-    state "Emergency (L0 Only Active)" as L3_State
+    state "Level 0 (all tiers run)" as S0
+    state "Level 1 (L4 paused)" as S1
+    state "Level 2 (L3 and L4 paused)" as S2
+    state "Level 3 (L2 to L4 paused)" as S3
+    state "Level 4 (L1 to L4 paused, L0 runs)" as S4
 
-    L0_Nominal --> L1_State : "Battery SoC below 65%"
-    L1_State --> L2_State : "Battery SoC below 50%"
-    L2_State --> L3_State : "Battery SoC below 30%"
-    L3_State --> L2_State : "Solar Harvest > 200W (SoC > 35%)"
-    L2_State --> L1_State : "Solar Harvest > 500W (SoC > 65%)"
-    L1_State --> L0_Nominal : "Solar Harvest > 800W (SoC > 80%)"
+    [*] --> S0
+    S0 --> S1 : "SoC under 50%"
+    S1 --> S2 : "SoC under 30%"
+    S2 --> S3 : "SoC under 20%"
+    S3 --> S4 : "SoC under 10%"
+    S4 --> S3 : "SoC at or over 10%"
+    S3 --> S2 : "SoC at or over 20%"
+    S2 --> S1 : "SoC at or over 30%"
+    S1 --> S0 : "SoC at or over 50%"
 ```
+
+The diagram shows neighbouring transitions only, and its recovery arrows name the thresholds: a reading can move the level by more than one step, and the sentinel takes a recovery arrow only once the SoC is `SHEDDING_HYSTERESIS_SOC` points (default 2) above the threshold on it.
 
 ---
 
@@ -249,6 +289,8 @@ smdc app register ./predictive-maint
 # Verify registration
 smdc app list
 ```
+
+The registry is one JSON file shared by every `smdc` process on the node (`~/.smdc/enterprise_registry.json`). Concurrent `smdc app register` runs are merged under a lock: each one locks the file, reloads it, applies its own registration and replaces the file atomically, so none overwrites another. If the file cannot be written (lock timeout, unwritable directory, unreadable file), the application is not registered and `smdc app register` says why and exits non-zero.
 
 ---
 

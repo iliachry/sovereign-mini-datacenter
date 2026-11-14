@@ -29,7 +29,7 @@ from sovereign_dc.agents.technician_notifier import (
     MessageSeverity,
     TechnicianNotifierChain,
 )
-from sovereign_dc.config import default_dtn_db_path
+from sovereign_dc.config import DEFAULT_NODE_ID, default_dtn_db_path
 
 logger = logging.getLogger("BootstrapProvisioner")
 
@@ -97,7 +97,7 @@ class BootstrapProvisioner:
         notifier_chain: TechnicianNotifierChain | None = None,
         dry_run: bool = False,
     ):
-        self.node_id: str = str(node_id or os.getenv("NODE_ID") or "smdc-dgx-01")
+        self.node_id: str = str(node_id or os.getenv("NODE_ID") or DEFAULT_NODE_ID)
         self.role: str = str(role or os.getenv("NODE_ROLE") or "Primary Compute Core")
         self.dry_run = dry_run
         self.notifier = notifier_chain or TechnicianNotifierChain(node_id=self.node_id)
@@ -323,22 +323,18 @@ class BootstrapProvisioner:
             "unreachable_peers": [],
         }
 
-        from sovereign_dc.mesh.mesh_sync import check_peer_health, load_peers
+        from sovereign_dc.mesh.mesh_sync import check_peer_health, load_peers, remote_peers
 
-        peers = load_peers()
-        reachable_count = 0
-        for peer in peers:
-            if peer.node_id == self.node_id:
-                continue
-            is_up = check_peer_health(peer)
-            if is_up:
+        # Only nodes other than this one count, and only if they answered a probe.
+        for peer in remote_peers(load_peers(), self.node_id):
+            if check_peer_health(peer):
                 net_info["active_peers"].append(peer.node_id)
-                reachable_count += 1
             else:
                 net_info["unreachable_peers"].append(peer.node_id)
 
-        # WireGuard link status is inferred from peer reachability over the overlay.
-        net_info["tier1_wireguard"] = reachable_count > 0
+        # WireGuard link status is inferred from peer reachability over the overlay: it is
+        # confirmed only by a remote peer's answer.
+        net_info["tier1_wireguard"] = len(net_info["active_peers"]) > 0
         if not net_info["tier1_wireguard"]:
             unverified.append("network: no mesh peer reachable over WireGuard")
 

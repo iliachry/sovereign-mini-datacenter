@@ -105,7 +105,8 @@ Steps 1 to 4 bring up the 48V bus and are needed before the pump is primed in Ph
 
 ## 📋 First-Boot Commissioning Smoke Test Checklist
 
-- [ ] **Isolation Test:** With the system running, opening the PV isolator and then both battery isolators brings the Lynx busbars to 0V (after the inverter capacitors discharge), each isolator padlocks in OFF, and the AC output RCBO trips on its test button.
+- [ ] **Residual-Current Test (system live):** with the inverter running and the PDU energised, the AC output RCBO trips on its test button; reset it afterwards.
+- [ ] **Isolation Test (after an orderly shutdown, following the isolation and lock-out sequence above):** with the loads shut down, the MultiPlus-II switched off and the AC output RCBO open, opening the PV isolator and then both battery isolators brings the Lynx busbars to 0V (after the inverter capacitors discharge), and each isolator padlocks in OFF. Never open the DC isolators under load as a test.
 - [ ] **DC Polarity Verification:** Multimeter reads $+51.2\text{ V}$ to $+53.5\text{ V}$ DC on inverter input terminals with zero reverse polarity.
 - [ ] **Battery Monitoring:** The SmartShunt reports battery voltage, current and SoC over VE.Direct (the ESP32 bridge exposes them on `/metrics` once it has received a checksum-valid frame). On each pack's own BMS display or tool, all 32 LiFePO4 cells are balanced within $\pm 15\text{ mV}$. The ESP32 firmware has no RS485 link to the pack BMS.
 - [ ] **Coolant Flow:** The D5 pump tachometer reports a steady speed and coolant visibly circulates through the reservoir (the loop has no flow meter); coolant temperature stabilizes below $35^\circ\text{C}$ with the system host at full load. Both DGX Spark nodes run at full load on their own air cooling with no thermal throttling reported.

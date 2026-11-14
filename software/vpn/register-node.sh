@@ -28,7 +28,11 @@ EOF
 }
 
 check_container() {
-    if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+    # No `docker ps | grep -q`: under pipefail grep leaving at its first match can
+    # SIGPIPE docker and turn "running" into "not running".
+    local names
+    names="$(docker ps --format '{{.Names}}')"
+    if ! grep -Fqx -e "$CONTAINER_NAME" <<<"$names"; then
         echo "Error: Headscale container '${CONTAINER_NAME}' is not running." >&2
         echo "Start it first with: docker compose --project-directory software -f software/docker-compose.attach.yml -f software/vpn/docker-compose.vpn.yml up -d" >&2
         exit 1

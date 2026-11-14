@@ -127,7 +127,11 @@ space:
       tag: latest
       pullPolicy: IfNotPresent
     port: 9102
-    localEid: "dtn://smdc-node-01.space"
+    # This node's id (NODE_ID), the same one the rest of the stack uses.
+    nodeId: "smdc-dgx-01"
+    # DTN endpoint id (DTN_LOCAL_EID). Empty: derived from nodeId as
+    # dtn://<nodeId>.sovereign.space, so the node has one identity.
+    localEid: ""
     groundStation:
       name: "Sovereign-Ground-01"
       latitude: "37.9838"

@@ -26,9 +26,12 @@ def test_load_peers_defaults():
     assert "smdc-node-03" in node_ids
 
 
-def test_check_peer_health_self():
+def test_check_peer_health_self_is_probed_like_any_other_node():
+    # The local node used to be reported reachable without a request; callers now exclude
+    # it with remote_peers() and check_peer_health() always probes.
     node = MeshNode(mesh_sync.NODE_ID, "100.64.0.1", "dtn://local.space", "Core")
-    assert check_peer_health(node) is True
+    with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("Connection refused")):
+        assert check_peer_health(node) is False
 
 
 def test_check_peer_health_online():

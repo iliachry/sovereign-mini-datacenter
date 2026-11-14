@@ -57,13 +57,19 @@ class AppCategory(StrEnum):
 
 
 class PowerPriority(StrEnum):
-    """Hardware-enforced power shedding tier (L0 to L4).
+    """Power shedding tier of an application (L0 to L4).
 
-    - L0_CRITICAL: Never shed. Always active (telemetry, security, life support).
-    - L1_STANDARD: Core operational services (active business APIs, interactive UI).
-    - L2_BACKGROUND: Paused when battery SoC < 40% (continuous indexing, batch processing).
-    - L3_DEFERRABLE: Paused when battery SoC < 60% or solar < 200W (heavy model retraining).
-    - L4_IDLE: Active only during solar surplus (> 800W) or battery SoC > 80%.
+    The tier decides at which load-shedding level the ``EnterpriseManager`` marks the
+    tracked application PAUSED (``SHED_PAUSE_LEVEL``). The level is
+    derived from battery SoC with ``SovereignConfig.shedding_l1..l4_soc`` (defaults below).
+    Pausing is a tracked state change plus an event: nothing is throttled, scheduled,
+    terminated or enforced in hardware.
+
+    - L0_CRITICAL: never paused by shedding (telemetry, security, life support).
+    - L1_STANDARD: paused at level 4 (SoC < 10 %).
+    - L2_BACKGROUND: paused at level 3 and above (SoC < 20 %).
+    - L3_DEFERRABLE: paused at level 2 and above (SoC < 30 %).
+    - L4_IDLE: paused at level 1 and above (SoC < 50 %).
     """
 
     L0_CRITICAL = "L0_CRITICAL"
@@ -122,9 +128,36 @@ class ResourceQuotas:
         )
 
 
+# Lowest load-shedding level at which a tracked app of each power tier is marked PAUSED by
+# the EnterpriseManager. L0_CRITICAL has no entry: it is never paused by shedding.
+SHED_PAUSE_LEVEL: dict[PowerPriority, int] = {
+    PowerPriority.L4_IDLE: 1,
+    PowerPriority.L3_DEFERRABLE: 2,
+    PowerPriority.L2_BACKGROUND: 3,
+    PowerPriority.L1_STANDARD: 4,
+}
+POWER_POLICY_RESERVED_FIELDS = ("max_ambient_temp_c", "allow_solar_burst", "min_solar_watts")
+POWER_POLICY_RESERVED_NOTICE = (
+    "power.max_ambient_temp_c, power.allow_solar_burst and power.min_solar_watts are reserved, "
+    "not enforced: they are validated and stored, but no component pauses or resumes the "
+    "application because of them."
+)
+
+
 @dataclass
 class PowerPolicy:
-    """Solar and battery dynamic shedding rules."""
+    """Load-shedding policy of one application.
+
+    Enforced by ``EnterpriseManager`` on ``load_shedding.*`` events (tracked state only):
+
+    - ``tier``: the shedding level from which the app is marked PAUSED (see ``PowerPriority``).
+    - ``min_battery_soc``: when the event carries ``battery_soc``, the app is paused while
+      that SoC is below this value and resumed at or above it plus 2 points of hysteresis.
+      Ignored for ``L0_CRITICAL``.
+
+    Reserved, not enforced (validated and stored only; see ``POWER_POLICY_RESERVED_NOTICE``):
+    ``max_ambient_temp_c``, ``allow_solar_burst`` and ``min_solar_watts``.
+    """
 
     tier: PowerPriority = PowerPriority.L1_STANDARD
     min_battery_soc: float = 30.0
@@ -136,6 +169,22 @@ class PowerPolicy:
         d = asdict(self)
         d["tier"] = self.tier.value
         return d
+
+    def enforcement_summary(self) -> list[str]:
+        """Plain-text lines saying what is enforced for this policy and what is not."""
+        if self.tier == PowerPriority.L0_CRITICAL:
+            lines = ["L0_CRITICAL is never paused by load shedding; min_battery_soc is ignored for it."]
+        else:
+            lines = [
+                f"Paused (tracked state) from load-shedding level {SHED_PAUSE_LEVEL[self.tier]}, "
+                f"or while a reported battery SoC is below min_battery_soc ({self.min_battery_soc:g} %)."
+            ]
+        lines.append(
+            f"Reserved, not enforced: max_ambient_temp_c ({self.max_ambient_temp_c:g}), "
+            f"allow_solar_burst ({str(self.allow_solar_burst).lower()}), "
+            f"min_solar_watts ({self.min_solar_watts:g})."
+        )
+        return lines
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> PowerPolicy:

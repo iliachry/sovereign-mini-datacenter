@@ -32,7 +32,7 @@ from sovereign_dc.space.dtn.router import DTNRouter
 UNREACHABLE = "http://127.0.0.1:9"
 
 
-def _manifest(app_id: str, tier: PowerPriority = PowerPriority.L2_BACKGROUND, **kwargs: Any) -> AppManifest:
+def _manifest(app_id: str, tier: PowerPriority = PowerPriority.L3_DEFERRABLE, **kwargs: Any) -> AppManifest:
     return AppManifest(
         name=kwargs.pop("name", app_id),
         app_id=app_id,

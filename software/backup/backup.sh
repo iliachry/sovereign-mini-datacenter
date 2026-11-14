@@ -7,32 +7,53 @@
 # come from different moments and the copy may not start. So this script works
 # in two phases and never hands restic a live database directory:
 #
-#   1. DUMP  (host only)  every database is exported with its own tool into
-#            <BACKUP_DUMP_DIR>/smdc-dumps and checked; a MANIFEST lists the
-#            result with the size and SHA-256 of every dump file. Nextcloud is
-#            put into maintenance mode while its database is dumped and a
-#            point-in-time copy of its volume is taken
-#            (<BACKUP_DUMP_DIR>/smdc-nextcloud-files), then switched back on.
-#            Any failing dump aborts the run before restic is called.
+#   1. DUMP  (host only)  every database is exported with its own tool into a
+#            new generation directory, <BACKUP_DUMP_DIR>/generations/<epoch>/smdc-dumps,
+#            and checked; a MANIFEST lists the result with the size and SHA-256
+#            of every dump file. Nextcloud is put into maintenance mode while its
+#            database is dumped and a point-in-time copy of its volume is taken
+#            (.../generations/<epoch>/smdc-nextcloud-files), then switched back on.
+#            Any failing dump aborts the run before restic is called. A complete
+#            generation is published by switching the symlink
+#            <BACKUP_DUMP_DIR>/current to it with one rename(2).
 #   2. FILES restic backs up the dump directory, the Nextcloud snapshot, the
 #            deployment configuration (software/, including .env) and the static
 #            files of the volumes listed as `files` in volumes.conf. Live
 #            database files are excluded.
+#
+# Generations make the hand-over to a concurrent reader (the backup container)
+# atomic: a generation is never modified once `current` points at it, the reader
+# resolves `current` ONCE and works on that directory, and the generation it
+# replaced is kept until the next dump run starts. A reader that is still on a
+# generation when that one is finally deleted fails (non-zero, nothing pruned)
+# instead of uploading a MANIFEST and dump files from different runs. The
+# fixed-name layout of earlier releases (<BACKUP_DUMP_DIR>/smdc-dumps) is still
+# read while no `current` exists, and is removed by the second dump run after
+# the upgrade.
 #
 # The run stops with a non-zero exit code, before anything is uploaded or pruned,
 # when: the Docker daemon cannot be reached; a volume the daemon lists cannot be
 # inspected; a dump fails; a dump named in the MANIFEST is missing, has another
 # size or (container mode) another SHA-256; or a service that the previous
 # complete MANIFEST backed up would now be skipped (BACKUP_ALLOW_COVERAGE_DROP=1
-# accepts that once; such a run uploads but does not prune).
+# accepts that once; such a run uploads but does not prune). It also stops
+# non-zero, after the upload and before pruning, when the MANIFEST changed or
+# disappeared while restic was reading the dumps.
 #
 # Modes:
 #   host (default)        sh backup.sh              dump + files, one consistent run
 #                         sh backup.sh --dump-only  dump phase only (feeds the container)
 #   container             BACKUP_MODE=container (set by docker-compose.backup.yml):
-#                         FILES phase only. The container has no Docker socket on
-#                         purpose, so it cannot dump; it refuses to run (non-zero)
-#                         unless the host's dump MANIFEST is complete and fresh.
+#                         one pass of the FILES phase. The container has no Docker
+#                         socket on purpose, so it cannot dump; a pass fails
+#                         (non-zero) unless the host's current generation is
+#                         complete and fresh. Each generation is uploaded exactly
+#                         once: a pass that finds a snapshot tagged
+#                         dumps-<epoch>-<MANIFEST digest> in the repository exits 0
+#                         without uploading. After `restic backup` the MANIFEST is
+#                         fingerprinted again; if it is not the one that was
+#                         verified, the pass fails and nothing is pruned. Only a
+#                         snapshot that passed gets the dumps-... tag.
 #
 # Host requirements: root on the Docker host (volume mountpoints are read
 # directly), docker, sqlite3, restic.
@@ -61,6 +82,8 @@
 #   RESTIC_REPOSITORY, RESTIC_PASSWORD, RESTIC_S3_KEY, RESTIC_S3_SECRET
 #   BACKUP_DUMP_DIR               host directory for dumps (default /var/backups/sovereign-dumps)
 #   BACKUP_DUMP_MAX_AGE_SECONDS   container mode: oldest acceptable MANIFEST (default 93600 = 26 h)
+#   BACKUP_UPLOAD_STATE_FILE      container mode: cache of the last uploaded generation
+#                                 (default /tmp/smdc-backup.uploaded; never in the dump directory)
 #   BACKUP_SMDC_STATE_DIR         SMDC state directory to include (default: $SMDC_STATE_DIR; unset = skipped)
 #   COMPOSE_PROJECT_NAME          Compose project of the stack (default: read from sovereign_traefik, else "software")
 #   GITLAB_BACKUP_ARGS            extra arguments for gitlab-backup create (e.g. STRATEGY=copy)
@@ -89,9 +112,9 @@ usage() {
 Usage: sh backup.sh [--dump-only]
 
   (no option)   host: dump every database, then restic backup of dumps + config + static volume files
-  --dump-only   host: dump phase only (schedule it before the sovereign_backup container runs)
+  --dump-only   host: dump phase only (schedule it; the sovereign_backup container uploads each new generation once)
 
-Container mode (BACKUP_MODE=container) runs the restic phase only and needs fresh host dumps.
+Container mode (BACKUP_MODE=container) runs one pass of the restic phase and needs fresh host dumps.
 EOF
 }
 
@@ -177,17 +200,35 @@ esac
 case "$DUMP_PARENT" in
     *\'* | *\"*) err "BACKUP_DUMP_DIR must not contain quote characters." ;;
 esac
-# The directory name is fixed: restore.sh finds the dumps by it in any snapshot.
-DUMPS="${DUMP_PARENT}/smdc-dumps"
-NEW="${DUMP_PARENT}/smdc-dumps.new"
-# Point-in-time copy of the nextcloud_data volume, taken in the maintenance window.
-# It is a sibling of smdc-dumps (not inside it) so that `restore.sh --verify`, which
-# restores smdc-dumps only, does not have to restore every user file.
+# Layout of the dump directory (written on the host, mounted read-only into the container):
+#   generations/<created_epoch>/smdc-dumps/            MANIFEST and dump files
+#   generations/<created_epoch>/smdc-nextcloud-files/  copy of the nextcloud_data volume
+#   current -> generations/<created_epoch>             relative symlink to the published generation
+# The two directory names are fixed: restore.sh finds them by name in any snapshot.
+# smdc-nextcloud-files is a sibling of smdc-dumps (not inside it) so that
+# `restore.sh --verify`, which restores smdc-dumps only, does not have to restore
+# every user file.
+DUMPS_NAME="smdc-dumps"
 NCSNAP_NAME="smdc-nextcloud-files"
-NCSNAP="${DUMP_PARENT}/${NCSNAP_NAME}"
-NCSNAP_NEW="${NCSNAP}.new"
+GEN_ROOT="${DUMP_PARENT}/generations"
+CURRENT_LINK="${DUMP_PARENT}/current"
+# Fixed-name layout of earlier releases: read while no `current` exists.
+LEGACY_DUMPS="${DUMP_PARENT}/${DUMPS_NAME}"
+LEGACY_NCSNAP="${DUMP_PARENT}/${NCSNAP_NAME}"
+# The generation being written (dump phase; `<epoch>.partial` until it is complete):
+GEN_NEW=""
+NEW=""
+NCSNAP_NEW=""
+# The published generation it is compared with and hard-linked against:
+PREV_DUMPS=""
+PREV_NCSNAP=""
+# The generation being read (restic phase); GEN_NAME is empty for the legacy layout:
+GEN_NAME=""
+DUMPS=""
+NCSNAP=""
 LOCK_DIR="${DUMP_PARENT}/.smdc-backup.lock"
 NC_MARKER="${DUMP_PARENT}/.smdc-nextcloud-maintenance"
+UPLOAD_STATE="${BACKUP_UPLOAD_STATE_FILE:-${CROOT}/tmp/smdc-backup.uploaded}"
 
 [ -f "$VOLUMES_CONF" ] || err "Missing ${VOLUMES_CONF}."
 
@@ -232,6 +273,19 @@ sha256_of() { # sha256_of <file> -> 64 hex characters; non-zero when the file ca
     printf '%s' "$so_sum"
 }
 
+# list_has_line <newline-separated list> <line>: true when one line of the list is
+# exactly <line>. Pure shell on purpose: `printf ... | grep -q` lets grep exit on
+# its first match while printf is still writing, which kills printf with SIGPIPE
+# (fatal under `pipefail`, a "Broken pipe" message where SIGPIPE is ignored).
+LHL_NL='
+'
+list_has_line() {
+    case "${LHL_NL}$1${LHL_NL}" in
+        *"${LHL_NL}$2${LHL_NL}"*) return 0 ;;
+    esac
+    return 1
+}
+
 file_size() { # file_size <file> -> bytes
     fs_bytes="$(wc -c <"$1")" || return 1
     printf '%s' "$fs_bytes" | tr -d '[:space:]'
@@ -271,10 +325,11 @@ cleanup() {
         if [ "$cl_rc" -eq 0 ]; then cl_rc=1; fi
     fi
     if [ "$LOCK_HELD" = "true" ]; then
-        if [ "$cl_rc" -ne 0 ]; then
+        if [ "$cl_rc" -ne 0 ] && [ -n "$GEN_NEW" ]; then
             # A failed run leaves no half-written plaintext dumps or copies behind.
-            rm -rf "$NEW" "$NCSNAP_NEW"
+            rm -rf "$GEN_NEW"
         fi
+        rm -f "${CURRENT_LINK}.new.$$"
         rm -rf "$LOCK_DIR"
     fi
     exit "$cl_rc"
@@ -303,6 +358,103 @@ acquire_lock() {
     fi
     LOCK_HELD=true
     printf '%s\n' "$$" >"${LOCK_DIR}/pid"
+}
+
+# ====================================================================
+# Dump generations
+# ====================================================================
+# current_generation -> name (<epoch>) of the generation `current` points at, or
+# empty when there is no `current`. Call it as  x="$(current_generation)" || exit 1.
+current_generation() {
+    if [ ! -L "$CURRENT_LINK" ]; then
+        [ ! -e "$CURRENT_LINK" ] || err "${CURRENT_LINK} exists but is not a symbolic link: it must be the link backup.sh creates. Move it away and retry. Nothing was backed up."
+        return 0
+    fi
+    cg_target="$(readlink "$CURRENT_LINK")" || err "Cannot read the symbolic link ${CURRENT_LINK}. Nothing was backed up."
+    cg_name="${cg_target#generations/}"
+    case "$cg_name" in
+        '' | *[!0-9]*) err "${CURRENT_LINK} points at '${cg_target}', not at generations/<epoch>. Nothing was backed up." ;;
+    esac
+    [ "$cg_target" = "generations/${cg_name}" ] || err "${CURRENT_LINK} points at '${cg_target}', not at generations/<epoch>. Nothing was backed up."
+    printf '%s' "$cg_name"
+}
+
+# Decide ONCE which dumps this run reads. `current` is resolved here and never
+# again: a dump run that switches it later does not change what this run backs up.
+select_generation() {
+    sg_name="$(current_generation)" || exit 1
+    if [ -n "$sg_name" ]; then
+        GEN_NAME="$sg_name"
+        DUMPS="${GEN_ROOT}/${sg_name}/${DUMPS_NAME}"
+        NCSNAP="${GEN_ROOT}/${sg_name}/${NCSNAP_NAME}"
+        return 0
+    fi
+    GEN_NAME=""
+    DUMPS="$LEGACY_DUMPS"
+    NCSNAP="$LEGACY_NCSNAP"
+    if [ -f "${DUMPS}/MANIFEST" ]; then
+        warn "${CURRENT_LINK} does not exist: reading the dumps of the previous layout (${DUMPS}). The next 'backup.sh --dump-only' on the host writes generations/<epoch> and the 'current' link."
+    fi
+}
+
+# Start a new generation: drop what no reader may still need, then create
+# generations/<epoch>.partial. Needs the run lock.
+prepare_generation() {
+    mkdir -p "$GEN_ROOT"
+    pg_cur="$(current_generation)" || exit 1
+    # Rotation. Kept: the generation `current` points at. Removed: the generation it
+    # replaced one run ago (a reader that started on it has had a whole dump interval
+    # to finish) and whatever a killed run left behind.
+    for pg_dir in "$GEN_ROOT"/*; do
+        if [ ! -e "$pg_dir" ] && [ ! -L "$pg_dir" ]; then continue; fi
+        if [ -n "$pg_cur" ] && [ "$(basename "$pg_dir")" = "$pg_cur" ]; then continue; fi
+        rm -rf "$pg_dir"
+    done
+    rm -f "${CURRENT_LINK}".new.*
+    rm -rf "${LEGACY_DUMPS}.new" "${LEGACY_DUMPS}.old" "${LEGACY_NCSNAP}.new" "${LEGACY_NCSNAP}.old"
+    if [ -n "$pg_cur" ]; then
+        PREV_DUMPS="${GEN_ROOT}/${pg_cur}/${DUMPS_NAME}"
+        PREV_NCSNAP="${GEN_ROOT}/${pg_cur}/${NCSNAP_NAME}"
+        # Upgrade: the fixed-name directories were the "previous generation" for one run.
+        rm -rf "$LEGACY_DUMPS" "$LEGACY_NCSNAP"
+    else
+        PREV_DUMPS="$LEGACY_DUMPS"
+        PREV_NCSNAP="$LEGACY_NCSNAP"
+    fi
+    DUMP_EPOCH="$(date +%s)"
+    # The generation is named after its creation time; never reuse a name.
+    while [ -e "${GEN_ROOT}/${DUMP_EPOCH}" ]; do
+        sleep 1
+        DUMP_EPOCH="$(date +%s)"
+    done
+    GEN_NEW="${GEN_ROOT}/${DUMP_EPOCH}.partial"
+    NEW="${GEN_NEW}/${DUMPS_NAME}"
+    NCSNAP_NEW="${GEN_NEW}/${NCSNAP_NAME}"
+    mkdir -p "$NEW"
+}
+
+# Publish the complete generation: one rename of the directory, then one rename of
+# a new symlink over `current`. A reader sees the old generation or the new one,
+# never a mixture, and database dump and Nextcloud copy can no longer be paired
+# across runs by a crash between two directory swaps.
+publish_generation() {
+    pb_final="${GEN_ROOT}/${DUMP_EPOCH}"
+    mv "$GEN_NEW" "$pb_final"
+    GEN_NEW=""
+    pb_link="${CURRENT_LINK}.new.$$"
+    rm -f "$pb_link"
+    ln -s "generations/${DUMP_EPOCH}" "$pb_link"
+    # mv must replace the link itself, not move into the directory it points at:
+    # -T (GNU coreutils, BusyBox) or -h (BSD).
+    if ! mv -T "$pb_link" "$CURRENT_LINK" 2>/dev/null && ! mv -h "$pb_link" "$CURRENT_LINK" 2>/dev/null; then
+        rm -f "$pb_link"
+        err "Cannot switch ${CURRENT_LINK} to generations/${DUMP_EPOCH} (mv -T / mv -h failed). The previous generation stays published. Nothing was uploaded or pruned."
+    fi
+    pb_now="$(current_generation)" || exit 1
+    [ "$pb_now" = "$DUMP_EPOCH" ] || err "${CURRENT_LINK} points at generation '${pb_now}' after the switch, expected ${DUMP_EPOCH}. Nothing was uploaded or pruned."
+    GEN_NAME="$DUMP_EPOCH"
+    DUMPS="${pb_final}/${DUMPS_NAME}"
+    NCSNAP="${pb_final}/${NCSNAP_NAME}"
 }
 
 # ====================================================================
@@ -355,7 +507,7 @@ volume_root() {
     vr_name="$(conf_name "$1")"
     [ -n "$vr_name" ] || err "Volume key '$1' is not listed in ${VOLUMES_CONF}."
     if [ "$vr_name" = "-" ]; then vr_name="$(project_name)_$1"; fi
-    if ! printf '%s\n' "$VOLUME_LIST" | grep -Fqx -e "$vr_name"; then
+    if ! list_has_line "$VOLUME_LIST" "$vr_name"; then
         return 0
     fi
     vr_mp="$(docker volume inspect --format '{{ .Mountpoint }}' "$vr_name" 2>&1)" \
@@ -370,7 +522,7 @@ volume_root() {
 container_running() {
     cr_list="$(docker ps --format '{{ .Names }}' 2>&1)" \
         || err "docker ps failed (${cr_list}): cannot tell which services are running. Nothing was backed up."
-    printf '%s\n' "$cr_list" | grep -Fqx -e "$1"
+    list_has_line "$cr_list" "$1"
 }
 
 # SQLite databases that live inside a `files` volume:
@@ -546,7 +698,8 @@ nc_maintenance_on() {
 #   rsync    rsync -a --link-dest=<previous snapshot>: unchanged files become hard
 #            links to the PREVIOUS SNAPSHOT (never to the live files), only new and
 #            changed files are copied. One extra copy of the data on disk.
-#   copy     cp -a: a full copy every run; the slowest, same disk usage as rsync.
+#   copy     cp -a: a full copy every run; the slowest. The previous generation is
+#            kept until the next run starts, so two full copies stay on disk.
 # Hard links to the LIVE files (cp -al) are not used: Nextcloud rewrites some files
 # in place, which would change the "snapshot" after the window has closed.
 nc_snapshot_method() { # nc_snapshot_method <volume root> -> reflink | rsync | copy
@@ -572,7 +725,7 @@ nc_snapshot_method() { # nc_snapshot_method <volume root> -> reflink | rsync | c
     fi
     # A full copy needs as much free space as the volume holds. Check before the
     # window opens rather than fill the disk while users are locked out.
-    if [ "$nsm_method" = "copy" ] || { [ "$nsm_method" = "rsync" ] && [ ! -d "${NCSNAP}/volume" ]; }; then
+    if [ "$nsm_method" = "copy" ] || { [ "$nsm_method" = "rsync" ] && [ ! -d "${PREV_NCSNAP}/volume" ]; }; then
         nsm_need="$(du -sk "$1" 2>/dev/null | awk '{ print $1; exit }')"
         nsm_free="$(df -Pk "$DUMP_PARENT" 2>/dev/null | awk 'NR == 2 { print $4 }')"
         case "${nsm_need}:${nsm_free}" in
@@ -601,8 +754,8 @@ nc_snapshot() {
             ns_root="$1"
             set -- -a --numeric-ids \
                 --exclude "/$2" --exclude "/$2-wal" --exclude "/$2-shm" --exclude "/$2-journal"
-            if [ -d "${NCSNAP}/volume" ]; then
-                set -- "$@" --link-dest "${NCSNAP}/volume"
+            if [ -d "${PREV_NCSNAP}/volume" ]; then
+                set -- "$@" --link-dest "${PREV_NCSNAP}/volume"
             fi
             rsync "$@" "${ns_root}/" "${NCSNAP_NEW}/volume/" \
                 || err "Dump of nextcloud failed: rsync of the volume returned an error. Nothing was backed up."
@@ -627,10 +780,13 @@ dump_nextcloud() {
     dn_running=false
     if container_running "$NEXTCLOUD_CONTAINER"; then
         dn_running=true
-        if nc_occ status 2>/dev/null | grep -q 'installed: false'; then
-            manifest_add nextcloud sqlite "" skipped "Nextcloud is not installed yet (occ status)"
-            return 0
-        fi
+        dn_status="$(nc_occ status 2>/dev/null || true)"
+        case "$dn_status" in
+            *'installed: false'*)
+                manifest_add nextcloud sqlite "" skipped "Nextcloud is not installed yet (occ status)"
+                return 0
+                ;;
+        esac
         dn_type="$(nc_setting dbtype)" || exit 1
         dn_name="$(nc_setting dbname)" || exit 1
         dn_dir="$(nc_setting datadirectory)" || exit 1
@@ -742,7 +898,7 @@ dump_gitlab() {
     for dg_file in "${dg_root}/backups"/*_gitlab_backup.tar; do
         [ -f "$dg_file" ] || continue
         dg_base="$(basename "$dg_file")"
-        if ! printf '%s\n' "$dg_before" | grep -Fqx "$dg_base"; then
+        if ! list_has_line "$dg_before" "$dg_base"; then
             dg_new="$dg_base"
         fi
     done
@@ -807,7 +963,7 @@ EOF
 # A backup that silently covers less than the one before is worse than a failed
 # one: monitoring stays green while a service is no longer protected, and the
 # retention policy then prunes the last snapshots that still held it. So compare
-# this run with the previous COMPLETE manifest (the one still in smdc-dumps): a
+# this run with the previous COMPLETE manifest (the published generation's): a
 # dump that was `ok` and is now `skipped`, or a `files` volume that was present and
 # is now absent, stops the run before the old dumps are replaced and before restic
 # is called. BACKUP_ALLOW_COVERAGE_DROP=1 accepts it for one run (a service that was
@@ -823,7 +979,7 @@ coverage_guard() {
         fi
         warn "No database was dumped (every service skipped); accepted by BACKUP_ALLOW_COVERAGE_DROP=1."
     fi
-    cg_prev="${DUMPS}/MANIFEST"
+    cg_prev="${PREV_DUMPS}/MANIFEST"
     if [ ! -f "$cg_prev" ] || ! grep -qx 'status|complete' "$cg_prev"; then
         info "coverage: no previous complete MANIFEST to compare with; this run is the baseline"
         printf 'coverage|full\n' >>"${NEW}/MANIFEST.partial"
@@ -852,7 +1008,7 @@ coverage_guard() {
 }
 
 dump_phase() {
-    log "Phase 1/2: application-consistent dumps into ${DUMPS}"
+    log "Phase 1/2: application-consistent dumps into a new generation under ${GEN_ROOT}"
     # Before anything is written: is the daemon there at all?
     docker_preflight
     # The project-scoped volumes are looked up as <project>_<key>. A project name
@@ -866,9 +1022,7 @@ dump_phase() {
         warn "No volume of the Compose project '${dp_project}' exists; accepted by BACKUP_ALLOW_COVERAGE_DROP=1."
     fi
     acquire_lock
-    rm -rf "$NEW" "$NCSNAP_NEW"
-    mkdir -p "$NEW"
-    DUMP_EPOCH="$(date +%s)"
+    prepare_generation
     {
         printf 'smdc-dump-manifest|2\n'
         printf 'created_epoch|%s\n' "$DUMP_EPOCH"
@@ -896,17 +1050,11 @@ EOF
     # Only a run in which every step succeeded gets a MANIFEST marked complete.
     printf 'status|complete\n' >>"${NEW}/MANIFEST.partial"
     mv "${NEW}/MANIFEST.partial" "${NEW}/MANIFEST"
-    # Swap in the Nextcloud snapshot first, then the dumps. The snapshot carries the
-    # creation time of its MANIFEST (file SNAPSHOT) and check_manifest compares the
-    # two, so a crash between the two swaps cannot pair an old MANIFEST with a new
-    # copy, or the reverse.
-    rm -rf "${NCSNAP}.old" "${DUMPS}.old"
-    if [ -d "$NCSNAP" ]; then mv "$NCSNAP" "${NCSNAP}.old"; fi
-    if [ -d "$NCSNAP_NEW" ]; then mv "$NCSNAP_NEW" "$NCSNAP"; fi
-    if [ -d "$DUMPS" ]; then mv "$DUMPS" "${DUMPS}.old"; fi
-    mv "$NEW" "$DUMPS"
-    rm -rf "${DUMPS}.old" "${NCSNAP}.old"
-    log "Dumps complete: ${DUMPS}/MANIFEST"
+    # Dumps and Nextcloud copy are published together, as one generation. The copy
+    # still carries the creation time of its MANIFEST (file SNAPSHOT) and
+    # check_manifest compares the two.
+    publish_generation
+    log "Dumps complete: ${DUMPS}/MANIFEST (published as ${CURRENT_LINK})"
 }
 
 # ====================================================================
@@ -933,7 +1081,7 @@ verify_file() {
 
 check_manifest() {
     cm_file="${DUMPS}/MANIFEST"
-    [ -f "$cm_file" ] || err "No dump manifest at ${cm_file}. The databases have not been dumped, and a file-level copy of running databases is not a backup. Run 'sh software/backup/backup.sh --dump-only' on the host (cron/systemd timer) before this job. Nothing was backed up."
+    [ -f "$cm_file" ] || err "No dump manifest at ${cm_file}. The databases have not been dumped, and a file-level copy of running databases is not a backup. Run 'sh software/backup/backup.sh --dump-only' on the host (cron/systemd timer). Nothing was backed up."
     grep -qx 'status|complete' "$cm_file" || err "Dump manifest ${cm_file} is not marked complete. Nothing was backed up."
     cm_version="$(sed -n '1s/^smdc-dump-manifest|//p' "$cm_file")"
     case "$cm_version" in
@@ -945,6 +1093,9 @@ check_manifest() {
     case "$cm_created" in
         '' | *[!0-9]*) err "Dump manifest ${cm_file} has no creation time. Nothing was backed up." ;;
     esac
+    if [ -n "$GEN_NAME" ] && [ "$GEN_NAME" != "$cm_created" ]; then
+        err "Dump manifest ${cm_file} says created_epoch ${cm_created}, but it lies in generation ${GEN_NAME}: the generation directory was tampered with. Nothing was backed up."
+    fi
     cm_age=$(($(date +%s) - cm_created))
     if [ "$cm_age" -gt "$MAX_AGE" ]; then
         err "The database dumps are ${cm_age} s old (limit BACKUP_DUMP_MAX_AGE_SECONDS=${MAX_AGE}). The host job 'backup.sh --dump-only' is not running. Nothing was backed up."
@@ -1017,11 +1168,61 @@ check_manifest() {
     awk -F'|' '$1 == "dump" { printf "         %-8s %-28s %s\n", $5, $2, $6 }' "$cm_file"
 }
 
+# "<bytes> <sha256>" of the MANIFEST being read; non-zero when it cannot be read.
+manifest_fingerprint() {
+    [ -f "${DUMPS}/MANIFEST" ] || return 1
+    mfp_size="$(file_size "${DUMPS}/MANIFEST" 2>/dev/null)" || return 1
+    mfp_sum="$(sha256_of "${DUMPS}/MANIFEST" 2>/dev/null)" || return 1
+    printf '%s %s' "$mfp_size" "$mfp_sum"
+}
+
+# Container mode uploads every generation exactly once. The repository is the
+# record: the snapshot of a generation carries the tag <dumps tag>. The state file
+# only saves asking the repository again on every poll.
+# skip_if_uploaded <dumps tag> <created_epoch>: exits 0 when there is nothing to upload.
+skip_if_uploaded() {
+    if [ "$(cat "$UPLOAD_STATE" 2>/dev/null || true)" != "$1" ]; then
+        siu_out="$(restic snapshots --tag "sovereign-snapshot,mode-container,$1" --json 2>/dev/null)" || return 0
+        case "$siu_out" in
+            *'"tree"'*) ;;
+            *) return 0 ;;
+        esac
+        info "Generation ${GEN_NAME:-$2} of the dumps is already in the repository (snapshot tagged $1): not uploaded again."
+        mkdir -p "$(dirname "$UPLOAD_STATE")" 2>/dev/null || true
+        printf '%s\n' "$1" >"$UPLOAD_STATE" 2>/dev/null || true
+    fi
+    siu_age=$(($(date +%s) - $2))
+    if [ "$siu_age" -gt "$MAX_AGE" ]; then
+        err "The newest database dumps are ${siu_age} s old (limit BACKUP_DUMP_MAX_AGE_SECONDS=${MAX_AGE}) and are already in the repository. The host job 'backup.sh --dump-only' is not running: there is nothing new to back up."
+    fi
+    exit 0
+}
+
 files_phase() {
+    if [ -z "$DUMPS" ]; then select_generation; fi
+    fp_no_dumps="No dump manifest at ${DUMPS}/MANIFEST. The databases have not been dumped, and a file-level copy of running databases is not a backup. Run 'sh software/backup/backup.sh --dump-only' on the host (cron/systemd timer). Nothing was backed up."
+    fp_before="$(manifest_fingerprint)" || err "$fp_no_dumps"
+    fp_epoch="$(sed -n 's/^created_epoch|//p' "${DUMPS}/MANIFEST" | head -n 1)"
+    case "$fp_epoch" in
+        '' | *[!0-9]*) err "Dump manifest ${DUMPS}/MANIFEST has no creation time. Nothing was backed up." ;;
+    esac
+    # Identifies this generation in the repository: creation time + MANIFEST digest.
+    fp_dumps_tag="dumps-${fp_epoch}-$(printf '%s' "${fp_before#* }" | cut -c1-16)"
+    if [ "$MODE" = "container" ]; then
+        skip_if_uploaded "$fp_dumps_tag" "$fp_epoch"
+    fi
+
     log "Phase 2/2: restic backup (dumps + configuration + static volume files)"
     check_manifest
+    # What was verified is what was fingerprinted (and tagged) above.
+    fp_checked="$(manifest_fingerprint)" || err "Dump manifest ${DUMPS}/MANIFEST disappeared while it was being verified (the generation was rotated away). Nothing was backed up."
+    [ "$fp_checked" = "$fp_before" ] || err "Dump manifest ${DUMPS}/MANIFEST changed while it was being verified. Nothing was backed up."
 
-    TAG="sovereign-automated-$(date +%Y%m%d_%H%M%S)"
+    # Unique per run (time + process id): the snapshot is found again by this tag below.
+    TAG="sovereign-automated-$(date +%Y%m%d_%H%M%S)-$$"
+    # The generation tag is NOT set here: `restic backup` also writes a snapshot when
+    # it exits 3 (some files could not be read), and that one must not count as "this
+    # generation is in the repository". It is added below, once the run is known good.
     set -- backup --tag "sovereign-snapshot" --tag "$TAG" --tag "mode-${MODE}" \
         --exclude "__pycache__"
 
@@ -1082,9 +1283,37 @@ EOF
         restic init
     fi
 
+    # The dump directory is a new path in every generation, so restic's own choice
+    # of a parent snapshot (same host, same paths) finds none and would read every
+    # static volume file again. Name the newest snapshot of this mode as the parent
+    # (best effort: without one the run is only slower).
+    fp_parent="$(restic snapshots --tag "sovereign-snapshot,mode-${MODE}" --json 2>/dev/null \
+        | tr ',' '\n' | sed -n 's/.*"short_id":[[:space:]]*"\([0-9a-f]*\)".*/\1/p' | tail -n 1)" || fp_parent=""
+    if [ -n "$fp_parent" ]; then
+        set -- "$@" --parent "$fp_parent"
+    fi
+
     # A non-zero exit (including 3: some files could not be read) fails the run,
     # and with it everything below: retention never runs after a failed backup.
     restic "$@"
+
+    # The MANIFEST restic just read must still be the one verified above. In the
+    # generation layout it can only have vanished (this run outlived the rotation of
+    # its generation); in the previous fixed-name layout a concurrent dump run can
+    # have swapped the directory. Either way the new snapshot may pair a MANIFEST
+    # with dump files of another run: fail, and do not prune.
+    fp_after="$(manifest_fingerprint)" || fp_after="unreadable"
+    if [ "$fp_after" != "$fp_before" ]; then
+        err "The dump manifest ${DUMPS}/MANIFEST changed or disappeared while restic was reading the dumps (verified: ${fp_before}; now: ${fp_after}). The snapshot tagged ${TAG} may hold a MANIFEST and dump files from different runs: do not rely on it ('restore.sh --verify' tells). Nothing was pruned; the next pass backs up the current generation."
+    fi
+    # Complete and consistent: mark the snapshot as the upload of this generation.
+    restic tag --tag "${TAG},mode-${MODE}" --add "$fp_dumps_tag" >/dev/null \
+        || err "The snapshot tagged ${TAG} was written, but tagging it ${fp_dumps_tag} failed: the repository does not record this generation as uploaded, and the next pass uploads it again. Nothing was pruned."
+    if [ "$MODE" = "container" ]; then
+        mkdir -p "$(dirname "$UPLOAD_STATE")" 2>/dev/null || true
+        printf '%s\n' "$fp_dumps_tag" >"$UPLOAD_STATE" 2>/dev/null \
+            || warn "Cannot write ${UPLOAD_STATE}; the repository is asked again on the next pass."
+    fi
 
     # -- Retention Policy (7 daily, 4 weekly, 12 monthly, 1 yearly) ----
     if [ -n "$CM_COVERAGE_REDUCED" ]; then
@@ -1093,8 +1322,12 @@ EOF
         warn "Retention NOT applied: this snapshot covers less than the previous one (${CM_COVERAGE_REDUCED}). Older snapshots are kept; pruning resumes with the next run whose coverage is not reduced."
     else
         log "Applying snapshot retention policy..."
+        # --group-by host: the dump directory is a different path in every snapshot,
+        # and grouping by path (restic's default) would put each snapshot in a group
+        # of its own, in which nothing is ever removed.
         restic forget \
             --tag "sovereign-snapshot" \
+            --group-by host \
             --keep-daily 7 \
             --keep-weekly 4 \
             --keep-monthly 12 \

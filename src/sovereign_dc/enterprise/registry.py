@@ -6,6 +6,7 @@ manifest scaffolding for enterprise application onboarding.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -13,8 +14,14 @@ import shlex
 import shutil
 import tempfile
 import time
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
+
+try:  # POSIX advisory locks; absent on Windows (see ``EnterpriseRegistry._exclusive_lock``).
+    import fcntl
+except ImportError:  # pragma: no cover - exercised by patching ``fcntl`` to None
+    fcntl = None  # type: ignore[assignment]
 
 from sovereign_dc.enterprise.schema import (
     AppCategory,
@@ -38,9 +45,25 @@ DEFAULT_APP_DIRECTORIES: list[Path] = [
     Path("./software/enterprise/apps"),
 ]
 
+# Fallback lock (platforms without ``fcntl``): how long to wait for the exclusive lock file,
+# and the age after which a lock file is taken to be left over from a crashed writer.
+LOCK_TIMEOUT_SECONDS = 30.0
+LOCK_STALE_SECONDS = 60.0
+LOCK_POLL_SECONDS = 0.05
+
+_SET = "set"
+_DELETE = "delete"
+
 
 class EnterpriseRegistry:
-    """Registry managing discovered and installed enterprise applications."""
+    """Registry managing discovered and installed enterprise applications.
+
+    The registry file is shared by every ``smdc`` process on the node. A mutation is
+    therefore never written from this instance's earlier view of the file: ``save_registry``
+    takes an exclusive inter-process lock, reloads the file, applies only this instance's
+    own pending changes (registrations / removals made since its last save) and replaces the
+    file atomically. Two overlapping ``smdc app register`` runs both end up in the file.
+    """
 
     def __init__(self, registry_file: Path | None = None) -> None:
         self.registry_file = registry_file or (Path.home() / ".smdc" / "enterprise_registry.json")
@@ -52,6 +75,14 @@ class EnterpriseRegistry:
         # Set when the registry file is unreadable AND could not be backed up: saving is
         # then refused so the only copy of the operator's data is never overwritten.
         self._save_blocked = False
+        # Changes made through this instance that are not in the file yet, in order:
+        # (_SET, app_id, manifest, manifest_path | None) or (_DELETE, app_id, None, None).
+        self._pending: list[tuple[str, str, AppManifest | None, Path | None]] = []
+        # (mtime_ns, size) and backup path of the unparseable file already copied aside, so
+        # re-reading the same broken file (every save reloads) does not copy it again.
+        self._corrupt_backup: tuple[tuple[int, int], Path] | None = None
+        # Why the most recent save_registry() call failed; None after a successful one.
+        self.last_save_error: str | None = None
         self.load_registry()
 
     def _backup_unreadable_registry(self) -> Path | None:
@@ -68,22 +99,88 @@ class EnterpriseRegistry:
             logger.error("Could not back up unreadable registry %s: %s", self.registry_file, e)
             return None
 
-    def load_registry(self) -> None:
-        """Load registered apps from registry JSON cache if present.
+    @contextlib.contextmanager
+    def _exclusive_lock(self) -> Iterator[None]:
+        """Holds the registry's inter-process write lock for the duration of the block.
 
-        Entries are parsed independently: a corrupt entry is skipped (and preserved for the
-        next save) without affecting the others. A file that cannot be parsed at all is
-        copied to ``<name>.corrupt-<timestamp>`` before any later save may replace it.
+        POSIX: ``flock(LOCK_EX)`` on ``<registry>.lock`` (released by the kernel if the
+        holder dies; the lock file itself is left in place on purpose, removing it would let
+        two writers lock different inodes). Without ``fcntl``: an ``O_EXCL`` lock file
+        ``<registry>.lock.excl`` that is removed on release; one older than
+        ``LOCK_STALE_SECONDS`` is taken over, and waiting longer than
+        ``LOCK_TIMEOUT_SECONDS`` raises ``TimeoutError``.
         """
-        if not self.registry_file.exists():
+        self.registry_file.parent.mkdir(parents=True, exist_ok=True)
+        lock_path = self.registry_file.with_name(f"{self.registry_file.name}.lock")
+        if fcntl is not None:
+            fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX)
+                try:
+                    yield
+                finally:
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+            finally:
+                os.close(fd)
             return
+
+        excl_path = lock_path.with_name(f"{lock_path.name}.excl")
+        deadline = time.monotonic() + LOCK_TIMEOUT_SECONDS
+        while True:
+            try:
+                fd = os.open(excl_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                break
+            except FileExistsError:
+                try:
+                    age = time.time() - excl_path.stat().st_mtime
+                except OSError:
+                    continue  # released between the two calls: try again at once
+                if age >= LOCK_STALE_SECONDS:
+                    logger.warning("Removing stale registry lock %s (%.0f s old)", excl_path, age)
+                    with contextlib.suppress(OSError):
+                        excl_path.unlink()
+                    continue
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(f"registry lock {excl_path} is held by another process") from None
+                time.sleep(LOCK_POLL_SECONDS)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(str(os.getpid()))
+            yield
+        finally:
+            with contextlib.suppress(OSError):
+                excl_path.unlink()
+
+    def _read_registry_file(self) -> tuple[dict[str, AppManifest], dict[str, Path], list[Any]] | None:
+        """Parses the registry file into (apps, manifest paths, unparsed entries).
+
+        A missing file is an empty registry. Returns None if the file cannot be parsed at
+        all; it is then copied to ``<name>.corrupt-<timestamp>`` and ``_save_blocked`` says
+        whether that backup failed.
+        """
+        apps: dict[str, AppManifest] = {}
+        paths: dict[str, Path] = {}
+        unparsed: list[Any] = []
+        if not self.registry_file.exists():
+            self._save_blocked = False
+            return apps, paths, unparsed
         try:
             with open(self.registry_file, encoding="utf-8") as f:
                 data = json.load(f)
             if not isinstance(data, dict) or not isinstance(data.get("apps", []), list):
                 raise ValueError("registry root must be an object with an 'apps' list")
         except Exception as e:
-            backup = self._backup_unreadable_registry()
+            backup: Path | None = None
+            signature: tuple[int, int] | None = None
+            with contextlib.suppress(OSError):
+                st = self.registry_file.stat()
+                signature = (st.st_mtime_ns, st.st_size)
+            known = self._corrupt_backup
+            if known is not None and signature == known[0] and known[1].exists():
+                backup = known[1]
+            else:
+                backup = self._backup_unreadable_registry()
+                self._corrupt_backup = (signature, backup) if backup is not None and signature is not None else None
             self._save_blocked = backup is None
             logger.error(
                 "Registry cache %s is unreadable (%s); %s",
@@ -91,7 +188,8 @@ class EnterpriseRegistry:
                 e,
                 f"original preserved at {backup}" if backup else "saving is disabled to protect it",
             )
-            return
+            return None
+        self._save_blocked = False
 
         for index, app_data in enumerate(data.get("apps", [])):
             try:
@@ -100,55 +198,92 @@ class EnterpriseRegistry:
                 manifest = AppManifest.from_dict(app_data)
                 if not isinstance(manifest.app_id, str) or not manifest.app_id:
                     raise ValueError("entry has no app_id")
-                self._apps[manifest.app_id] = manifest
+                apps[manifest.app_id] = manifest
                 manifest_path = app_data.get("manifest_path")
                 if isinstance(manifest_path, str) and os.path.exists(manifest_path):
-                    self._app_paths[manifest.app_id] = Path(manifest_path)
+                    paths[manifest.app_id] = Path(manifest_path)
             except Exception as e:
-                self._unparsed_entries.append(app_data)
+                unparsed.append(app_data)
                 logger.warning(
                     "Skipping corrupt entry #%d in registry cache %s: %s (entry preserved)",
                     index,
                     self.registry_file,
                     e,
                 )
+        return apps, paths, unparsed
+
+    def _apply_pending(self) -> None:
+        """Replays this instance's unsaved changes on top of ``_apps`` / ``_app_paths``."""
+        for op, app_id, manifest, manifest_path in self._pending:
+            if op == _SET and manifest is not None:
+                self._apps[app_id] = manifest
+                if manifest_path is not None:
+                    self._app_paths[app_id] = manifest_path
+            elif op == _DELETE:
+                self._apps.pop(app_id, None)
+                self._app_paths.pop(app_id, None)
+
+    def load_registry(self) -> None:
+        """Replaces this instance's view with the registry file plus its own unsaved changes.
+
+        Entries are parsed independently: a corrupt entry is skipped (and preserved for the
+        next save) without affecting the others. A file that cannot be parsed at all is
+        copied to ``<name>.corrupt-<timestamp>`` before any later save may replace it; the
+        instance then keeps the view it had (empty for a new instance).
+        """
+        loaded = self._read_registry_file()
+        if loaded is None:
+            return
+        self._apps, self._app_paths, self._unparsed_entries = loaded
+        self._apply_pending()
         logger.debug("Loaded %d apps from registry cache %s", len(self._apps), self.registry_file)
 
-    def save_registry(self) -> None:
-        """Persist registered apps to registry JSON file (atomic replace)."""
-        if self._save_blocked:
-            logger.error(
-                "Not saving registry: %s failed to parse and could not be backed up; "
-                "repair or move the file, then reload",
-                self.registry_file,
-            )
-            return
+    def save_registry(self) -> bool:
+        """Merges this instance's unsaved changes into the registry file (atomic replace).
+
+        Read-modify-write under the exclusive inter-process lock: the file is reloaded, the
+        pending changes are applied to that current state and the result replaces the file,
+        so registrations saved by other processes in the meantime are kept. Returns True if
+        the file was written. On failure the changes stay pending for the next save and
+        ``last_save_error`` says why (lock timeout, unwritable directory, unreadable file).
+        """
         tmp_name: str | None = None
+        self.last_save_error = None
         try:
-            self.registry_file.parent.mkdir(parents=True, exist_ok=True)
-            apps_payload: list[Any] = []
-            for app_id, manifest in self._apps.items():
-                app_dict = manifest.to_dict()
-                if app_id in self._app_paths:
-                    app_dict["manifest_path"] = str(self._app_paths[app_id])
-                apps_payload.append(app_dict)
-            apps_payload.extend(self._unparsed_entries)
-            fd, tmp_name = tempfile.mkstemp(
-                prefix=f".{self.registry_file.name}.", suffix=".tmp", dir=self.registry_file.parent
-            )
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                json.dump({"version": "1.0.0", "apps": apps_payload}, f, indent=2)
-            os.replace(tmp_name, self.registry_file)
-            tmp_name = None
+            with self._exclusive_lock():
+                self.load_registry()
+                if self._save_blocked:
+                    self.last_save_error = (
+                        f"registry file {self.registry_file} failed to parse and could not be backed up; "
+                        "repair or move the file, then retry"
+                    )
+                    logger.error("Not saving registry: %s", self.last_save_error)
+                    return False
+                apps_payload: list[Any] = []
+                for app_id, manifest in self._apps.items():
+                    app_dict = manifest.to_dict()
+                    if app_id in self._app_paths:
+                        app_dict["manifest_path"] = str(self._app_paths[app_id])
+                    apps_payload.append(app_dict)
+                apps_payload.extend(self._unparsed_entries)
+                fd, tmp_name = tempfile.mkstemp(
+                    prefix=f".{self.registry_file.name}.", suffix=".tmp", dir=self.registry_file.parent
+                )
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    json.dump({"version": "1.0.0", "apps": apps_payload}, f, indent=2)
+                os.replace(tmp_name, self.registry_file)
+                tmp_name = None
+                self._pending.clear()
             logger.debug("Saved %d apps to %s", len(self._apps), self.registry_file)
+            return True
         except Exception as e:
+            self.last_save_error = f"registry file {self.registry_file} could not be written: {e or type(e).__name__}"
             logger.error("Failed to save registry cache %s: %s", self.registry_file, e)
+            return False
         finally:
             if tmp_name is not None:
-                try:
+                with contextlib.suppress(OSError):
                     os.unlink(tmp_name)
-                except OSError:
-                    pass
 
     def discover_apps(self, search_dirs: list[Path] | None = None) -> list[AppManifest]:
         """Scan directories for `smdc-app.yaml` / `smdc-app.json` manifests.
@@ -199,27 +334,80 @@ class EnterpriseRegistry:
     def register_app(
         self, manifest: AppManifest, manifest_path: Path | str | None = None, persist: bool = True
     ) -> tuple[bool, list[str]]:
-        """Register an enterprise application in the local registry."""
+        """Register an enterprise application in the local registry.
+
+        With ``persist`` the registration only succeeds if the registry file was written: when
+        the save fails (lock timeout, unwritable directory, unreadable file) the registration
+        is taken back from this instance as well and ``(False, [<reason>])`` is returned, so
+        a caller is never told "registered" about an app that no other process can see.
+        """
         errors = manifest.validate()
         if errors:
             return False, errors
 
-        self._apps[manifest.app_id] = manifest
-        if manifest_path:
-            self._app_paths[manifest.app_id] = Path(manifest_path)
+        path = Path(manifest_path) if manifest_path else None
+        app_id = manifest.app_id
+        had_app, previous_app = app_id in self._apps, self._apps.get(app_id)
+        had_path, previous_path = app_id in self._app_paths, self._app_paths.get(app_id)
+        entry = (_SET, app_id, manifest, path)
+        self._pending.append(entry)
+        self._apps[app_id] = manifest
+        if path is not None:
+            self._app_paths[app_id] = path
 
-        if persist:
-            self.save_registry()
-        logger.info("Registered enterprise application '%s' (%s)", manifest.name, manifest.app_id)
+        if persist and not self.save_registry():
+            reason = self.last_save_error or f"registry file {self.registry_file} could not be written"
+            self._discard_pending(entry)
+            self._restore_entry(app_id, had_app, previous_app, had_path, previous_path)
+            logger.error("Not registering '%s': %s", app_id, reason)
+            return False, [f"registration was not saved: {reason}"]
+        logger.info("Registered enterprise application '%s' (%s)", manifest.name, app_id)
         return True, []
 
+    def _discard_pending(self, entry: tuple[str, str, AppManifest | None, Path | None]) -> None:
+        """Drops one unsaved change (by identity) from the pending list."""
+        self._pending = [item for item in self._pending if item is not entry]
+
+    def _restore_entry(
+        self,
+        app_id: str,
+        had_app: bool,
+        previous_app: AppManifest | None,
+        had_path: bool,
+        previous_path: Path | None,
+    ) -> None:
+        """Puts this instance's view of one app back to what it was before a failed change."""
+        if had_app and previous_app is not None:
+            self._apps[app_id] = previous_app
+        else:
+            self._apps.pop(app_id, None)
+        if had_path and previous_path is not None:
+            self._app_paths[app_id] = previous_path
+        else:
+            self._app_paths.pop(app_id, None)
+
     def unregister_app(self, app_id: str, persist: bool = True) -> bool:
-        """Unregister an application from the registry."""
+        """Unregister an application from the registry.
+
+        The registry file is re-read first, so an app registered by another process since
+        this instance loaded can be removed, and one already removed there reports False.
+        With ``persist``, a removal that could not be saved is taken back and reports False
+        too; ``last_save_error`` then holds the reason (it is None for "not registered").
+        """
+        self.last_save_error = None
+        self.load_registry()
         if app_id in self._apps:
+            previous_app = self._apps[app_id]
+            had_path, previous_path = app_id in self._app_paths, self._app_paths.get(app_id)
+            entry: tuple[str, str, AppManifest | None, Path | None] = (_DELETE, app_id, None, None)
+            self._pending.append(entry)
             del self._apps[app_id]
             self._app_paths.pop(app_id, None)
-            if persist:
-                self.save_registry()
+            if persist and not self.save_registry():
+                self._discard_pending(entry)
+                self._restore_entry(app_id, True, previous_app, had_path, previous_path)
+                logger.error("Not unregistering '%s': %s", app_id, self.last_save_error)
+                return False
             logger.info("Unregistered enterprise app %s", app_id)
             return True
         return False

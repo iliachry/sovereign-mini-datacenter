@@ -10,6 +10,13 @@
 # service therefore means: put the static files back, then LOAD its dump with
 # the database's own tool. `plan` prints those steps for a restored snapshot.
 #
+# Where the two directories sit inside a snapshot: backup.sh writes every dump
+# run into its own generation, so they are found under
+# .../generations/<created_epoch>/ (one generation per snapshot; a snapshot of a
+# run that completed carries the tag dumps-<created_epoch>-<MANIFEST digest>). Snapshots taken by an
+# earlier backup.sh hold them directly under the dump directory. Both are found
+# by name.
+#
 # This script never talks to Docker and never writes into a live volume: it
 # extracts into a directory you name (or a temporary one for --verify).
 # ====================================================================
@@ -99,11 +106,49 @@ prepare_target() {
     fi
 }
 
+# This script runs under `set -o pipefail`, so no pipeline may end in a reader
+# that stops early (`grep -q`, `head`): the writer is then killed by SIGPIPE and
+# the pipeline fails although the reader succeeded. Readers here take a file or
+# a here-string, or read their input to the end (`sed -n 1p`, `grep -c`, awk END).
+
+# manifest_value <key> <manifest>: value of the first `<key>|<value>` record.
+manifest_value() {
+    sed -n "/^$1|/{s/^$1|//p;q;}" "$2"
+}
+
+# Generation (<created_epoch>) an smdc-dumps directory lies in, or empty for a
+# snapshot of the earlier fixed-name layout.
+dump_generation() {
+    local parent grand
+    parent="$(dirname "$1")"
+    grand="$(dirname "$parent")"
+    if [[ "$(basename "$grand")" == "generations" && "$(basename "$parent")" =~ ^[0-9]+$ ]]; then
+        basename "$parent"
+    fi
+}
+
+# check_generation <dumps dir> <manifest>: prints the layout; non-zero when the
+# generation directory and the MANIFEST inside it are not from the same dump run.
+check_generation() {
+    local generation created
+    generation="$(dump_generation "$1")"
+    created="$(manifest_value created_epoch "$2")"
+    if [[ -z "$generation" ]]; then
+        info "dump layout: fixed-name directory (snapshot taken before dump generations were introduced)"
+        return 0
+    fi
+    if [[ "$generation" != "$created" ]]; then
+        info "dump generation ${generation}, but its MANIFEST says created_epoch ${created:-<none>}"
+        return 1
+    fi
+    info "dump generation: ${generation} (matches the MANIFEST's created_epoch)"
+}
+
 # Path of the one smdc-dumps directory inside an extracted snapshot.
 find_dumps() {
     local target="$1" found count
     found="$(find "$target" -type f -name MANIFEST -path '*/smdc-dumps/MANIFEST' 2>/dev/null || true)"
-    count="$(printf '%s' "$found" | grep -c . || true)"
+    count="$(grep -c . <<<"$found" || true)"
     if [[ "$count" -ne 1 ]]; then
         err "Expected exactly one smdc-dumps/MANIFEST under ${target}, found ${count}. This snapshot holds no database dumps (taken by an older backup.sh?) and cannot restore any database."
     fi
@@ -128,7 +173,7 @@ verify_pgdump() {
         return 1
     }
     toc="$(pg_restore --list "$file" 2>&1)" || { info "    pg_restore --list: ${toc}"; return 1; }
-    entries="$(printf '%s\n' "$toc" | grep -c 'TABLE DATA' || true)"
+    entries="$(grep -c 'TABLE DATA' <<<"$toc" || true)"
     [[ "$entries" -gt 0 ]] || { info "    archive lists no TABLE DATA entries"; return 1; }
     info "    pg_restore --list ok, ${entries} table data entries"
 }
@@ -137,10 +182,13 @@ verify_gitlab() {
     local file="$1" listing
     [[ -s "$file" ]] || { info "    archive missing or empty"; return 1; }
     listing="$(tar -tf "$file" 2>&1)" || { info "    tar: cannot list the archive"; return 1; }
-    printf '%s\n' "$listing" | grep -Eq '(^|/)backup_information\.yml$' || { info "    no backup_information.yml in the archive"; return 1; }
-    printf '%s\n' "$listing" | grep -Eq '(^|/)db/database\.sql\.gz$' || { info "    no db/database.sql.gz in the archive"; return 1; }
+    # Here-strings, not `printf ... | grep -q`: a GitLab archive lists thousands of
+    # members, and grep -q leaving at its first match would SIGPIPE the writer and
+    # (pipefail) turn a found member into "not in the archive".
+    grep -Eq '(^|/)backup_information\.yml$' <<<"$listing" || { info "    no backup_information.yml in the archive"; return 1; }
     local member
-    member="$(printf '%s\n' "$listing" | grep -E '(^|/)db/database\.sql\.gz$' | head -n 1)"
+    member="$(awk '/(^|\/)db\/database\.sql\.gz$/ { print; exit }' <<<"$listing")"
+    [[ -n "$member" ]] || { info "    no db/database.sql.gz in the archive"; return 1; }
     tar -xOf "$file" "$member" | gzip -t || { info "    db/database.sql.gz is not a valid gzip stream"; return 1; }
     info "    archive lists, database dump is a valid gzip stream"
 }
@@ -190,7 +238,8 @@ verify_dumps() {
     dumps="$(find_dumps "$tmp")"
     manifest="${dumps}/MANIFEST"
     grep -qx 'status|complete' "$manifest" || err "MANIFEST is not marked complete: this snapshot does not hold a complete set of dumps."
-    info "dumps created: $(sed -n 's/^created|//p' "$manifest" | head -n 1)"
+    info "dumps created: $(manifest_value created "$manifest")"
+    check_generation "$dumps" "$manifest" || err "The generation directory in this snapshot does not belong to its MANIFEST: the dumps were not taken from one published generation. This snapshot cannot be trusted to restore any database."
     version="$(sed -n '1s/^smdc-dump-manifest|//p' "$manifest")"
     case "$version" in
         1) warn "MANIFEST format 1 (written by an older backup.sh): it records no sizes or SHA-256 digests, so only loadability is checked." ;;
@@ -198,7 +247,7 @@ verify_dumps() {
         *) err "MANIFEST has an unknown format ('${version}'): use the restore.sh that belongs to the backup.sh that wrote it (it is in the snapshot's configuration directory)." ;;
     esac
     if grep -q '^coverage|reduced|' "$manifest"; then
-        warn "This snapshot was taken with BACKUP_ALLOW_COVERAGE_DROP=1 and covers less than the one before it: $(sed -n 's/^coverage|reduced|//p' "$manifest" | head -n 1)"
+        warn "This snapshot was taken with BACKUP_ALLOW_COVERAGE_DROP=1 and covers less than the one before it: $(manifest_value 'coverage|reduced' "$manifest")"
     fi
 
     local gitlab_tar
@@ -217,7 +266,7 @@ verify_dumps() {
                     if verify_recorded "${dumps}/${ra}" "$rb" "$rc"; then info "OK       ${ra}"; else info "FAILED   ${ra}"; failed=$((failed + 1)); fi
                     ;;
                 extfile)
-                    rfile="$(find "$tmp" -type f -name "$(basename "$rb")" | head -n 1)"
+                    rfile="$(find "$tmp" -type f -name "$(basename "$rb")" | sed -n '1p')"
                     if [[ -n "$rfile" ]] && verify_recorded "$rfile" "$rc" "$rd"; then info "OK       ${rb} (volume ${ra})"; else info "FAILED   ${rb} (volume ${ra})"; failed=$((failed + 1)); fi
                     ;;
             esac
@@ -244,7 +293,7 @@ verify_dumps() {
                 if verify_pgdump "$file"; then info "OK       ${name} (pg_dump custom format)"; else info "FAILED   ${name} (pg_dump)"; failed=$((failed + 1)); fi
                 ;;
             gitlab)
-                file="$(find "$tmp" -type f -name "$path" | head -n 1)"
+                file="$(find "$tmp" -type f -name "$path" | sed -n '1p')"
                 if [[ -n "$file" ]] && verify_gitlab "$file"; then info "OK       ${name} (gitlab-backup archive)"; else info "FAILED   ${name} (gitlab-backup archive ${path})"; failed=$((failed + 1)); fi
                 ;;
             files)
@@ -283,16 +332,17 @@ plan() {
     dumps="$(find_dumps "$target")"
     manifest="${dumps}/MANIFEST"
     local config
-    config="$(find "$target" -type f -name docker-compose.attach.yml 2>/dev/null | head -n 1)"
+    config="$(find "$target" -type f -name docker-compose.attach.yml 2>/dev/null | sed -n '1p' || true)"
     config="${config%/docker-compose.attach.yml}"
 
     cat <<EOF
 
 Restore plan for ${target}
-  dumps          ${dumps}  (created $(sed -n 's/^created|//p' "$manifest" | head -n 1))
+  dumps          ${dumps}  (created $(manifest_value created "$manifest"))
+  generation     $(check_generation "$dumps" "$manifest" | sed 's/^ *//' || true)
   configuration  ${config:-<not found in this snapshot>}  (compose files, overlays, provisioning, .env)
   volume files   under ${target}: .../<project>_<volume>/_data (host-mode snapshot) or /data/<volume> (container-mode snapshot)
-  nextcloud      $(sed -n 's/^nextcloud_mode|//p' "$manifest" | head -n 1 | sed -e 's/^maintenance$/maintenance mode: database dump and file copy (smdc-nextcloud-files) are from the same window/' -e 's/^online$/online: the files were walked live after the database dump and may not match it/' -e 's/^$/older backup.sh: the files were walked live after the database dump and may not match it/')
+  nextcloud      $(manifest_value nextcloud_mode "$manifest" | sed -e 's/^maintenance$/maintenance mode: database dump and file copy (smdc-nextcloud-files) are from the same window/' -e 's/^online$/online: the files were walked live after the database dump and may not match it/' -e 's/^$/older backup.sh: the files were walked live after the database dump and may not match it/')
 
 Order on a fresh node:
   1. Copy the configuration directory back as software/ (it contains .env: keep it mode 0600).

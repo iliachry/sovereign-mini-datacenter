@@ -25,10 +25,23 @@
 # socket, which is root on the host; a network-attached backup container does not
 # get it. The dumps come from the host:
 #   sudo sh software/backup/backup.sh --dump-only      # cron / systemd timer
-# If the dump MANIFEST is missing, incomplete, older than
-# BACKUP_DUMP_MAX_AGE_SECONDS, or names a dump file that is missing or does not have
-# the recorded size and SHA-256, backup.sh exits non-zero, nothing is uploaded and
-# the container turns unhealthy. See backup/README.md.
+#
+# SCHEDULE: there is none to align. The host job decides when a backup happens; it
+# publishes each complete set of dumps as a new generation
+# (BACKUP_DUMP_DIR/generations/<epoch>) by switching the symlink BACKUP_DUMP_DIR/current
+# with one rename. This container looks at that link every BACKUP_POLL_SECONDS and
+# uploads every generation exactly once (the snapshot is tagged with the generation,
+# so a re-created container asks the repository instead of uploading it again). It
+# resolves the link once per pass and reads only that directory, and the host keeps
+# the previous generation until its next run, so a dump job that runs while restic
+# is reading cannot produce a snapshot whose MANIFEST and dump files come from
+# different runs. The dump directory is mounted read-only: no lock is needed or taken.
+#
+# A pass fails (backup.sh exits non-zero, nothing is pruned, the container turns
+# unhealthy) when the dump MANIFEST is missing, incomplete, older than
+# BACKUP_DUMP_MAX_AGE_SECONDS, names a dump file that is missing or does not have the
+# recorded size and SHA-256, or is no longer the verified one after `restic backup`.
+# See backup/README.md.
 networks:
   sovereign_net:
 
@@ -40,18 +53,29 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
-        echo "Starting Sovereign Restic Backup Daemon (interval: $${BACKUP_INTERVAL_SECONDS}s)..."
+        case "$${BACKUP_POLL_SECONDS}" in
+          "" | 0 | *[!0-9]*)
+            echo "[WARN] BACKUP_POLL_SECONDS='$${BACKUP_POLL_SECONDS}' is not a positive whole number of seconds; using 300"
+            BACKUP_POLL_SECONDS=300
+            ;;
+        esac
+        echo "Starting Sovereign Restic Backup Daemon (looking for a new dump generation every $${BACKUP_POLL_SECONDS}s)..."
         while true; do
+          # One pass: uploads the current generation if the repository does not hold it
+          # yet. Exit 0 = it is in the repository and its dumps are fresh.
           if sh /config/backup/backup.sh; then
-            date +%s > /tmp/backup.ok
+            echo "ok $$(date +%s)" > /tmp/backup.status
           else
-            echo "[ERROR] Backup run failed: NO snapshot was taken; retrying after $${BACKUP_INTERVAL_SECONDS}s"
+            echo "failed $$(date +%s)" > /tmp/backup.status
+            echo "[ERROR] Backup pass failed (see above); next attempt in $${BACKUP_POLL_SECONDS}s"
           fi
-          sleep "$${BACKUP_INTERVAL_SECONDS}"
+          sleep "$${BACKUP_POLL_SECONDS}"
         done
     environment:
       - BACKUP_MODE=container
-      - BACKUP_INTERVAL_SECONDS=${BACKUP_INTERVAL_SECONDS:-86400}
+      # Seconds between looks at BACKUP_DUMP_DIR/current. This is not the backup
+      # interval: that is the schedule of the host's `backup.sh --dump-only` job.
+      - BACKUP_POLL_SECONDS=${BACKUP_POLL_SECONDS:-300}
       - BACKUP_DUMP_MAX_AGE_SECONDS=${BACKUP_DUMP_MAX_AGE_SECONDS:-93600}
       # Local repositories must live under /var/backups/sovereign (the
       # backup_storage volume) to survive container re-creation.
@@ -61,11 +85,13 @@ services:
       - AWS_SECRET_ACCESS_KEY=${RESTIC_S3_SECRET:-}
       - RESTIC_COMPRESSION=auto
     healthcheck:
-      # Healthy only while the last successful run is recent. A daemon whose runs
-      # keep failing (stale dumps, unreachable repository) shows as unhealthy.
+      # Healthy only while the last finished pass succeeded (the current generation is
+      # in the repository and its dumps are no older than BACKUP_DUMP_MAX_AGE_SECONDS)
+      # and the loop is alive: a pass has finished within twice that age plus one
+      # hour (an upload in progress keeps the result of the pass before it).
       test:
         - CMD-SHELL
-        - '[ -f /tmp/backup.ok ] && [ $$(( $$(date +%s) - $$(cat /tmp/backup.ok) )) -lt $$(( BACKUP_INTERVAL_SECONDS * 2 + 3600 )) ]'
+        - 'read -r result at < /tmp/backup.status && [ "$$result" = ok ] && [ $$(( $$(date +%s) - at )) -lt $$(( BACKUP_DUMP_MAX_AGE_SECONDS * 2 + 3600 )) ]'
       interval: 5m
       timeout: 10s
       retries: 1
@@ -76,8 +102,10 @@ services:
       # .env holds the stack's secrets; it is needed to rebuild the node and goes
       # into the encrypted repository only.
       - .:/config:ro
-      # Database dumps (smdc-dumps) and the Nextcloud volume copy (smdc-nextcloud-files)
-      # written on the host by `backup.sh --dump-only`.
+      # Dump generations (generations/<epoch>/smdc-dumps and .../smdc-nextcloud-files)
+      # and the `current` symlink, written on the host by `backup.sh --dump-only`.
+      # Read-only: the container never writes here (its small upload-state cache is
+      # /tmp/smdc-backup.uploaded inside the container).
       - ${BACKUP_DUMP_DIR:-/var/backups/sovereign-dumps}:/dumps:ro
       - backup_storage:/var/backups/sovereign
       # One read-only mount per `files` row of backup/volumes.conf, at /data/<key>

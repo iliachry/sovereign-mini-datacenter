@@ -69,9 +69,11 @@ Mailcow is not deployed by this script. It is a separate Compose project:
 
   1. git clone https://github.com/mailcow/mailcow-dockerized.git ${PROJECT_DIR}/mailcow/core
   2. cd ${PROJECT_DIR}/mailcow/core
-     cp ../mailcow.conf.example mailcow.conf    # then edit MAILCOW_HOSTNAME, TZ
-  3. cp ../docker-compose.override.yml docker-compose.override.yml
-  4. docker compose up -d                       # core stack must already be running
+     ./generate_config.sh                       # required: creates mailcow.conf with its passwords
+  3. In mailcow.conf, change the six settings listed in ../mailcow.conf.example
+     (do not copy that file: it is not a complete configuration)
+  4. cp ../docker-compose.override.yml docker-compose.override.yml
+  5. docker compose up -d                       # core stack must already be running
 
 Details and DNS records: ${PROJECT_DIR}/mailcow/README.md
 EOF
@@ -95,7 +97,7 @@ check_openproject_pgdata_volume() {
     local project expected mount mount_type mount_name
     # Project name exactly as Compose resolves it (COMPOSE_PROJECT_NAME, `name:`, directory).
     project=$(docker compose --env-file "$ENV_FILE" "${COMPOSE_FILES[@]}" config 2>/dev/null \
-        | sed -n 's/^name:[[:space:]]*//p' | head -n 1 | tr -d "\"'" || true)
+        | sed -n 's/^name:[[:space:]]*//p' | sed -n '1p' | tr -d "\"'" || true)
     if [[ -z "$project" ]]; then
         project=$(docker container inspect \
             --format '{{ index .Config.Labels "com.docker.compose.project" }}' \

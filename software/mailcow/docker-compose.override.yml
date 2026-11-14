@@ -9,15 +9,19 @@
 #   2. Add the Traefik labels that route https://${MAILCOW_HOSTNAME} to it.
 #
 # Variables come from mailcow.conf (mailcow links it as .env): MAILCOW_HOSTNAME
-# and HTTP_PORT, the port nginx-mailcow listens on (see mailcow.conf.example).
+# and HTTP_PORT, the port nginx-mailcow listens on (see mailcow.conf.example;
+# HTTP_REDIRECT must be n there, or nginx only redirects on that port).
+#
+# Only nginx-mailcow joins sovereign_net. postfix-mailcow is deliberately not
+# attached: core services send mail to ${MAILCOW_HOSTNAME}:587 (STARTTLS + login),
+# the name the certificate is issued for. An internal name would not match it.
+# See README.md, "Integration with Other Services".
 # The core stack must be running first so that its sovereign_net network exists.
 # That network is named <core project>_sovereign_net; the core project name
 # defaults to "software". If the core stack runs under another project name, set
 # SOVEREIGN_NET_NAME=<project>_sovereign_net in mailcow.conf (the same variable
 # software/mesh/lora/docker-compose.lora.yml uses).
 # ====================================================================
-version: '2.1'
-
 networks:
   sovereign_net:
     external: true

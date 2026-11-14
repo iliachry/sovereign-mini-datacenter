@@ -280,7 +280,7 @@ class TestEnterpriseManager(unittest.TestCase):
             name="Model Retraining",
             app_id="retrain-job",
             entrypoint="python3 train.py",
-            power=PowerPolicy(tier=PowerPriority.L2_BACKGROUND),
+            power=PowerPolicy(tier=PowerPriority.L3_DEFERRABLE),
         )
         self.registry.register_app(m_crit)
         self.registry.register_app(m_bg)
@@ -297,7 +297,7 @@ class TestEnterpriseManager(unittest.TestCase):
             )
         )
 
-        # Verify: L2 background job paused, L0 critical job still running
+        # Verify: L3 deferrable job paused (level 2 pauses L3 and L4), L0 critical job still running
         self.assertEqual(self.manager.get_runtime_state("retrain-job").status, AppStatus.PAUSED)
         self.assertEqual(self.manager.get_runtime_state("crit-telem").status, AppStatus.RUNNING)
 
@@ -310,10 +310,10 @@ class TestEnterpriseManager(unittest.TestCase):
             )
         )
 
-        # Verify: L2 job resumed
+        # Verify: L3 job resumed
         self.assertEqual(self.manager.get_runtime_state("retrain-job").status, AppStatus.RUNNING)
 
-        # Simulate Sentinel Copilot string mode payload ("ECO_PRESERVATION" -> L2)
+        # Simulate Sentinel Copilot string mode payload ("ECO_PRESERVATION" -> level 2)
         self.event_bus.publish(
             Event(
                 event_type="load_shedding.changed",
@@ -324,7 +324,7 @@ class TestEnterpriseManager(unittest.TestCase):
         self.assertEqual(self.manager.get_runtime_state("retrain-job").status, AppStatus.PAUSED)
         self.assertEqual(self.manager.get_runtime_state("crit-telem").status, AppStatus.RUNNING)
 
-        # Simulate recovery via string mode ("NORMAL" -> L0)
+        # Simulate recovery via string mode ("NORMAL" -> level 0)
         self.event_bus.publish(
             Event(
                 event_type="load_shedding.changed",

@@ -215,7 +215,7 @@ def _run_copilot(sequence: list[dict[str, float]], persisted_mode: str | None = 
 
     with (
         patch.object(sentinel_copilot, "get_telemetry", side_effect=telemetry),
-        patch.object(sentinel_copilot, "set_mode", side_effect=modes.append),
+        patch.object(sentinel_copilot, "set_mode", side_effect=lambda mode, *_level_and_soc: modes.append(mode)),
         patch.object(sentinel_copilot, "read_persisted_mode", return_value=persisted_mode),
         patch.object(sentinel_copilot, "get_solar_forecast", return_value=800.0),
         patch("time.sleep", return_value=None),
