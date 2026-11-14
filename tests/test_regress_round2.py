@@ -1027,3 +1027,20 @@ def test_config_mesh_poll_interval_uses_the_env_name_the_daemon_reads(monkeypatc
     assert smdc_config.SovereignConfig(mesh_poll_interval=float("nan")).mesh_poll_interval == 60.0
     standalone = (REPO_ROOT / "software" / "mesh" / "mesh_sync.py").read_bytes()
     assert standalone == (REPO_ROOT / "src" / "sovereign_dc" / "mesh" / "mesh_sync.py").read_bytes()
+
+
+def test_top_level_mint_shortcut_is_the_same_command(tmp_path, capsys, monkeypatch):
+    """`smdc mint` and `smdc economy mint` must reach the same handler with the same arguments."""
+    import sys
+
+    from sovereign_dc import cli
+
+    seen = []
+    for argv in (["smdc", "mint", "nan"], ["smdc", "economy", "mint", "nan"]):
+        monkeypatch.setattr(sys, "argv", argv)
+        try:
+            cli.main()
+            seen.append(0)
+        except SystemExit as exc:
+            seen.append(exc.code)
+    assert seen[0] == seen[1] != 0

@@ -2512,6 +2512,17 @@ def main():
     p_ec_mint.add_argument("--db-path", type=str, help="Custom ledger SQLite database path")
     p_ec_mint.set_defaults(func=cmd_economy_mint)
 
+    # Top-level shortcut for `smdc economy mint`: same handler, same arguments.
+    p_mint = subparsers.add_parser(
+        "mint",
+        help="Shortcut for `economy mint`: mint LOCAL TEST credits to the node wallet (no external value)",
+    )
+    p_mint.add_argument("amount", type=str, help="Credits to mint (> 0, at most 6 decimal places)")
+    p_mint.add_argument("--memo", type=str, default="", help="Transaction memo (default: LOCAL_TEST_CREDIT)")
+    p_mint.add_argument("--wallet-file", type=str, help="Custom wallet JSON file path")
+    p_mint.add_argument("--db-path", type=str, help="Custom ledger SQLite database path")
+    p_mint.set_defaults(func=cmd_economy_mint)
+
     p_ec_send = econ_subs.add_parser("send", help="Send signed compute credits to peer node")
     p_ec_send.add_argument("recipient", help="Recipient wallet address (e.g. sov_...)")
     p_ec_send.add_argument("amount", type=float, help="Amount of compute credits to transfer")

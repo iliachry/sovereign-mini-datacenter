@@ -165,7 +165,7 @@ sovereign-mini-datacenter/
 │   ├── MANUFACTURING_GUIDE.md   # Laser cut, CNC bend, and assembly instructions
 │   └── render.jpg               # Photorealistic 3D product render
 ├── docs/                        # Interactive Three.js WebGL Digital Twin (ES Modules) & GitHub Pages
-├── tests/                       # 999 automated unit & integration tests (91.8% coverage)
+├── tests/                       # 1000 automated unit & integration tests (91.8% coverage)
 └── .github/
     └── workflows/
         ├── ci.yml               # Complete CI pipeline + Pytest + GitHub Pages deploy
@@ -198,6 +198,7 @@ smdc economy wallet
 
 # Mint LOCAL TEST credits to the node wallet (issued by this node for itself: no external value)
 smdc economy mint 100 --memo "local test"
+smdc mint 100 --memo "local test"                    # Same command, top-level shortcut
 
 # Query dynamic solar-aware compute & relay price quotes
 smdc economy market --soc 85 --solar 1200
@@ -515,7 +516,7 @@ See [`terraform/README.md`](terraform/README.md) for full module documentation a
 ---
 
 ## 🛡️ Quality Gates & Automated Tests
-The project enforces strict automated Quality Gates covering Ruff linting, Ruff formatting, Mypy static typing, Docker Compose multi-stack integrity, and Pytest coverage with 999 automated tests ($\ge 85\%$ strict threshold, achieving **91.8%** coverage):
+The project enforces strict automated Quality Gates covering Ruff linting, Ruff formatting, Mypy static typing, Docker Compose multi-stack integrity, and Pytest coverage with 1000 automated tests ($\ge 85\%$ strict threshold, achieving **91.8%** coverage):
 
 ```bash
 # Run all quality gates locally
