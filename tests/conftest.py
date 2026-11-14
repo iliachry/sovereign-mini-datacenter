@@ -34,6 +34,9 @@ def isolate_smdc_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.delenv("TEMP", raising=False)
     monkeypatch.delenv("SMDC_DASHBOARD_TOKEN", raising=False)
     monkeypatch.delenv("SMDC_CORS_ORIGIN", raising=False)
+    monkeypatch.delenv("SMDC_DASHBOARD_ALLOWED_HOSTS", raising=False)
+    # Hardware-mode exporter tests point this at a loopback fake; never at a real bridge.
+    monkeypatch.delenv("ESP32_BRIDGE_URL", raising=False)
 
     # The config singleton caches DTN_DB_PATH; without a reset every test shares the first one's spool.
     smdc_config.reset_config()

@@ -144,7 +144,7 @@ timeline
 | Hybrid X25519 + ML-KEM key exchange on WireGuard or DTN | **Planned.** WireGuard uses its standard Curve25519 handshake; the Terraform path adds a pre-shared key per node pair. |
 | ML-DSA authentication of remote control commands | **Planned.** Dashboard controls are authenticated with a bearer token. |
 | ML-DSA-signed firmware updates | **Planned.** ESPHome over-the-air updates are protected by a password. |
-| Signed or encrypted DTN bundles (RFC 9172 BPSec) | **Planned.** Bundles carry unkeyed SHA-256 digests only. |
+| Signed or encrypted DTN bundles (RFC 9172 BPSec) | **Planned.** Bundles carry unkeyed SHA-256 digests only. `security/pqc.py` has an ML-DSA `sign_bundle` / `verify_bundle` helper for bundle dictionaries, but the DTN bundle and router code does not call it; signed settlement envelopes sign the settlement payload, not the bundle. |
 | SLH-DSA (SPHINCS+) | **Planned.** No code exists. |
 
 ---

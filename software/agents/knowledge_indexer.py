@@ -305,6 +305,45 @@ def list_indexed_sources() -> set[str]:
             return sources
 
 
+# Documents whose partially written points could not be rolled back (see ``index_file``).
+# They may hold points although the document is not recorded as indexed, so every scan
+# retries the deletion until Qdrant confirms it (see ``retry_pending_cleanup``).
+_cleanup_pending: set[str] = set()
+
+
+def pending_cleanup_paths() -> frozenset[str]:
+    """Documents whose partial points still have to be deleted from the collection."""
+    return frozenset(_cleanup_pending)
+
+
+def _roll_back_partial_index(filepath: str) -> bool:
+    """Deletes every point of ``filepath`` after an indexing attempt that wrote only some.
+
+    On failure the path is remembered in the needs-cleanup set. Returns True once Qdrant
+    confirmed the deletion.
+    """
+    try:
+        delete_source_points(filepath)
+    except Exception as e:
+        if filepath not in _cleanup_pending:
+            logger.error("Could not remove the partial points of %s (%s); will retry every scan.", filepath, e)
+        _cleanup_pending.add(filepath)
+        return False
+    _cleanup_pending.discard(filepath)
+    return True
+
+
+def retry_pending_cleanup() -> int:
+    """Retries the deletion for every document in the needs-cleanup set. Returns the failures."""
+    failed = 0
+    for path in sorted(_cleanup_pending):
+        if _roll_back_partial_index(path):
+            logger.info("Removed the partial points of '%s' left by a failed indexing attempt.", path)
+        else:
+            failed += 1
+    return failed
+
+
 def index_file(filepath: str) -> bool:
     """Chunks and embeds a document, then makes Qdrant hold exactly its current chunks.
 
@@ -313,9 +352,16 @@ def index_file(filepath: str) -> bool:
     payload, different id) is deleted. A document that shrank therefore loses its surplus
     chunks, an emptied document loses all of them, and points stored under the integer ids
     of older releases are replaced the first time the document is re-indexed. If embedding
-    fails nothing is written or deleted, so the previous version stays searchable; if an
-    upsert batch fails nothing is deleted (earlier batches may already hold the new text)
-    and the whole document is retried.
+    fails nothing is written or deleted, so the previous version stays searchable.
+
+    If an upsert batch fails after an earlier batch of the same attempt was written, the
+    collection holds a partial document that nothing tracks (the caller records a document
+    only on success). The attempt is therefore rolled back: every point of the document is
+    deleted, so a file that is removed before the next scan leaves nothing searchable behind.
+    If that deletion fails too, the path is kept in a needs-cleanup set which
+    ``scan_and_index`` retries on every scan. A failure of the first batch wrote nothing and
+    deletes nothing; a failure of the final stale-chunk deletion leaves the complete new
+    version in place. In every case the whole document is retried on the next scan.
 
     A document larger than ``MAX_FILE_BYTES`` is refused (see ``is_oversized``).
 
@@ -349,8 +395,23 @@ def index_file(filepath: str) -> bool:
 
         batch_size = max(1, UPSERT_BATCH_SIZE)
         for start in range(0, len(points), batch_size):
-            _qdrant_request("PUT", "/points?wait=true", {"points": points[start : start + batch_size]})
+            try:
+                _qdrant_request("PUT", "/points?wait=true", {"points": points[start : start + batch_size]})
+            except Exception as e:
+                if start > 0:
+                    rolled_back = _roll_back_partial_index(filepath)
+                    logger.error(
+                        "Upsert of chunks %d+ of %s failed (%s); the %d chunks already written were %s.",
+                        start,
+                        filepath,
+                        e,
+                        start,
+                        "rolled back" if rolled_back else "NOT removed yet (cleanup pending)",
+                    )
+                raise
         delete_source_points(filepath, keep_ids=[str(p["id"]) for p in points])
+        # The collection now holds exactly this version: nothing is left to clean up.
+        _cleanup_pending.discard(filepath)
         logger.info("Indexed %d chunks from '%s'.", len(points), os.path.basename(filepath))
         return True
     except Exception as e:
@@ -408,9 +469,14 @@ def scan_and_index(indexed_files: set[tuple[str, float]]) -> tuple[int, int]:
     ``MAX_FILE_BYTES``. Removal is skipped for a scan in which WATCH_DIR is missing or could
     not be listed completely, so an unmounted volume or an unreadable sub-directory never
     looks like "every document was deleted"; only paths inside WATCH_DIR are removed.
+
+    Before anything else the scan retries the deletion of partial points that a failed
+    indexing attempt could not roll back (``retry_pending_cleanup``; each one still pending
+    counts as a failure). That does not depend on the file still existing or on WATCH_DIR
+    being listable: such points belong to no recorded document.
     """
     succeeded = 0
-    failed = 0
+    failed = retry_pending_cleanup()
     present: set[str] = set()
     walk_errors: list[OSError] = []
     for p in list_documents(WATCH_DIR, walk_errors):

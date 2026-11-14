@@ -1,9 +1,9 @@
 """Sovereign Mini Datacenter — HAL Thermal Monitoring Module.
 
-Reads temperature data from:
-- DS18B20 1-Wire sensors (hardware mode)
-- Prometheus exporter endpoint
-- Simulated values (simulation mode)
+Reads temperature data from the power exporter's Prometheus endpoint only (in hardware
+mode the exporter re-exports the ESP32 bridge's DS18B20 probes; this module reads no
+1-Wire bus itself), plus Linux thermal zones and nvidia-smi for local chip temperatures.
+In simulation mode an unreachable exporter yields simulated values flagged as such.
 """
 
 from __future__ import annotations

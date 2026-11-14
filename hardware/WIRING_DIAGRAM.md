@@ -28,14 +28,17 @@
           │   Victron Lynx Distributor (48V) │  ◄─── Main 48V DC Bus
           │ (MEGA: 3x 125A/58V, 1x 100A/80V) │
           └───┬──────────────────────┬───────┘
-              │                      │
-              ▼                      ▼
+              │ per pack:            │
+              │ battery isolator,    │
+              │ then Class T 125A    │
+              ▼ at the pack          ▼
   ┌─────────────────────┐    ┌──────────────────────────┐
   │ LiFePO4 Battery Bank│    │ Victron MultiPlus-II     │
   │ 2x 48V 100Ah Packs  │    │ 48/3000/35-32 Inverter   │
   │ (10.24 kWh Total)   │    │ 48V DC ➔ 230V AC Sine    │
-  │ Built-in BMS / pack │    └──────────────┬───────────┘
-  └─────────────────────┘                   │ 230V AC, through a
+  │ Built-in BMS / pack │    │ AC-in: not connected     │
+  └─────────────────────┘    └──────────────┬───────────┘
+                                            │ AC-out-1, 230V AC, through a
                                             │ 2-pole RCBO 16A / 30mA
                                             ▼
                            ┌───────────────────────────────┐
@@ -54,22 +57,24 @@
 >
 > - **Voltage:** the string Voc is four times the panel Voc and rises as the panels get colder. Corrected to the lowest temperature expected on site it must stay below the MPPT 250/70's 245V start-up and operating maximum (250V is the absolute maximum). Worked examples at −10°C with a −0.28%/°C coefficient: 4 × 38V × 1.098 ≈ 167V for 108 half-cell panels; 4 × 50V × 1.098 ≈ 220V for 144 half-cell panels. A panel with an STC Voc above 50V needs its own check.
 > - **Current:** the array Isc is twice the panel Isc (28A for 14A panels) and must stay below the controller's 35A maximum PV short-circuit current.
-> - **Power:** 3,280W is within the controller's 4,000W nominal PV power at 48V, and gives about 64A of charge current at 51.2V against the 70A rating. With the MultiPlus-II charger (up to 35A) running at the same time, the bank can see about 99A, about 0.5C for 200Ah; see the charge-current note in `COMPONENTS.md` for the two settings that cap it.
+> - **Power:** 3,280W is within the controller's 4,000W nominal PV power at 48V, and gives about 64A of charge current at 51.2V against the 70A rating. If a grid or generator supply is added on the MultiPlus-II AC input (not part of the reference build), its charger (up to 35A) can run at the same time and the bank can see about 99A, about 0.5C for 200Ah; see the charge-current note in `COMPONENTS.md` for the two settings that cap it.
 > - **String fuses:** with two strings in parallel a faulted string can only be back-fed by one other string (1 × Isc), which is below the maximum series fuse rating of typical panels, so string fuses are not required; confirm the "maximum series fuse" value on the panel datasheet. Three or more parallel strings would need a fuse per string.
 > - **Cable:** 4mm² solar cable (EN 50618 / H1Z2Z2-K) per string, each carrying at most one panel Isc; 6mm² from the combiner to the MPPT, which carries both strings (up to 28A). Increase the cross-section if the run length gives more than about 3% voltage drop.
-> - **Isolation and hazard:** the array open-circuit voltage is 150–230V DC, well above the 48V battery side and no longer extra-low voltage. Fit a 2-pole DC isolator rated for at least 250V DC and 35A between the combiner and the MPPT, use touch-safe MC4 connectors, and never open a PV connector under load.
+> - **Isolation and hazard:** the array open-circuit voltage is 150–230V DC, well above the 48V battery side and no longer extra-low voltage. Fit a 2-pole DC isolator rated for at least 250V DC and 35A between the combiner and the MPPT (it switches both PV conductors; a DC miniature circuit breaker used here must be non-polarised or wired as its polarity marking shows), use touch-safe MC4 connectors, and never open a PV connector under load. The isolator removes the array from the controller, not from the cable on the array side: the strings and the combiner stay live whenever the panels are lit.
+> - **Overvoltage:** the Type 2 surge protection device in the combiner must have a maximum continuous PV voltage (Ucpv) above the cold-weather string Voc worked out above, and its earth terminal goes to the earth bar by the shortest route. It limits induced surges; it is not protection against a direct lightning strike.
+> - **Connection order:** Victron's manual for the controller gives the order: connect the battery, wait for the controller to recognise the system voltage, then connect the PV ([SmartSolar MPPT manual, installation](https://www.victronenergy.com/media/pg/Manual_SmartSolar_MPPT_150-60_up_to_250-70/en/installation.html), checked on 2026-11-14). So the PV isolator is closed last and opened first: never open both battery isolators while the PV isolator is closed, because the controller would then be feeding the DC bus with no battery on it.
 >
 > Controller figures are from Victron's [SmartSolar MPPT 250/60 and 250/70 datasheet](https://www.victronenergy.com/upload/documents/Datasheet-SmartSolar-charge-controller-MPPT-250-60-and-250-70-EN.pdf).
 
 ### Battery connection detail
 
-Each pack has its own positive lead with a Class T fuse at the pack, and lands on its own fused position of the Lynx Distributor; the inverter and the MPPT take the other two positions. The MPPT position carries a 100A fuse, not 125A, because Victron limits the battery fuse of the 70A controllers to 100A (table below). The two negatives join and pass through the battery monitor shunt before reaching the negative busbar. This matches Phase 2 of `ASSEMBLY_MANUAL.md`.
+Each pack has its own positive lead with a Class T fuse at the pack followed by a load-break battery isolator, and lands on its own fused position of the Lynx Distributor; the inverter and the MPPT take the other two positions. The MPPT position carries a 100A fuse, not 125A, because Victron limits the battery fuse of the 70A controllers to 100A (table below). The two negatives join and pass through the battery monitor shunt before reaching the negative busbar. This matches Phase 2 of `ASSEMBLY_MANUAL.md`.
 
 ```
- [Pack 1 (+)] ──► [Class T fuse 125A] ──35mm²──► [Lynx position 1, MEGA 125A/58V] ─┐
- [Pack 2 (+)] ──► [Class T fuse 125A] ──35mm²──► [Lynx position 2, MEGA 125A/58V] ─┤ Lynx (+) busbar
- [MultiPlus-II DC (+)] ◄──────────────35mm²───── [Lynx position 3, MEGA 125A/58V] ─┤
- [MPPT 250/70 battery (+)] ◄──────────35mm²───── [Lynx position 4, MEGA 100A/80V] ─┘
+ [Pack 1 (+)] ──► [Class T fuse 125A] ──► [Battery isolator 1] ──35mm²──► [Lynx position 1, MEGA 125A/58V] ─┐
+ [Pack 2 (+)] ──► [Class T fuse 125A] ──► [Battery isolator 2] ──35mm²──► [Lynx position 2, MEGA 125A/58V] ─┤ Lynx (+) busbar
+ [MultiPlus-II DC (+)] ◄──────────────────────────────────────35mm²───── [Lynx position 3, MEGA 125A/58V] ─┤
+ [MPPT 250/70 battery (+)] ◄──────────────────────────────────35mm²───── [Lynx position 4, MEGA 100A/80V] ─┘
 
  [Pack 1 (−)] ──35mm²──┐
  [Pack 2 (−)] ──35mm²──┴─► [Victron SmartShunt 500A/50mV] ──► [Lynx Distributor (−)]
@@ -80,12 +85,30 @@ Each pack has its own positive lead with a Class T fuse at the pack, and lands o
 - Connect the SmartShunt's fused positive sense lead to the battery positive as described in its manual.
 - Cell-level protection (over/under-voltage, over-current, temperature) is provided by the BMS built into each server-rack pack. The SmartShunt only measures.
 
+### Battery isolators (DC disconnects)
+
+Victron's installation manual for the MultiPlus-II requires every installation to have a way to disconnect both the AC and the DC circuits; circuit breakers used for overcurrent protection count as disconnects, and where fuses are used "separate disconnect switches are required between the source and the fuses" ([MultiPlus-II manual, installation, section 4.1](https://www.victronenergy.com/media/pg/MultiPlus-II_230V/en/installation.html), checked on 2026-11-14). Fuses protect the battery feeds here, so each pack has its own switch.
+
+| Item | Requirement |
+| :--- | :--- |
+| Quantity and position | Two, one per pack, in the positive lead: pack terminal, Class T fuse, isolator, Lynx position. The fuse stays at the pack so that the cable up to the isolator is fused. |
+| Type | DC switch-disconnector to IEC 60947-3 that can make and break load current (utilisation category DC-21B or higher). An off-load battery switch is not sufficient. |
+| Voltage | Rated operational voltage of at least 60V DC (the bus reaches about 58V on charge). |
+| Current | Rated operational current of at least 125A at that voltage, the rating of the fuse it sits behind; a 160A device is the usual size. |
+| Lock-out | Handle that can be padlocked in OFF, or a removable key. |
+| Poles | One pole in the positive lead. Use a 2-pole device with the pack negative through the second pole (on the battery side of the SmartShunt) where the local rules require both conductors to be switched. |
+
+- **Why one per pack:** the packs land on separate Lynx positions, so no single conductor carries the whole bank. A switch per pack isolates one pack for a fault or for service while the other keeps the system running, and the two together (with the PV isolator open) remove every source from the DC bus and from the MEGA fuses in the Lynx.
+- **The pack's own breaker:** server-rack packs usually have a DC circuit breaker on the front panel; the BOM names no pack model, so the installer must check. That breaker is the disconnect between the cells and the Class T fuse and is opened before the Class T fuse is touched. It does not replace the Class T fuse (its interrupting rating is far lower) or the lockable isolator. A BMS power button is an electronic switch, not an isolator.
+- **Victron's battery switch is not a load-break device.** The Battery Switch ON/OFF 275A is rated 275A continuous and 60V maximum operating voltage ([datasheet](https://www.victronenergy.com/upload/documents/Datasheet-Battery-Switch-275-A-EN.pdf)), but its manual states that the switch is not rated to make or break current ([manual](https://www.victronenergy.com/upload/documents/Battery_Switch_ON-Off_275A/103859-Battery_Switch_-_manual-pdf-en.pdf)). It does not meet the table above.
+- **What stays live:** with a battery isolator open, the pack terminal, the Class T fuse holder and the cable up to the isolator are still live unless the pack's own breaker is open too. With both isolators open, the DC bus is still fed by the MPPT until the PV isolator is open, and the capacitors of the MultiPlus-II hold a charge for some time. Measure before touching. The isolation sequence is in Phase 2 of `ASSEMBLY_MANUAL.md`.
+
 ### Fuse and cable per Lynx Distributor position
 
 | Lynx position | Device | Fuse fitted | What the device manufacturer prescribes | Branch cable |
 | :---: | :--- | :--- | :--- | :--- |
-| 1 | Battery pack 1 | MEGA 125A/58V in the Lynx, plus a Class T 125A at the pack | The pack datasheet gives the maximum continuous current (100A is typical for a 48V 100Ah server-rack pack); the fuse protects the 35mm² lead and must not be below the pack's rated current. Confirm against the datasheet of the pack you buy. | 35mm² |
-| 2 | Battery pack 2 | MEGA 125A/58V in the Lynx, plus a Class T 125A at the pack | As position 1 | 35mm² |
+| 1 | Battery pack 1 | MEGA 125A/58V in the Lynx, plus a Class T 125A and a battery isolator at the pack | The pack datasheet gives the maximum continuous current (100A is typical for a 48V 100Ah server-rack pack); the fuse protects the 35mm² lead and must not be below the pack's rated current. Confirm against the datasheet of the pack you buy. | 35mm² |
+| 2 | Battery pack 2 | MEGA 125A/58V in the Lynx, plus a Class T 125A and a battery isolator at the pack | As position 1 | 35mm² |
 | 3 | MultiPlus-II 48/3000/35-32 | MEGA 125A/58V | Recommended DC fuse 125A, recommended cable 35mm² for runs of 0–5m (70mm² for 5–10m), for the 48/3000/35 ([MultiPlus-II manual, installation](https://www.victronenergy.com/media/pg/MultiPlus-II_230V/en/installation.html)) | 35mm², run under 5m |
 | 4 | SmartSolar MPPT 250/70-Tr | MEGA 100A/80V | Battery fuse 80A minimum, 100A maximum for the MPPT 150/70 and 250/70 ([SmartSolar MPPT manual, installation](https://www.victronenergy.com/media/pg/Manual_SmartSolar_MPPT_150-60_up_to_250-70/en/installation.html)). The manual gives no minimum battery-cable cross-section; it asks for flexible multi-stranded copper cable and 2.4 N·m on the terminals, and the controller's power terminals accept at most 35mm² ([datasheet](https://www.victronenergy.com/upload/documents/Datasheet-SmartSolar-charge-controller-MPPT-250-60-and-250-70-EN.pdf)). | 35mm² (the 100A fuse also protects 25mm²; 35mm² is kept so that one cable size is used throughout) |
 
@@ -95,14 +118,15 @@ Each pack has its own positive lead with a Class T fuse at the pack, and lands o
 - The four fuse ratings add up to 475A, below the Lynx Distributor's 1000A busbar rating; Victron requires the sum of the fuses not to exceed the rating of the Lynx module ([Lynx Distributor manual, system design](https://www.victronenergy.com/media/pg/Lynx_Distributor/en/system-design.html)).
 - Manufacturer documents were checked on 2026-11-14. Local wiring regulations take precedence over this table.
 
-> **Wire Sizing:** Use 35mm² flexible copper cable on the 48V DC bus runs listed above, and keep each run under 5m. AC output wiring: 3 × 2.5mm² from the MultiPlus-II AC output through the 16A RCBO to the PDU. Tighten every connection to the torque in the manufacturer's manual (the values are listed in Phase 2 of `ASSEMBLY_MANUAL.md`).
+> **Wire Sizing:** Use 35mm² flexible copper cable on the 48V DC bus runs listed above, and keep each run under 5m. AC output wiring: 3 × 2.5mm² from the MultiPlus-II AC output (AC-out-1) through the 16A RCBO to the PDU. The AC input terminals are not used in the reference build: nothing is connected to them and their cover stays fitted. Tighten every connection to the torque in the manufacturer's manual (the values are listed in Phase 2 of `ASSEMBLY_MANUAL.md`).
 
-> **Safety:** Install one 125A Class T fuse (DC rating ≥ 125V, interrupting rating ≥ 20kA) in the positive lead of **each** battery pack (two in total), as close to the pack terminal as practical: a LiFePO4 bank can drive several kA into a short circuit, and the Class T fuse is the device rated to interrupt it. The Lynx Distributor accepts MEGA fuses only, and Victron specifies 58V-rated MEGA fuses for 48V systems ([Lynx Distributor manual](https://www.victronenergy.com/media/pg/Lynx_Distributor/en/system-design.html)): fit a 125A/58V MEGA fuse in positions 1 to 3 and a 100A/80V MEGA fuse in position 4 (the MPPT), and never a 32V one.
+> **Safety:** Install one 125A Class T fuse (DC rating ≥ 125V, interrupting rating ≥ 20kA) in the positive lead of **each** battery pack (two in total), as close to the pack terminal as practical: a LiFePO4 bank can drive several kA into a short circuit, and the Class T fuse is the device rated to interrupt it. The Lynx Distributor accepts MEGA fuses only, and Victron specifies 58V-rated MEGA fuses for 48V systems ([Lynx Distributor manual](https://www.victronenergy.com/media/pg/Lynx_Distributor/en/system-design.html)): fit a 125A/58V MEGA fuse in positions 1 to 3 and a 100A/80V MEGA fuse in position 4 (the MPPT), and never a 32V one. A fuse is not a disconnect: each pack lead also carries a load-break battery isolator directly after its Class T fuse (see "Battery isolators" above).
 
 > **Earthing:**
 >
 > - Bond the enclosure, every metal chassis inside it, the PV module frames and the surge protection device to the earth bar, and the earth bar to the earth rod.
-> - The MultiPlus-II is a safety class I product: its chassis or AC earth terminal must have a permanent earth connection. With no AC input present, its internal ground relay links the output neutral to the chassis, which is what lets the 30mA RCBO on the AC output work; Victron states that a Type A residual-current device can be used on this inverter ([MultiPlus-II manual, installation](https://www.victronenergy.com/media/pg/MultiPlus-II_230V/en/installation.html)).
+> - The MultiPlus-II is a safety class I product: its chassis or AC earth terminal must have a permanent earth connection. In this build the AC input is not connected, so that connection is the chassis earth stud wired to the earth bar (the manual allows the earth conductor of the AC input to provide it in a fixed installation, and otherwise requires the casing to be grounded). With no AC input present, its internal ground relay links the output neutral to the chassis, which is what lets the 30mA RCBO on the AC output work; Victron states that a Type A residual-current device can be used on this inverter ([MultiPlus-II manual, installation](https://www.victronenergy.com/media/pg/MultiPlus-II_230V/en/installation.html)).
+> - **AC protection:** the manual requires an earth leakage circuit breaker and a fuse or circuit breaker, rated for the expected load, in series with the output; the 2-pole 16A / 30mA RCBO is that device and is also the AC disconnect. If a grid or generator supply is ever connected to AC-in, the manual requires a fuse or magnetic circuit breaker of at most 32A on that input for this 3kVA model, with the cable sized to match; those parts are not in the BOM (see the AC connections note in `COMPONENTS.md`).
 > - Do **not** earth the PV array's positive or negative conductor. Victron's manual for this controller states that the PV positive and negative should not be grounded, that only the module frames are grounded, and that the controller has no ground-fault detector ([SmartSolar MPPT manual, installation](https://www.victronenergy.com/media/pg/Manual_SmartSolar_MPPT_150-60_up_to_250-70/en/installation.html)).
 > - The same manual allows a single earth connection on the battery side, near the battery. This design leaves the choice (battery negative earthed at one point, or floating) to the local wiring regulations; if the negative is earthed, earth it at one point only, on the system side of the SmartShunt.
 

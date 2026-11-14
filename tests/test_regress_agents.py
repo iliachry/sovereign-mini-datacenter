@@ -579,7 +579,7 @@ def test_power_exporter_non_simulated_mode_emits_no_fabricated_gauges(
     series = _series(exporter.get_telemetry_metrics())
     assert series == {"sovereign_telemetry_simulated": 0.0, "sovereign_telemetry_source_up": 0.0}
     exporter.get_telemetry_metrics()
-    assert caplog.text.count("no hardware reader is implemented") == 1  # logged once
+    assert caplog.text.count("ESP32_BRIDGE_URL is not set") == 1  # logged once
 
 
 def test_power_exporter_simulated_mode_is_labelled(monkeypatch: pytest.MonkeyPatch) -> None:

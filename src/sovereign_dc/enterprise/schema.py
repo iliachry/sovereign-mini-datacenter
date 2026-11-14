@@ -179,9 +179,24 @@ class NetworkPolicy:
         )
 
 
+BACKUP_DECLARATION_NOTICE = (
+    "storage.backup_enabled is a declaration of intent only: no backup job reads it. "
+    "To back the volume up, an operator must add it to the backup set by hand: one "
+    "'key|name|files|.|reason' line in software/backup/volumes.conf and a read-only mount at "
+    "/data/<key> in software/backup/docker-compose.backup.yml (see software/backup/README.md). "
+    "The default Restic repository is local to the node, not off-site."
+)
+
+
 @dataclass
 class StoragePolicy:
-    """Persistence and volume bindings on encrypted NVMe."""
+    """Persistence and volume bindings declared by the application.
+
+    ``backup_enabled`` is a declaration of intent only: nothing in this package or in
+    ``software/backup/`` reads it, and the application's volume is not part of the Restic
+    backup set until an operator adds it there by hand (``software/backup/volumes.conf``;
+    see ``BACKUP_DECLARATION_NOTICE``).
+    """
 
     persistent_volume: str = ""
     mount_point: str = ""

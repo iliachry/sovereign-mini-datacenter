@@ -14,7 +14,8 @@
 # <project>_* objects for every project name (scripts/validate_compose.sh checks it).
 #
 # WHAT THIS CONTAINER DOES (and does not do)
-# It runs the restic phase of backup.sh only: the database dumps the host wrote to
+# It runs the restic phase of backup.sh only: the database dumps and the Nextcloud
+# volume copy (taken in Nextcloud's maintenance window) that the host wrote to
 # BACKUP_DUMP_DIR, the deployment configuration (this software/ directory, .env
 # included) and the static files of the volumes listed as `files` in
 # backup/volumes.conf. It never copies a live database directory:
@@ -24,9 +25,10 @@
 # socket, which is root on the host; a network-attached backup container does not
 # get it. The dumps come from the host:
 #   sudo sh software/backup/backup.sh --dump-only      # cron / systemd timer
-# If the dump MANIFEST is missing, incomplete or older than
-# BACKUP_DUMP_MAX_AGE_SECONDS, backup.sh exits non-zero, nothing is uploaded and the
-# container turns unhealthy. See backup/README.md.
+# If the dump MANIFEST is missing, incomplete, older than
+# BACKUP_DUMP_MAX_AGE_SECONDS, or names a dump file that is missing or does not have
+# the recorded size and SHA-256, backup.sh exits non-zero, nothing is uploaded and
+# the container turns unhealthy. See backup/README.md.
 networks:
   sovereign_net:
 
@@ -74,7 +76,8 @@ services:
       # .env holds the stack's secrets; it is needed to rebuild the node and goes
       # into the encrypted repository only.
       - .:/config:ro
-      # Database dumps written on the host by `backup.sh --dump-only`.
+      # Database dumps (smdc-dumps) and the Nextcloud volume copy (smdc-nextcloud-files)
+      # written on the host by `backup.sh --dump-only`.
       - ${BACKUP_DUMP_DIR:-/var/backups/sovereign-dumps}:/dumps:ro
       - backup_storage:/var/backups/sovereign
       # One read-only mount per `files` row of backup/volumes.conf, at /data/<key>
@@ -84,6 +87,8 @@ services:
       - gitlab_data:/data/gitlab_data:ro
       - gitlab_config:/data/gitlab_config:ro
       - openproject_data:/data/openproject_data:ro
+      # Walked only when the dumps were made with BACKUP_NEXTCLOUD_MODE=online; in the
+      # default maintenance mode the copy under /dumps is backed up instead.
       - nextcloud_data:/data/nextcloud_data:ro
       - vaultwarden_data:/data/vaultwarden_data:ro
       - grafana_data:/data/grafana_data:ro

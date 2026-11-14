@@ -10,6 +10,7 @@ import os
 import re
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import Any
 
@@ -24,6 +25,11 @@ OLLAMA_URL = os.getenv("OLLAMA_BASE_URL", "http://ollama:11434")
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "")
 REVIEW_MODEL = os.getenv("OLLAMA_CODE_MODEL", "qwen2.5-coder:7b")
 POLL_INTERVAL_SECONDS = 60
+# GitLab list endpoints are paginated (at most 100 items per page). Listings are followed
+# through the ``X-Next-Page`` response header up to this many pages per request, so one poll
+# reads at most 5,000 open merge requests and 5,000 notes per merge request.
+PAGE_SIZE = 100
+MAX_PAGES = 50
 
 # Sentinel strings returned by query_ollama() when no usable review was produced.
 LLM_UNAVAILABLE_PREFIX = "Local LLM review unavailable"
@@ -162,6 +168,53 @@ def _gitlab_get(url: str) -> Any:
         return json.loads(resp.read().decode("utf-8"))
 
 
+def _with_query(url: str, **params: int) -> str:
+    """``url`` with the given query parameters set (replacing any already present)."""
+    parts = urllib.parse.urlsplit(url)
+    query = [(k, v) for k, v in urllib.parse.parse_qsl(parts.query, keep_blank_values=True) if k not in params]
+    query.extend((k, str(v)) for k, v in params.items())
+    return urllib.parse.urlunsplit(parts._replace(query=urllib.parse.urlencode(query)))
+
+
+def _next_page(headers: Any, current_page: int) -> int | None:
+    """The page number in GitLab's ``X-Next-Page`` header, or None on the last page."""
+    try:
+        raw = headers.get("X-Next-Page") if headers is not None else None
+    except Exception:
+        return None
+    if not isinstance(raw, str) or not raw.strip().isdigit():
+        return None
+    page = int(raw.strip())
+    return page if page > current_page else None
+
+
+def _gitlab_get_all(url: str, max_pages: int = MAX_PAGES) -> list[Any]:
+    """Fetches every page of a GitLab list endpoint (offset pagination).
+
+    Requests ``per_page=PAGE_SIZE`` and follows the ``X-Next-Page`` response header with the
+    ``page`` parameter until GitLab reports no further page. At most ``max_pages`` pages are
+    read; if more exist a warning says so and the items read so far are returned. A response
+    that is not a JSON array ends the listing (and yields nothing for that page).
+    """
+    items: list[Any] = []
+    page = 1
+    for _ in range(max(1, max_pages)):
+        req = urllib.request.Request(
+            _with_query(url, per_page=PAGE_SIZE, page=page), headers={"PRIVATE-TOKEN": GITLAB_TOKEN}
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            next_page = _next_page(getattr(resp, "headers", None), page)
+        if not isinstance(data, list):
+            return items
+        items.extend(data)
+        if next_page is None:
+            return items
+        page = next_page
+    logger.warning("GitLab listing %s has more than %d pages; the rest is not read in this poll.", url, max_pages)
+    return items
+
+
 def get_reviewer_user_id() -> int | None:
     """Returns the id of the account the token authenticates as (cached once resolved).
 
@@ -197,10 +250,8 @@ def already_reviewed_on_gitlab(project_id: int, mr_iid: int, head_sha: str) -> b
     caller's in-memory set prevents duplicates.
     """
     marker = REVIEW_MARKER_TEMPLATE.format(sha=head_sha)
-    url = f"{GITLAB_URL}/projects/{project_id}/merge_requests/{mr_iid}/notes?per_page=100&sort=desc"
-    notes = _gitlab_get(url)
-    if not isinstance(notes, list):
-        return False
+    # Every page: the marker may sit in a note older than the newest 100.
+    notes = _gitlab_get_all(f"{GITLAB_URL}/projects/{project_id}/merge_requests/{mr_iid}/notes?sort=desc")
     marked = [n for n in notes if isinstance(n, dict) and marker in str(n.get("body", ""))]
     if not marked:
         return False
@@ -228,14 +279,17 @@ def poll_once(reviewed: set[ReviewKey]) -> int:
 
     ``reviewed`` holds (project_id, iid, head sha) keys already handled. A revision is
     recorded only after a review was actually posted, so LLM or API failures are
-    retried on the next poll without leaving a note behind.
+    retried on the next poll without leaving a note behind. The listing is read page by
+    page (``_gitlab_get_all``), so merge requests beyond the first 100 are reviewed too.
     """
     if not GITLAB_TOKEN:
         return 0
 
     posted = 0
-    mrs = _gitlab_get(f"{GITLAB_URL}/merge_requests?state=opened&scope=all&per_page=100")
-    for mr in mrs if isinstance(mrs, list) else []:
+    mrs = _gitlab_get_all(f"{GITLAB_URL}/merge_requests?state=opened&scope=all")
+    for mr in mrs:
+        if not isinstance(mr, dict):
+            continue
         pid = int(mr["project_id"])
         iid = int(mr["iid"])
         head_sha = str(mr.get("sha") or (mr.get("diff_refs") or {}).get("head_sha") or "")

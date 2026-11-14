@@ -31,4 +31,6 @@ spec:
               value: "{{ .Values.telemetry.powerExporter.port }}"
             - name: SIMULATE_POWER_DATA
               value: "{{ .Values.telemetry.powerExporter.simulate }}"
+            - name: ESP32_BRIDGE_URL
+              value: {{ .Values.telemetry.powerExporter.bridgeUrl | quote }}
 {{- end }}

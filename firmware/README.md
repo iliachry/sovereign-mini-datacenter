@@ -53,6 +53,29 @@ The Arduino flavour exports a metric only after it has really been measured:
 * `sovereign_hw_vedirect_last_frame_age_seconds` is the time since the last valid frame; `sovereign_hw_vedirect_frames_valid_total` and `sovereign_hw_vedirect_checksum_errors_total` count good and rejected frames.
 * A DS18B20 probe that does not answer (the library's `-127 °C` sentinel) is skipped, not exported. Conversions run in the background, so a scrape never blocks on the sensor.
 
+### From the bridge to the stack: canonical metric names
+
+Nothing in the stack reads the bridge's own series. The HAL, the sentinel, `load_shedder.sh` and the Grafana dashboards read the canonical `sovereign_*` series of the **power exporter** (`software/telemetry/power_exporter.py`, or `smdc telemetry --hardware`). In hardware mode (`SIMULATE_POWER_DATA=false`) with `ESP32_BRIDGE_URL=http://<ESP32_IP>/metrics`, the exporter scrapes this bridge on every request (2 s timeout, cached for 1 s) and re-exports its readings:
+
+| Arduino series | ESPHome sensor (`name` label of `esphome_sensor_value`) | Unit | Canonical series (power exporter) |
+| :--- | :--- | :--- | :--- |
+| `sovereign_hw_battery_soc_percent` | `Battery SoC` | % | `sovereign_battery_soc_percent` |
+| `sovereign_hw_battery_voltage_volts` | `Battery Voltage` | V | `sovereign_battery_voltage_volts` |
+| `sovereign_hw_battery_current_amperes` | `Battery Current` | A | `sovereign_battery_current_amperes` |
+| `sovereign_hw_solar_power_watts` | `Solar Harvest Power` | W | `sovereign_solar_pv_power_watts` |
+| not exported | `Solar Yield Today` | Wh → kWh | `sovereign_solar_daily_yield_kwh` |
+| `sovereign_hw_coolant_intake_temp_celsius` | `Coolant Loop Intake Temp` | °C | `sovereign_temp_coolant_intake_celsius` |
+| `sovereign_hw_coolant_exhaust_temp_celsius` | `Radiator Exhaust Temp` | °C | `sovereign_temp_coolant_exhaust_celsius` |
+| the hotter of the two probes above that answered | same | °C | `sovereign_temp_coolant_celsius` (the series the over-temperature checks read) |
+| `sovereign_hw_vedirect_last_frame_age_seconds` | `VE.Direct Last Valid Frame Age` | s | `sovereign_telemetry_bridge_frame_age_seconds`, and the staleness gate below |
+| derived from SoC (`1` below 20 %), only when SoC was read | same | 0/1 | `sovereign_load_shedding_active` |
+| `sovereign_hw_vedirect_frames_valid_total`, `sovereign_hw_vedirect_checksum_errors_total` | `Solar Array Voltage`, `WiFi Signal`, `Bridge Uptime` | | not re-exported (scrape the bridge directly for them) |
+
+* Both DS18B20 probes are on the coolant loop, so neither is an air temperature: `sovereign_temp_rack_inlet_celsius` and `sovereign_temp_rack_exhaust_celsius` are **not** available from this bridge, and neither is `sovereign_system_power_draw_watts` (nothing measures the load). A canonical series the bridge did not supply is omitted, never filled in; with an MPPT on the VE.Direct port there is no SoC, so the HAL's power reading and the sentinel stay unavailable.
+* `sovereign_telemetry_source_up` is `1` only while the bridge answers with at least one of the readings above and its last valid VE.Direct frame is no older than `ESP32_BRIDGE_MAX_FRAME_AGE_SECONDS` (default 10 s). When the frame is too old, the VE.Direct readings are withheld and the source is reported down; the coolant temperatures (which the firmware expires on its own clock) are still exported.
+* ESPHome rows are matched by their `name` label and, failing that, by `id` (the object id ESPHome derives from the name, or the id used in `esphome_smdc_bridge.yaml`); extra labels (`area`, `node`, `friendly_name`, `unit`) are ignored. Renaming a sensor in the YAML breaks the mapping. A sensor that ESPHome reports as failed (`esphome_sensor_failed ... 1`) has no value row and is treated as absent.
+* The mapping lives in one block that is byte-identical in `src/sovereign_dc/telemetry.py` and `software/telemetry/power_exporter.py`; `tests/test_regress_round3_bridge.py` parses the series names out of the sketch and the sensor names out of the YAML and fails when the exporter does not list one. Like the firmware itself, this path has been tested against the firmware's output format only, not against a physical bridge.
+
 ---
 
 ## 🧪 Testing

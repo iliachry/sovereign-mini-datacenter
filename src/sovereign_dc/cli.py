@@ -1825,6 +1825,17 @@ def cmd_app_init(args):
     print(f"  4. Monitor telemetry:   {CYAN}smdc app status {manifest.app_id}{RESET}\n")
 
 
+def _print_backup_declaration_notice(manifest: Any) -> None:
+    """Tells the operator that ``storage.backup_enabled: true`` does not back anything up."""
+    from sovereign_dc.enterprise.schema import BACKUP_DECLARATION_NOTICE
+
+    if not manifest.storage.backup_enabled:
+        return
+    volume = manifest.storage.persistent_volume or manifest.storage.mount_point or "(no volume declared)"
+    print(f"  {YELLOW}! Backup notice:{RESET} volume '{volume}' is NOT backed up automatically.")
+    print(f"    {BACKUP_DECLARATION_NOTICE}\n")
+
+
 def cmd_app_validate(args):
     """Validate an application manifest file or directory against schema and node budgets."""
     from pathlib import Path
@@ -1869,6 +1880,7 @@ def cmd_app_validate(args):
             print(f"  • GPU VRAM:      {manifest.resources.gpu_vram_mb} MB (Required)")
         print(f"  • Ports:         {manifest.network.ports or 'None'}")
         print(f"  • Storage Mount: {manifest.storage.mount_point or 'Ephemeral'}\n")
+        _print_backup_declaration_notice(manifest)
     return 0
 
 
@@ -1899,6 +1911,7 @@ def cmd_app_register(args):
             f"  {GREEN}✔ Successfully registered application:{RESET} {BOLD}{manifest.name}{RESET} (`{manifest.app_id}`)"
         )
         print(f"  • Run with: {CYAN}smdc app start {manifest.app_id}{RESET}\n")
+        _print_backup_declaration_notice(manifest)
     else:
         print(f"  {RED}✖ Registration rejected:{RESET} {'; '.join(errors)}\n")
         return 1
@@ -2416,8 +2429,10 @@ def main():
     p_telem.add_argument(
         "--hardware",
         action="store_true",
-        help="Disable simulation. No serial/RS485 reader is implemented yet, so the exporter then "
-        "reports sovereign_telemetry_source_up 0 and no measurements",
+        help="Disable simulation and re-export the readings of the ESP32 telemetry bridge named by "
+        "ESP32_BRIDGE_URL (e.g. http://192.168.1.50/metrics) under the canonical sovereign_* names. "
+        "Without a reachable, fresh bridge the exporter reports sovereign_telemetry_source_up 0 "
+        "and no invented measurements (VE.Direct / RS485 are not read directly)",
     )
     p_telem.set_defaults(func=cmd_telemetry)
 

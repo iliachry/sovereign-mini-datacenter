@@ -1,10 +1,9 @@
 """Sovereign Mini Datacenter — HAL Power Telemetry Module.
 
-Reads battery SoC, solar PV power, and system load from:
-- Victron VE.Direct serial (hardware mode)
-- RS485 Modbus BMS (hardware mode)
-- Prometheus exporter HTTP endpoint
-- Simulated physics-based defaults (simulation mode)
+Reads battery SoC, solar PV power and system load from the power exporter's
+Prometheus endpoint only. In hardware mode the exporter itself re-exports the ESP32
+telemetry bridge (VE.Direct); this module opens no serial port and speaks no Modbus.
+In simulation mode an unreachable exporter yields simulated values flagged as such.
 """
 
 from __future__ import annotations

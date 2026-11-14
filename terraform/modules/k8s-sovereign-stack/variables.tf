@@ -71,9 +71,15 @@ variable "gpu_limit" {
 }
 
 variable "simulate_telemetry" {
-  description = "Serve simulated power/thermal telemetry. Keep true: hardware mode (false) requires an ESP32 telemetry bridge or a serial device, and the chart does not wire either yet, so with false the exporter has no real measurements to report."
+  description = "Serve simulated power/thermal telemetry. Set false for hardware mode, in which the exporter re-exports the ESP32 telemetry bridge at telemetry_bridge_url; with false and no bridge URL it reports no telemetry source."
   type        = bool
   default     = true
+}
+
+variable "telemetry_bridge_url" {
+  description = "Metrics URL of the ESP32 telemetry bridge (firmware/), e.g. http://192.168.1.50/metrics. Used only when simulate_telemetry is false."
+  type        = string
+  default     = ""
 }
 
 variable "custom_values" {

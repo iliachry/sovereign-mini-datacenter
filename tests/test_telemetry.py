@@ -32,7 +32,7 @@ def test_telemetry_metrics_parseable():
 def test_telemetry_metrics_non_simulation():
     with patch("sovereign_dc.telemetry.SIMULATION", False):
         metrics_str = get_telemetry_metrics()
-        # No hardware reader exists: report the source as down, never constants as measurements.
+        # No ESP32_BRIDGE_URL: report the source as down, never constants as measurements.
         assert "sovereign_telemetry_source_up 0" in metrics_str
         assert "sovereign_telemetry_simulated 0" in metrics_str
         assert "sovereign_battery_soc_percent" not in metrics_str

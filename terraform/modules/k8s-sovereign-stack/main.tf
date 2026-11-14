@@ -29,7 +29,8 @@ resource "helm_release" "sovereign_stack" {
       }
       telemetry = {
         powerExporter = {
-          simulate = var.simulate_telemetry
+          simulate  = var.simulate_telemetry
+          bridgeUrl = var.telemetry_bridge_url
         }
       }
     })

@@ -7,7 +7,7 @@
 Developed by **[Metatopia Studio](https://metatopia.gr)** · Author & Lead Architect: **[Ilias Chrysovergis](https://iliachry.gr)** · License: MIT · © 2026
 
 [![CI & Quality Gates](https://github.com/iliachry/sovereign-mini-datacenter/actions/workflows/ci.yml/badge.svg)](https://github.com/iliachry/sovereign-mini-datacenter/actions/workflows/ci.yml)
-[![Quality Gate](https://img.shields.io/badge/Quality%20Gate-Strict%20Enforcement%20(91.8%25%20Cov)-10b981?style=flat&logo=githubactions)](https://github.com/iliachry/sovereign-mini-datacenter/actions/workflows/ci.yml)
+[![Quality Gate](https://img.shields.io/badge/Quality%20Gate-Strict%20Enforcement%20(92.1%25%20Cov)-10b981?style=flat&logo=githubactions)](https://github.com/iliachry/sovereign-mini-datacenter/actions/workflows/ci.yml)
 [![Enterprise Onboarding](https://img.shields.io/badge/Enterprise-Workload%20Coupling%20Framework-8b5cf6?style=flat)](ENTERPRISE_ONBOARDING.md)
 [![Commercialization](https://img.shields.io/badge/Commercialization-Investment%20Thesis-f59e0b?style=flat)](COMMERCIALIZATION.md)
 [![Benchmarks](https://img.shields.io/badge/Benchmarks-Measured%20vs%20Design%20Targets-06b6d4?style=flat)](BENCHMARKS.md)
@@ -90,7 +90,7 @@ graph TD
     Sentinel -->|"Operating mode (mode file / event)"| Spark1
 
     Spark1 <-->|"ConnectX-7 QSFP / 10GbE"| Spark2
-    Spark1 -->|"BPSec Signed Bundles"| DTNRouter
+    Spark1 -->|"BPv7 Bundles (SHA-256 digests, unsigned)"| DTNRouter
     DTNRouter <-->|"AOS/LOS Contact Window"| Sat1
     DTNRouter <-->|"Sub-GHz LoRa Relays"| Sat2
 
@@ -165,7 +165,7 @@ sovereign-mini-datacenter/
 │   ├── MANUFACTURING_GUIDE.md   # Laser cut, CNC bend, and assembly instructions
 │   └── render.jpg               # Photorealistic 3D product render
 ├── docs/                        # Interactive Three.js WebGL Digital Twin (ES Modules) & GitHub Pages
-├── tests/                       # 1000 automated unit & integration tests (91.8% coverage)
+├── tests/                       # 1078 automated unit & integration tests (92.1% coverage)
 └── .github/
     └── workflows/
         ├── ci.yml               # Complete CI pipeline + Pytest + GitHub Pages deploy
@@ -249,7 +249,7 @@ smdc space queue
 smdc deploy --all
 ```
 
-> **Dashboard access (`smdc dashboard`)**: the server binds `127.0.0.1` unless `--host` or `SMDC_DASHBOARD_HOST` says otherwise. Set `SMDC_DASHBOARD_TOKEN` before exposing it: control POSTs then require `Authorization: Bearer <token>`, and so do the JSON and SSE read endpoints for any non-local client (the SSE stream also accepts `?token=`); without a token, control POSTs are accepted only from a local, non-proxied client (loopback TCP peer and no `X-Forwarded-For` / `Forwarded` / `X-Real-IP` / `Via` header), so neither a remote client nor one relayed by a same-host reverse proxy can control the node, but both can still read `/api/status`. The rack-door and PDU-outlet controls change a **digital shadow** only: this package ships no door or PDU driver, so their responses and the `hardware` section of `/api/status` say `"actuated": false, "simulated": true`, and in hardware mode (`HAL_MODE=hardware`) they are refused with HTTP 501 until an integration registers an actuator backend (`sovereign_dc.web.dashboard.register_actuator`). `hardware.fan_rpm` is an estimate from coolant temperature and load (`"fan_rpm_estimated": true`), not a tachometer reading, and a quantity the telemetry source did not report is `null`, never a nominal value. Browser pages from other origins get no CORS access unless they are loopback origins or listed in `SMDC_CORS_ORIGIN` (comma-separated origins, or `*`), for example `SMDC_CORS_ORIGIN=https://iliachry.gr` to let the hosted 3D twin shadow a node opened as `?node=<node url>&token=<token>`.
+> **Dashboard access (`smdc dashboard`)**: the server binds `127.0.0.1` unless `--host` or `SMDC_DASHBOARD_HOST` says otherwise. Set `SMDC_DASHBOARD_TOKEN` before exposing it: control POSTs then require `Authorization: Bearer <token>`, and so do the JSON and SSE read endpoints for any non-local client (the SSE stream also accepts `?token=`); without a token, control POSTs are accepted only from a local, non-proxied client (loopback TCP peer and no `X-Forwarded-For` / `Forwarded` / `X-Real-IP` / `Via` header), so neither a remote client nor one relayed by a same-host reverse proxy can control the node, but both can still read `/api/status`. **DNS-rebinding defence:** a request counts as local only if its `Host` header names a loopback host (`localhost`, `127.0.0.0/8`, `[::1]`) or a name listed in `SMDC_DASHBOARD_ALLOWED_HOSTS` (comma-separated host names, for a node you open by name, e.g. `SMDC_DASHBOARD_ALLOWED_HOSTS=smdc.lan,node1.example.org`). A request whose `Host` is neither of those nor the bound address (on a wildcard bind such as `0.0.0.0`: any IP literal) is served the JSON and SSE endpoints only with a valid token; without one it gets HTTP 421 (no token configured) or 401, and control POSTs get 403. So reach a tokenless node by IP address or list its name; `/health` and the page itself stay open. The rack-door and PDU-outlet controls change a **digital shadow** only: this package ships no door or PDU driver, so their responses and the `hardware` section of `/api/status` say `"actuated": false, "simulated": true`, and in hardware mode (`HAL_MODE=hardware`) they are refused with HTTP 501 until an integration registers an actuator backend (`sovereign_dc.web.dashboard.register_actuator`). `hardware.fan_rpm` is an estimate from coolant temperature and load (`"fan_rpm_estimated": true`), not a tachometer reading, and a quantity the telemetry source did not report is `null`, never a nominal value. Browser pages from other origins get no CORS access unless they are loopback origins or listed in `SMDC_CORS_ORIGIN` (comma-separated origins, or `*`), for example `SMDC_CORS_ORIGIN=https://iliachry.gr` to let the hosted 3D twin shadow a node opened as `?node=<node url>&token=<token>`.
 
 > **State and configuration**
 > - **`SMDC_STATE_DIR`** (default `~/.smdc`, mode 0700) holds wallets, ledgers, node keys and, by default, the DTN spool `dtn_spool.db` (override: `DTN_DB_PATH`), the technician alert log `sovereign_logs/technician_notifications.jsonl` (override the directory: `SOVEREIGN_LOG_DIR`) and the sentinel mode file `sovereign_mode` (override: `SOVEREIGN_MODE_FILE`). Nothing defaults to shared `/tmp` any more. A spool left by an older release at `/tmp/dtn_spool.db` keeps being used until `<state dir>/dtn_spool.db` exists, but only if it is a regular file owned by you and not group/world-writable; move it into the state directory to keep it across reboots.
@@ -272,6 +272,7 @@ smdc deploy --all
 
 ### 2. 🔌 ESP32 Microcontroller Hardware Bridge (`firmware/`)
 * C++ Arduino and ESPHome firmware reading physical **Victron VE.Direct** serial streams (checksum-validated) and **DS18B20 1-Wire** coolant temperature probes, broadcasting via HTTP `/metrics` (and MQTT in the ESPHome flavour). RS485 Modbus BMS reading is not implemented.
+* **Bridge → stack:** the power exporter is the hardware reader. With `SIMULATE_POWER_DATA=false` (or `smdc telemetry --hardware`) and `ESP32_BRIDGE_URL=http://<bridge-ip>/metrics` it scrapes either firmware flavour on every request and re-exports the readings under the canonical `sovereign_*` names that the HAL, the sentinel, `load_shedder.sh` and Grafana read (mapping table in [`firmware/README.md`](firmware/README.md)). A series the bridge does not supply is omitted, and `sovereign_telemetry_source_up` is `0` when the bridge is unreachable, returns nothing usable, or its last valid VE.Direct frame is older than `ESP32_BRIDGE_MAX_FRAME_AGE_SECONDS` (default 10). VE.Direct and RS485 are not read directly by the node, and the path has only been tested against the firmware's output format, not against a physical bridge.
 
 ### 3. 🛡️ Security Hardening & Intrusion Detection (`software/security/`)
 * **CrowdSec Intrusion Detection:** CrowdSec reads the Traefik access log and raises decisions for brute-force scanners and malicious IP ranges. No bouncer is wired yet, so it detects but does not block.
@@ -516,7 +517,7 @@ See [`terraform/README.md`](terraform/README.md) for full module documentation a
 ---
 
 ## 🛡️ Quality Gates & Automated Tests
-The project enforces strict automated Quality Gates covering Ruff linting, Ruff formatting, Mypy static typing, Docker Compose multi-stack integrity, and Pytest coverage with 1000 automated tests ($\ge 85\%$ strict threshold, achieving **91.8%** coverage):
+The project enforces strict automated Quality Gates covering Ruff linting, Ruff formatting, Mypy static typing, Docker Compose multi-stack integrity, and Pytest coverage with 1078 automated tests ($\ge 85\%$ strict threshold, achieving **92.1%** coverage):
 
 ```bash
 # Run all quality gates locally

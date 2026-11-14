@@ -123,8 +123,35 @@ def get_solar_forecast() -> float:
     return 0.0
 
 
-def set_mode(mode: str) -> None:
-    """Writes the current mode to a shared state file and dispatches event."""
+def write_mode_file(mode: str, log_failure: bool = True) -> bool:
+    """Writes ``mode`` to the shared mode file. Returns True only if the file now holds it.
+
+    A failure is logged as a warning unless ``log_failure`` is False (the caller is
+    retrying and has already reported this failure streak).
+    """
+    mode_file = mode_file_path()
+    try:
+        directory = os.path.dirname(mode_file)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+        # Write-then-rename so a concurrent reader never sees a partial mode string.
+        tmp_file = f"{mode_file}.tmp"
+        with open(tmp_file, "w", encoding="utf-8") as f:
+            f.write(mode)
+        os.replace(tmp_file, mode_file)
+    except Exception as e:
+        if log_failure:
+            logger.warning("Failed to write mode state %s to %s: %s", mode, mode_file, e)
+        return False
+    return True
+
+
+def set_mode(mode: str) -> bool:
+    """Publishes the mode on the event bus and writes it to the shared mode file.
+
+    Returns True if the mode file was written. False means other processes still read the
+    previous mode: the caller must retry (``run_copilot`` does, on every poll).
+    """
     level_map = {
         "NORMAL": 0,
         "SOLAR_SURPLUS_COMPUTE": 0,
@@ -145,18 +172,7 @@ def set_mode(mode: str) -> None:
     except Exception as e:
         logger.debug("Event bus notification notice: %s", e)
 
-    mode_file = mode_file_path()
-    try:
-        directory = os.path.dirname(mode_file)
-        if directory:
-            os.makedirs(directory, exist_ok=True)
-        # Write-then-rename so a concurrent reader never sees a partial mode string.
-        tmp_file = f"{mode_file}.tmp"
-        with open(tmp_file, "w", encoding="utf-8") as f:
-            f.write(mode)
-        os.replace(tmp_file, mode_file)
-    except Exception as e:
-        logger.warning("Failed to write mode state: %s", e)
+    return write_mode_file(mode)
 
 
 def read_persisted_mode() -> str | None:
@@ -216,15 +232,25 @@ def run_copilot() -> None:
     current_mode = persisted_mode or DEFAULT_MODE
     if persisted_mode is not None:
         logger.info("Resuming from persisted mode %s.", persisted_mode)
-    # The mode file is only known to match the in-memory mode once this process has
-    # written it. Until then the first evaluation writes it even if the mode is unchanged,
-    # so a stale file (e.g. ECO_PRESERVATION left by a previous run) cannot survive.
-    mode_file_synced = False
+    # The decided mode (current_mode) and the mode the file is known to hold are tracked
+    # separately. The file is only known to match once this process has written it, so the
+    # first evaluation writes it even if the mode is unchanged (a stale ECO_PRESERVATION left
+    # by a previous run cannot survive), and a write that failed is retried on every poll,
+    # with or without fresh telemetry, until it succeeds.
+    file_mode: str | None = None
+    write_failing = False
 
     while True:
         metrics = get_telemetry()
         forecast = get_solar_forecast()
         decision = evaluate_mode(metrics, forecast)
+
+        if write_failing and (decision is None or decision[0] == current_mode):
+            # Same decision as before, but the mode file still holds something else.
+            if write_mode_file(current_mode, log_failure=False):
+                file_mode = current_mode
+                write_failing = False
+                logger.info("Mode file now holds %s (earlier write failures recovered).", current_mode)
 
         if decision is None:
             logger.warning(
@@ -234,10 +260,17 @@ def run_copilot() -> None:
             )
         else:
             target_mode, reason = decision
-            if target_mode != current_mode or not mode_file_synced:
+            if target_mode != current_mode or (file_mode != target_mode and not write_failing):
                 current_mode = target_mode
-                set_mode(current_mode)
-                mode_file_synced = True
+                # None (a stand-in that returns nothing) counts as written.
+                if set_mode(current_mode) is False:
+                    # write_mode_file() has logged the failure; the retries above stay quiet.
+                    write_failing = True
+                else:
+                    file_mode = current_mode
+                    if write_failing:
+                        logger.info("Mode file now holds %s (earlier write failures recovered).", current_mode)
+                    write_failing = False
                 if target_mode == "ECO_PRESERVATION":
                     logger.warning(
                         "⚡ Sentinel Trigger: %s. Mode set to ECO_PRESERVATION (mode readers defer batch work).", reason

@@ -102,7 +102,7 @@ network:
 storage:
   persistent_volume: "factory-analytics-data"
   mount_point: "/var/lib/smdc/apps/smart-factory-analytics/data"
-  backup_enabled: true   # Included in Restic encrypted off-site snapshots
+  backup_enabled: true   # Declaration of intent only: NOT backed up automatically (see below)
 
 # Health Probes & Auto-Restart
 health_check:
@@ -113,6 +113,13 @@ health_check:
   timeout_sec: 5
   max_retries: 3
 ```
+
+> **`storage.backup_enabled` does not back anything up.** The field is stored in the manifest as a declaration of intent; no backup job reads it, and an application's volume is not part of the node's Restic backup set. `smdc app validate` and `smdc app register` print a notice when it is `true`. To really include the volume, an operator edits the backup set by hand (see [`software/backup/README.md`](software/backup/README.md)):
+>
+> 1. Add one line for the Docker volume to `software/backup/volumes.conf`, in its format `key|name|class|paths|reason`, for example `factory_analytics_data|factory-analytics-data|files|.|smart-factory-analytics application data` (`name` is the volume's fixed Docker name, or `-` for a volume scoped to the Compose project; class `files` is a file-level copy, so an application that keeps a live database in the volume must also export a dump into it).
+> 2. If the backup container is used (`setup.sh --with-backup`), declare the volume in `software/backup/docker-compose.backup.yml` and mount it read-only at `/data/<key>`; `scripts/validate_compose.sh` checks that the mounts and `volumes.conf` agree.
+>
+> Snapshots are encrypted, but the default repository (`RESTIC_REPOSITORY=/var/backups/sovereign`) is on the node itself: it is off-site only if you point `RESTIC_REPOSITORY` at a remote backend (`s3:`, `sftp:`, `rest:`) or copy the repository elsewhere.
 
 ---
 

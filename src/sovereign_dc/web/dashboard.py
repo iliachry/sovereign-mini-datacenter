@@ -512,6 +512,52 @@ def _is_loopback_host(host: str) -> bool:
     return bool(addr.is_loopback or (mapped is not None and mapped.is_loopback))
 
 
+_WILDCARD_BIND_HOSTS = frozenset({"", "0.0.0.0", "::", "*"})  # noqa: S104 - compared, never bound
+
+
+def _host_header_name(value: str) -> str | None:
+    """The host part of a ``Host`` header (or of an allow-list entry), lower-cased.
+
+    The port and IPv6 brackets are dropped, as is a trailing dot. None when the value is not
+    a well-formed ``host[:port]``.
+    """
+    value = value.strip()
+    if not value or any(ch in value for ch in "/\\@?# \t"):
+        return None
+    try:
+        parts = urlsplit("//" + value)
+        _ = parts.port  # raises ValueError on a malformed port
+    except ValueError:
+        return None
+    host = (parts.hostname or "").rstrip(".")
+    return host or None
+
+
+def _is_ip_literal(host: str) -> bool:
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return True
+
+
+def _configured_allowed_hosts() -> frozenset[str]:
+    """Host names listed in SMDC_DASHBOARD_ALLOWED_HOSTS (comma or whitespace separated)."""
+    raw = os.environ.get("SMDC_DASHBOARD_ALLOWED_HOSTS", "")
+    names = (_host_header_name(item) for item in re.split(r"[\s,]+", raw) if item)
+    return frozenset(name for name in names if name)
+
+
+def _same_host(left: str, right: str) -> bool:
+    """Host equality that also matches differently written forms of one IP address."""
+    if left == right:
+        return True
+    try:
+        return ipaddress.ip_address(left) == ipaddress.ip_address(right)
+    except ValueError:
+        return False
+
+
 def _as_bool(value: Any, field: str) -> bool:
     """Accepts only real JSON booleans (``bool("false")`` would otherwise be True)."""
     if not isinstance(value, bool):
@@ -1084,31 +1130,93 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return False
         return hmac.compare_digest(provided.encode("utf-8"), expected_token.encode("utf-8"))
 
+    def _bind_host(self) -> str:
+        """The address the server was asked to bind (``""`` when unknown: treated as wildcard)."""
+        server = getattr(self, "server", None)
+        configured = getattr(server, "smdc_bind_host", None)
+        if isinstance(configured, str):
+            return configured.strip().strip("[]").lower()
+        address = getattr(server, "server_address", None)
+        if isinstance(address, tuple) and address and isinstance(address[0], str):
+            return address[0].lower()
+        return ""
+
+    def _host_class(self) -> str:
+        """Classifies the request's ``Host`` header (the defence against DNS rebinding).
+
+        A browser always sends ``Host`` and, under DNS rebinding, it carries the attacker's
+        name while the TCP connection arrives from loopback (or from the victim's LAN).
+
+        * ``"absent"``: no header (an HTTP/1.0 or hand-made client; a browser cannot do this).
+        * ``"loopback"``: ``localhost``, ``127.0.0.0/8`` or ``[::1]``.
+        * ``"allowed"``: listed in SMDC_DASHBOARD_ALLOWED_HOSTS.
+        * ``"bound"``: the address the server is bound to, or, on a wildcard bind, any IP
+          literal (an IP literal is not a DNS name, so it cannot be rebound).
+        * ``"untrusted"``: everything else, including a malformed header.
+        """
+        raw = self.headers.get("Host")
+        if raw is None or not str(raw).strip():
+            return "absent"
+        host = _host_header_name(str(raw))
+        if host is None:
+            return "untrusted"
+        if _is_loopback_host(host):
+            return "loopback"
+        if host in _configured_allowed_hosts():
+            return "allowed"
+        bind_host = self._bind_host()
+        if bind_host in _WILDCARD_BIND_HOSTS:
+            return "bound" if _is_ip_literal(host) else "untrusted"
+        return "bound" if _same_host(host, bind_host) else "untrusted"
+
     def _is_local_request(self) -> bool:
         """True when the request was made on this machine and was not relayed by a proxy.
 
         The one definition of "local" for both the data GETs and the control POSTs: the TCP
-        peer is loopback and the request carries none of the headers a reverse proxy adds
-        (``_PROXY_HEADERS``). A same-host proxy connects from loopback on behalf of a remote
-        client, so such a request is not local, whatever address the server is bound to.
+        peer is loopback, the request carries none of the headers a reverse proxy adds
+        (``_PROXY_HEADERS``), and its ``Host`` header (when present) names a loopback host or
+        one listed in SMDC_DASHBOARD_ALLOWED_HOSTS. A same-host proxy connects from loopback
+        on behalf of a remote client, and a browser under DNS rebinding connects from loopback
+        with the attacker's name in ``Host``: neither is local, whatever the bind address.
         """
         client = getattr(self, "client_address", None)
         peer_host = str(client[0]) if client else ""
         if not _is_loopback_host(peer_host):
             return False
-        return not any(self.headers.get(name) for name in _PROXY_HEADERS)
+        if any(self.headers.get(name) for name in _PROXY_HEADERS):
+            return False
+        return self._host_class() in ("absent", "loopback", "allowed")
 
     def _check_get_auth(self, allow_query_token: bool = False) -> bool:
         """Authorizes a data GET (JSON endpoints and the SSE stream).
 
-        Without SMDC_DASHBOARD_TOKEN the endpoints stay open, as before (the default bind is
-        loopback and cross-origin browser reads are denied by the CORS policy). With the
-        token set, any request that is not made locally must present it.
+        A valid SMDC_DASHBOARD_TOKEN always authorizes. Otherwise a request whose ``Host``
+        header is untrusted (``_host_class``) is refused, token configured or not: that is a
+        browser under DNS rebinding, or a client using a name the operator has not listed in
+        SMDC_DASHBOARD_ALLOWED_HOSTS. Beyond that, without a token the endpoints stay open
+        (the default bind is loopback and cross-origin browser reads are denied by the CORS
+        policy); with the token set, any request that is not made locally must present it.
         """
         expected_token = os.environ.get("SMDC_DASHBOARD_TOKEN", "").strip()
-        if not expected_token or self._is_local_request():
+        if expected_token and self._bearer_token_matches(expected_token, allow_query_token=allow_query_token):
             return True
-        return self._bearer_token_matches(expected_token, allow_query_token=allow_query_token)
+        if self._host_class() == "untrusted":
+            return False
+        return not expected_token or self._is_local_request()
+
+    def _send_get_refusal(self) -> None:
+        """401 when a token would help; 421 when the ``Host`` header itself is the problem."""
+        if os.environ.get("SMDC_DASHBOARD_TOKEN", "").strip() or self._host_class() != "untrusted":
+            self._send_unauthorized()
+            return
+        self._send_json(
+            421,
+            {
+                "success": False,
+                "error": "Host header not recognised: use the node's IP address or a loopback name, "
+                "list this host name in SMDC_DASHBOARD_ALLOWED_HOSTS, or configure SMDC_DASHBOARD_TOKEN",
+            },
+        )
 
     def _send_unauthorized(self) -> None:
         payload = dumps_strict({"success": False, "error": "Unauthorized"}).encode("utf-8")
@@ -1130,7 +1238,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
         With SMDC_DASHBOARD_TOKEN set, a matching bearer token is required. Without a token,
         control is limited to a genuine local client, by the same rule the data GETs use
         (``_is_local_request``): the TCP peer must be loopback and the request must not have
-        been relayed by a proxy (no ``X-Forwarded-For`` / ``Forwarded`` / ``X-Real-IP`` ...).
+        been relayed by a proxy (no ``X-Forwarded-For`` / ``Forwarded`` / ``X-Real-IP`` ...),
+        and ``Host`` must name a loopback host or one in SMDC_DASHBOARD_ALLOWED_HOSTS (so a
+        page that rebinds its own DNS name to loopback is refused).
         Any browser ``Origin`` must itself be a loopback origin. So neither a LAN host, nor a
         remote client behind a same-host reverse proxy, nor a web page from another site can
         issue a control request; this holds on every bind address.
@@ -1178,7 +1288,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         elif path in _PROTECTED_GET_PATHS and not self._check_get_auth(
             allow_query_token=path == "/api/telemetry/stream"
         ):
-            self._send_unauthorized()
+            self._send_get_refusal()
         elif path == "/api/status":
             try:
                 status_payload = get_cached_system_status_payload()
@@ -1432,10 +1542,15 @@ def run_dashboard_server(port: int = 8080, open_browser: bool = False, host: str
     (loopback TCP peer, no forwarding headers), on any bind address: every other client,
     including one relayed by a same-host reverse proxy, is refused. With the token set, every
     control POST needs it, and so do remote clients of the JSON and SSE data endpoints.
+    A request whose ``Host`` header is neither loopback, nor the bound address (any IP literal
+    on a wildcard bind), nor listed in SMDC_DASHBOARD_ALLOWED_HOSTS is served the data
+    endpoints only with a valid token (DNS-rebinding defence); ``/health`` and the page stay open.
     Cross-origin browser access is limited to loopback origins and SMDC_CORS_ORIGIN.
     """
     bind_host = host or os.environ.get("SMDC_DASHBOARD_HOST", "").strip() or "127.0.0.1"
     server = HTTPServer((bind_host, port), DashboardHandler)
+    # The configured name, for the Host-header check (server_address holds the resolved IP).
+    server.smdc_bind_host = bind_host  # type: ignore[attr-defined]
     server.daemon_threads = True  # SSE streams must not block shutdown
     url = f"http://localhost:{port}"
     logger.info("Sovereign Operations Web Dashboard listening on %s:%d", bind_host, port)

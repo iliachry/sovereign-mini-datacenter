@@ -24,6 +24,11 @@ services:
     environment:
       - EXPORTER_PORT=9101
       - SIMULATE_POWER_DATA=${SIMULATE_POWER_DATA:-true}
+      # Hardware mode (SIMULATE_POWER_DATA=false): /metrics URL of the ESP32 telemetry
+      # bridge, e.g. http://192.168.1.50/metrics (use the LAN IP: mDNS names do not resolve
+      # in the container). Empty = no hardware source, sovereign_telemetry_source_up 0.
+      - ESP32_BRIDGE_URL=${ESP32_BRIDGE_URL:-}
+      - ESP32_BRIDGE_MAX_FRAME_AGE_SECONDS=${ESP32_BRIDGE_MAX_FRAME_AGE_SECONDS:-10}
     volumes:
       - ./telemetry/power_exporter.py:/app/power_exporter.py:ro
     networks:

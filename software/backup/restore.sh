@@ -2,9 +2,11 @@
 # ====================================================================
 # Sovereign Mini Datacenter — Disaster Recovery & Restore Engine
 #
-# A snapshot holds database DUMPS (smdc-dumps/, with a MANIFEST), the
-# deployment configuration (software/, .env included) and the static files of
-# the volumes - never raw copies of live database directories. Restoring a
+# A snapshot holds database DUMPS (smdc-dumps/, with a MANIFEST that records the
+# size and SHA-256 of every dump file), the copy of the Nextcloud volume taken in
+# its maintenance window (smdc-nextcloud-files/), the deployment configuration
+# (software/, .env included) and the static files of the other volumes - never
+# raw copies of live database directories. Restoring a
 # service therefore means: put the static files back, then LOAD its dump with
 # the database's own tool. `plan` prints those steps for a restored snapshot.
 #
@@ -51,9 +53,10 @@ Usage:
   ./restore.sh restore-id <snapshot_id> <target>  Extract a specific snapshot into <target>
   ./restore.sh plan <target>                      Print the per-service restore steps for an extracted snapshot
   ./restore.sh --verify [snapshot_id]             Restore the dumps of the latest (or given) snapshot into a
-                                                  temporary directory and check that each one loads:
-                                                  SQLite integrity_check, pg_restore --list, GitLab archive
-                                                  listing. Live services are not touched. Non-zero on any failure.
+                                                  temporary directory and check that each one is the file the
+                                                  MANIFEST recorded (size, SHA-256) and loads: SQLite
+                                                  integrity_check, pg_restore --list, GitLab archive listing.
+                                                  Live services are not touched. Non-zero on any failure.
   ./restore.sh check                              restic repository check (archive integrity only - it says
                                                   nothing about whether a database can be restored)
 
@@ -142,8 +145,40 @@ verify_gitlab() {
     info "    archive lists, database dump is a valid gzip stream"
 }
 
+sha256_of() {
+    local out
+    if command -v sha256sum >/dev/null 2>&1; then
+        out="$(sha256sum "$1")" || return 1
+    elif command -v shasum >/dev/null 2>&1; then
+        out="$(shasum -a 256 "$1")" || return 1
+    else
+        out="$(openssl dgst -sha256 -r "$1")" || return 1
+    fi
+    printf '%s' "${out%%[!0-9a-fA-F]*}"
+}
+
+# verify_recorded <file> <bytes> <sha256>: the restored file is the one the dump phase wrote.
+verify_recorded() {
+    local file="$1" want_size="$2" want_sum="$3" size sum
+    [[ -f "$file" ]] || { info "    not in the snapshot"; return 1; }
+    size="$(wc -c <"$file" | tr -d '[:space:]')"
+    [[ "$size" == "$want_size" ]] || { info "    ${size} bytes, the MANIFEST recorded ${want_size}"; return 1; }
+    sum="$(sha256_of "$file")" || { info "    cannot compute SHA-256"; return 1; }
+    [[ "$sum" == "$want_sum" ]] || { info "    SHA-256 ${sum}, the MANIFEST recorded ${want_sum}"; return 1; }
+}
+
+# Number of files of the Nextcloud snapshot that the restic snapshot lists (nothing is restored).
+count_tree_files() {
+    local snapshot="$1" dir="$2"
+    if [[ "$snapshot" == "latest" ]]; then
+        restic ls latest --tag "sovereign-snapshot" --long
+    else
+        restic ls "$snapshot" --long
+    fi | grep -E '^-' | grep -c "/${dir}/volume/" || true
+}
+
 verify_dumps() {
-    local snapshot="${1:-latest}" tmp dumps manifest failed=0 checked=0
+    local snapshot="${1:-latest}" tmp dumps manifest failed=0 checked=0 version
     need_restic
     command -v sqlite3 >/dev/null 2>&1 || err "sqlite3 CLI not found. Install it with: apt-get install sqlite3"
     tmp="$(mktemp -d "${TMPDIR:-/tmp}/smdc-restore-verify.XXXXXX")"
@@ -156,6 +191,15 @@ verify_dumps() {
     manifest="${dumps}/MANIFEST"
     grep -qx 'status|complete' "$manifest" || err "MANIFEST is not marked complete: this snapshot does not hold a complete set of dumps."
     info "dumps created: $(sed -n 's/^created|//p' "$manifest" | head -n 1)"
+    version="$(sed -n '1s/^smdc-dump-manifest|//p' "$manifest")"
+    case "$version" in
+        1) warn "MANIFEST format 1 (written by an older backup.sh): it records no sizes or SHA-256 digests, so only loadability is checked." ;;
+        2) ;;
+        *) err "MANIFEST has an unknown format ('${version}'): use the restore.sh that belongs to the backup.sh that wrote it (it is in the snapshot's configuration directory)." ;;
+    esac
+    if grep -q '^coverage|reduced|' "$manifest"; then
+        warn "This snapshot was taken with BACKUP_ALLOW_COVERAGE_DROP=1 and covers less than the one before it: $(sed -n 's/^coverage|reduced|//p' "$manifest" | head -n 1)"
+    fi
 
     local gitlab_tar
     gitlab_tar="$(awk -F'|' '$1 == "dump" && $3 == "gitlab" && $5 == "ok" { print $4; exit }' "$manifest")"
@@ -164,8 +208,25 @@ verify_dumps() {
         restic_restore "$snapshot" "$tmp" --include "$gitlab_tar"
     fi
 
+    if [[ "$version" == "2" ]]; then
+        log "Comparing the restored dump files with the sizes and SHA-256 digests in the MANIFEST:"
+        local rtag ra rb rc rd _rrest rfile
+        while IFS='|' read -r rtag ra rb rc rd _rrest; do
+            case "$rtag" in
+                file)
+                    if verify_recorded "${dumps}/${ra}" "$rb" "$rc"; then info "OK       ${ra}"; else info "FAILED   ${ra}"; failed=$((failed + 1)); fi
+                    ;;
+                extfile)
+                    rfile="$(find "$tmp" -type f -name "$(basename "$rb")" | head -n 1)"
+                    if [[ -n "$rfile" ]] && verify_recorded "$rfile" "$rc" "$rd"; then info "OK       ${rb} (volume ${ra})"; else info "FAILED   ${rb} (volume ${ra})"; failed=$((failed + 1)); fi
+                    ;;
+            esac
+        done <"$manifest"
+    fi
+
     log "Checking every dump listed in the MANIFEST:"
-    local _tag name kind path status detail file
+    local _tag name kind path status detail file listed recorded
+    # shellcheck disable=SC2094  # the manifest is only read, here and by awk below
     while IFS='|' read -r _tag name kind path status detail; do
         [[ "$_tag" == "dump" ]] || continue
         if [[ "$status" != "ok" ]]; then
@@ -188,6 +249,18 @@ verify_dumps() {
                 ;;
             files)
                 if [[ -d "${dumps}/${path}" ]]; then info "OK       ${name} (plain files present)"; else info "FAILED   ${name} (directory ${path} missing)"; failed=$((failed + 1)); fi
+                ;;
+            tree)
+                # The Nextcloud file copy is not restored here (it can be large): compare the
+                # number of files the snapshot lists with the number the dump phase recorded.
+                recorded="$(awk -F'|' -v d="$path" '$1 == "tree" && $2 == d { print $3; exit }' "$manifest")"
+                listed="$(count_tree_files "$snapshot" "$path")"
+                if [[ -n "$recorded" && "$listed" == "$recorded" ]]; then
+                    info "OK       ${name} (${listed} files listed in the snapshot, as recorded; contents not read)"
+                else
+                    info "FAILED   ${name} (snapshot lists ${listed:-0} files under ${path}/volume, the MANIFEST recorded ${recorded:-nothing})"
+                    failed=$((failed + 1))
+                fi
                 ;;
             *)
                 info "FAILED   ${name}: unknown dump kind '${kind}'"
@@ -219,6 +292,7 @@ Restore plan for ${target}
   dumps          ${dumps}  (created $(sed -n 's/^created|//p' "$manifest" | head -n 1))
   configuration  ${config:-<not found in this snapshot>}  (compose files, overlays, provisioning, .env)
   volume files   under ${target}: .../<project>_<volume>/_data (host-mode snapshot) or /data/<volume> (container-mode snapshot)
+  nextcloud      $(sed -n 's/^nextcloud_mode|//p' "$manifest" | head -n 1 | sed -e 's/^maintenance$/maintenance mode: database dump and file copy (smdc-nextcloud-files) are from the same window/' -e 's/^online$/online: the files were walked live after the database dump and may not match it/' -e 's/^$/older backup.sh: the files were walked live after the database dump and may not match it/')
 
 Order on a fresh node:
   1. Copy the configuration directory back as software/ (it contains .env: keep it mode 0600).
@@ -250,9 +324,15 @@ EOF
             dtn-spool)
                 echo "  - dtn-spool (space-node stopped): copy ${dumps}/${path} to <space_spool_data>/bundles.db; delete bundles.db-wal / -shm." ;;
             nextcloud)
-                echo "  - nextcloud (stopped): copy ${dumps}/${path} to <nextcloud_data>/data/owncloud.db (chown 33:33), start it, then:"
+                echo "  - nextcloud (stopped): copy ${dumps}/${path} to the database path named in this line's source (\"${detail%%;*}\"; data/owncloud.db unless dbname was changed), chown 33:33, start it, then:"
+                echo "      docker exec -u www-data sovereign_nextcloud php occ maintenance:mode --off     # a maintenance-mode snapshot restores config.php with maintenance => true"
                 echo "      docker exec -u www-data sovereign_nextcloud php occ maintenance:data-fingerprint"
-                echo "      docker exec -u www-data sovereign_nextcloud php occ files:scan --all" ;;
+                echo "      docker exec -u www-data sovereign_nextcloud php occ files:scan --all           # needed for an online-mode snapshot; harmless otherwise" ;;
+            nextcloud-files)
+                echo "  - nextcloud-files: BEFORE the database step above, copy the volume copy taken in the maintenance window back into the EMPTY nextcloud_data volume"
+                echo "    (it replaces step 3 for this volume; the live volume is not in this snapshot):"
+                echo "      docker run --rm -v <project>_nextcloud_data:/to -v $(dirname "$dumps")/${path}/volume:/from:ro alpine cp -a /from/. /to/"
+                echo "    ${detail}" ;;
             openproject)
                 echo "  - openproject (dumped by: ${detail}). Official all-in-one procedure, adapted to the named volume and the custom-format dump"
                 echo "    (https://www.openproject.org/docs/installation-and-operations/operation/restoring/); rehearse it on a spare node:"

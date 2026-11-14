@@ -136,7 +136,7 @@ def get_mcp_prompts() -> list[MCPPrompt]:
         ),
         MCPPrompt(
             name="prepare_space_transmission",
-            description="Calculate next satellite overpass and queue cryptographically signed RFC 9171 DTN bundles.",
+            description="Calculate next satellite overpass and queue RFC 9171 DTN bundles (integrity digests only; bundles are not signed).",
             arguments=[
                 MCPPromptArgument(
                     name="destination",

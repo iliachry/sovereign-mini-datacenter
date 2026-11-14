@@ -30,13 +30,13 @@ const BATTERY_USABLE_DOD = 0.85; // Usable depth of discharge
 
 // BOM cost estimator (USD)
 // Unit prices are the priced rows of hardware/COMPONENTS.md; at DEFAULT_SIZING the total equals
-// that file's reference BOM: 4,045 + 2×6,950 + 2×1,200 + 8×180 + 2,178 + 1×600 = $24,563.
+// that file's reference BOM: 4,045 + 2×6,950 + 2×1,200 + 8×180 + 2,316 + 1×600 = $24,701.
 // Host, storage and switch (2,250) = switch 270 + NVMe 2×320 + host board 450 + host CPU 330 + RAM 2×160
 // + boot drive 60 + host chassis and PSU 180.
 // Host liquid loop and enclosure fans (718) = radiator 1×140 + CPU water block 90 + pump 90 + pump top and
 // reservoir 60 + fans 6×32 + coolant 1 L×30 + compression fittings 6×8 + tubing 25 + fan bracket 25 + grilles 6×3.
-// Protection, cabling, 12 V supply and telemetry bridge (858) = Class T fuses 2×55 + holders 2×45 + MEGA fuses 5×9
-// + 35 mm² cable 6 m×12 + lugs 24×2 + PV combiner 70 + PV isolator 40 + 4 mm² PV cable 50 m×1
+// Protection, cabling, 12 V supply and telemetry bridge (996) = Class T fuses 2×55 + holders 2×45
+// + battery isolators 2×65 + MEGA fuses 5×9 + 35 mm² cable 6 m×12 + lugs 28×2 + PV combiner 70 + PV isolator 40 + 4 mm² PV cable 50 m×1
 // + 6 mm² PV cable 10 m×1.50 + MC4 pairs 6×3 + earthing kit 80 + 48V-to-12V converter 95
 // + 12 V distribution 30 + telemetry bridge 45 + AC output RCBO 50. These are held fixed here: the calculator does not
 // rescale cable or fuses with the panel or battery count.
@@ -44,7 +44,7 @@ const COST_BASE_USD = 4045; // Host, storage, switch (2,250) + PDU (250) + host 
 const COST_NODE_USD = 6950; // NVIDIA DGX Spark (128 GB / 4 TB), price listed on marketplace.nvidia.com, checked 2026-11-14
 const COST_BATTERY_PACK_USD = 1200; // 5.12 kWh 48V 100Ah LiFePO4
 const COST_PANEL_USD = 180; // 410W monocrystalline PERC
-const COST_POWER_FIXED_USD = 2178; // MultiPlus-II (1,100) + SmartShunt (130) + Lynx Distributor (90) + protection, cabling, 12 V supply and telemetry bridge (858)
+const COST_POWER_FIXED_USD = 2316; // MultiPlus-II (1,100) + SmartShunt (130) + Lynx Distributor (90) + protection, cabling, 12 V supply and telemetry bridge (996)
 const COST_MPPT_USD = 600; // Victron SmartSolar MPPT 250/70-Tr
 // One MPPT 250/70 takes two strings of four panels (4S2P): a third parallel string would exceed
 // its 35 A PV short-circuit limit with 14 A panels, so every further 8 panels add a controller.

@@ -377,19 +377,71 @@ class SMDCClient:
             return {"status": "error", "error": str(e)}
 
     def get_dynamic_pricing(self, soc: float | None = None, solar_w: float | None = None) -> dict[str, Any]:
-        """Query real-time dynamic solar-aware compute rates."""
+        """Quote the energy-aware LLM-inference rate for the node's present power state.
+
+        ``soc`` (battery percent) and ``solar_w`` (PV watts) override the node's readings;
+        whichever is omitted is read from the node with ``get_telemetry()``. No healthy
+        default is ever substituted:
+
+        - If the battery state of charge is neither given nor readable, there is no quote:
+          the result is ``{"status": "unavailable", "pricing_available": False, "error": ...}``
+          with no multiplier and no price (the caller decides whether to wait or refuse).
+        - If only the solar power is unknown it is priced as unknown (``None``), which can
+          never earn the surplus discount.
+
+        Every result carries ``inputs``: the ``battery_soc`` and ``solar_watts`` that were
+        priced, the source of each (``"caller"``, ``"telemetry:api"``, ``"telemetry:hal"`` or
+        ``"unavailable"``) and ``is_simulated`` (True / False as reported by the node, None
+        when unknown or when both inputs came from the caller). A successful result is the
+        quote (``final_unit_price``, ``energy_multiplier``, ``energy_state``, ...) plus
+        ``status: "quoted"``, ``pricing_available: True`` and ``inputs``.
+        """
+        inputs: dict[str, Any] = {
+            "battery_soc": soc,
+            "solar_watts": solar_w,
+            "battery_soc_source": "caller" if soc is not None else "unavailable",
+            "solar_watts_source": "caller" if solar_w is not None else "unavailable",
+            "is_simulated": None,
+        }
         try:
+            if soc is None or solar_w is None:
+                telemetry = self.get_telemetry()
+                source = str(telemetry.get("source") or "unavailable")
+                if source != "unavailable":
+                    nested_power = telemetry.get("power")
+                    simulated = telemetry.get("is_simulated")
+                    if simulated is None and isinstance(nested_power, dict):
+                        simulated = nested_power.get("is_simulated")
+                    inputs["is_simulated"] = bool(simulated) if simulated is not None else None
+                    if soc is None:
+                        inputs["battery_soc"] = _finite_or_none(telemetry.get("battery_soc"))
+                        if inputs["battery_soc"] is not None:
+                            inputs["battery_soc_source"] = f"telemetry:{source}"
+                    if solar_w is None:
+                        inputs["solar_watts"] = _finite_or_none(telemetry.get("solar_watts"))
+                        if inputs["solar_watts"] is not None:
+                            inputs["solar_watts_source"] = f"telemetry:{source}"
+
+            if inputs["battery_soc"] is None:
+                return {
+                    "status": "unavailable",
+                    "pricing_available": False,
+                    "error": "Battery state of charge is unavailable (node telemetry could not be read); "
+                    "no price multiplier was derived.",
+                    "inputs": inputs,
+                }
+
             from sovereign_dc.economy.market import ComputeMarket, ServiceType
 
-            market = ComputeMarket()
-            current_soc = soc if soc is not None else 85.0
-            current_solar = solar_w if solar_w is not None else 850.0
-            quote = market.calculate_quote(
-                ServiceType.LLM_INFERENCE, quantity=1.0, battery_soc=current_soc, solar_power_w=current_solar
+            quote = ComputeMarket().calculate_quote(
+                ServiceType.LLM_INFERENCE,
+                quantity=1.0,
+                battery_soc=float(inputs["battery_soc"]),
+                solar_power_w=inputs["solar_watts"],
             )
-            return quote.to_dict()
+            return {**quote.to_dict(), "status": "quoted", "pricing_available": True, "inputs": inputs}
         except Exception as e:
-            return {"base_compute_unit": 0.05, "error": str(e)}
+            return {"status": "error", "pricing_available": False, "error": str(e), "inputs": inputs}
 
 
 class AppLifecycleHandler:
