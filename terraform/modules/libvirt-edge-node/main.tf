@@ -1,7 +1,9 @@
 resource "libvirt_volume" "disk" {
-  name   = "${var.domain_name}-root.qcow2"
-  pool   = var.pool_name
-  size   = var.disk_size_bytes
+  name = "${var.domain_name}-root.qcow2"
+  pool = var.pool_name
+  # `size` and `source` are mutually exclusive in dmacvicar/libvirt 0.8.x: a
+  # volume uploaded from an image takes the size of that image.
+  size   = var.base_image_path == "" ? var.disk_size_bytes : null
   source = var.base_image_path != "" ? var.base_image_path : null
   format = "qcow2"
 }
@@ -21,7 +23,7 @@ resource "libvirt_domain" "this" {
 
   network_interface {
     network_name   = var.network_name
-    wait_for_lease = true
+    wait_for_lease = var.wait_for_lease
   }
 
   console {

@@ -25,8 +25,9 @@ def test_sentinel_get_telemetry_failure():
         assert metrics == {}
 
 
-def test_sentinel_run_copilot_state_transitions(caplog):
+def test_sentinel_run_copilot_state_transitions(caplog, tmp_path, monkeypatch):
     caplog.set_level(logging.INFO)
+    monkeypatch.setenv("SOVEREIGN_MODE_FILE", str(tmp_path / "sovereign_mode"))
     # Test transitions: NORMAL -> ECO_PRESERVATION -> SOLAR_SURPLUS_COMPUTE -> NORMAL
     telemetry_sequence = [
         {"sovereign_battery_soc_percent": 18.0, "sovereign_solar_pv_power_watts": 100.0},

@@ -1,3 +1,9 @@
+locals {
+  # NVIDIA kernel modules can only be loaded when a driver extension is actually
+  # part of the installed image; requesting them on a stock image fails.
+  gpu_drivers_provided = var.gpu_installer_image != null || length(var.gpu_extension_images) > 0
+}
+
 resource "talos_machine_secrets" "this" {
   talos_version = var.talos_version
 }
@@ -26,10 +32,29 @@ data "talos_machine_configuration" "controlplane" {
         install = {
           disk = each.value.install_disk
         }
-        network = {
-          hostname    = each.value.hostname
-          nameservers = var.nameservers
-        }
+        network = merge(
+          {
+            hostname    = each.value.hostname
+            nameservers = var.nameservers
+          },
+          # Static addressing only when the node names its NIC; otherwise the
+          # node keeps the DHCP address it booted with.
+          each.value.interface != null ? {
+            interfaces = [
+              {
+                interface = each.value.interface
+                dhcp      = false
+                addresses = ["${each.value.ip}/${var.network_prefix_length}"]
+                routes = [
+                  {
+                    network = "0.0.0.0/0"
+                    gateway = var.gateway
+                  }
+                ]
+              }
+            ]
+          } : {}
+        )
         systemDiskEncryption = var.enable_luks_encryption ? {
           state = {
             provider = "luks2"
@@ -72,24 +97,43 @@ data "talos_machine_configuration" "worker" {
   config_patches = [
     yamlencode({
       machine = {
-        install = {
-          disk = each.value.install_disk
-          extensions = each.value.has_gpu ? [
-            { image = "ghcr.io/siderolabs/nvidia-container-toolkit:${var.talos_version}" },
-            { image = "ghcr.io/siderolabs/nvidia-open-gpu-kernel-modules:${var.talos_version}" }
-          ] : []
-        }
-        kernel = each.value.has_gpu ? {
+        install = merge(
+          { disk = each.value.install_disk },
+          each.value.has_gpu && var.gpu_installer_image != null ? { image = var.gpu_installer_image } : {},
+          each.value.has_gpu && length(var.gpu_extension_images) > 0 ? {
+            extensions = [for ref in var.gpu_extension_images : { image = ref }]
+          } : {}
+        )
+        kernel = each.value.has_gpu && local.gpu_drivers_provided ? {
           modules = [
             { name = "nvidia" },
             { name = "nvidia_uvm" },
             { name = "nvidia_modeset" }
           ]
         } : null
-        network = {
-          hostname    = each.value.hostname
-          nameservers = var.nameservers
-        }
+        network = merge(
+          {
+            hostname    = each.value.hostname
+            nameservers = var.nameservers
+          },
+          # Static addressing only when the node names its NIC; otherwise the
+          # node keeps the DHCP address it booted with.
+          each.value.interface != null ? {
+            interfaces = [
+              {
+                interface = each.value.interface
+                dhcp      = false
+                addresses = ["${each.value.ip}/${var.network_prefix_length}"]
+                routes = [
+                  {
+                    network = "0.0.0.0/0"
+                    gateway = var.gateway
+                  }
+                ]
+              }
+            ]
+          } : {}
+        )
         systemDiskEncryption = var.enable_luks_encryption ? {
           state = {
             provider = "luks2"

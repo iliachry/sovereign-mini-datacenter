@@ -42,7 +42,7 @@ export function init() {
     ior: 1.5,
   });
 
-  // 5. NVIDIA Jetson Gold Heatsink
+  // 5. NVIDIA DGX Spark Gold Heatsink
   materials.goldHeatsink = new THREE.MeshStandardMaterial({
     color: 0xf59e0b,
     metalness: 0.96,

@@ -4,6 +4,8 @@ import io
 import json
 from unittest.mock import MagicMock
 
+import pytest
+
 from sovereign_dc.telemetry import MetricsHandler, fault_overrides, get_telemetry_metrics
 
 
@@ -41,7 +43,40 @@ class TestFaultOverrides:
 
 
 class TestMetricsHandlerPOST:
-    """Test POST /fault and /fault/clear endpoints."""
+    """Test POST /fault and /fault/clear endpoints (enabled only via ENABLE_FAULT_INJECTION)."""
+
+    @pytest.fixture(autouse=True)
+    def _enable_fault_injection(self, monkeypatch):
+        monkeypatch.setenv("ENABLE_FAULT_INJECTION", "true")
+        fault_overrides.clear()
+        yield
+        fault_overrides.clear()
+
+    def test_post_fault_disabled_by_default(self, monkeypatch):
+        monkeypatch.delenv("ENABLE_FAULT_INJECTION")
+        handler = self._make_handler("/fault")
+        payload = json.dumps({"soc": 5}).encode("utf-8")
+        handler.headers = {"Content-Length": str(len(payload))}
+        handler.rfile = io.BytesIO(payload)
+
+        handler.do_POST()
+        handler.send_response.assert_called_with(403)
+        assert fault_overrides == {}
+
+    @pytest.mark.parametrize(
+        "body",
+        [b'{"soc": "abc"}', b'{"soc": NaN}', b'{"soc": true}', b'{"voltage": 1}', b"[1, 2]", b'{"temp": Infinity}'],
+    )
+    def test_post_fault_rejects_non_finite_or_unknown(self, body):
+        handler = self._make_handler("/fault")
+        handler.headers = {"Content-Length": str(len(body))}
+        handler.rfile = io.BytesIO(body)
+
+        handler.do_POST()
+        handler.send_response.assert_called_with(400)
+        assert fault_overrides == {}
+        # /metrics must still render after a rejected payload
+        assert "sovereign_battery_soc_percent" in get_telemetry_metrics()
 
     def _make_handler(self, path: str) -> MetricsHandler:
         handler = MetricsHandler.__new__(MetricsHandler)

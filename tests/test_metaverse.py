@@ -156,8 +156,8 @@ def test_network_slicing_bandwidth_isolation():
 def test_depin_sla_consensus_and_validation():
     val = DePINSLAValidator(num_validators=7)
     assert len(val.validators) == 7
-    # ceil(14/3) + 1 = 5 + 1 = 6 signatures
-    assert val.consensus_threshold == 6
+    # BFT quorum floor(2N/3) + 1: N=7 tolerates f=2 faulty validators -> 5 signatures
+    assert val.consensus_threshold == 5
 
     # 1. Nominal position approval
     res_nom = val.evaluate_uav_position_sla(
@@ -167,7 +167,7 @@ def test_depin_sla_consensus_and_validation():
     )
     assert res_nom.valid
     assert res_nom.position_approved
-    assert res_nom.validator_signatures_count >= 6
+    assert res_nom.validator_signatures_count >= 5
     assert len(val.finalized_blocks) == 1
 
     # 2. Rejection due to low SINR (< -15 dB)
@@ -188,12 +188,11 @@ def test_depin_sla_consensus_and_validation():
     )
     assert not res_sig_fail.valid
 
-    # 4. Direct verify_sensor_signature check rejects forged 16+ char strings
-    import hashlib
-
+    # 4. Direct verify_sensor_signature check: keyed HMAC, forged strings rejected
     sensor_id = "sensor-rx1"
     payload = b"SINR:-9.5"
-    valid_sig = hashlib.sha256(sensor_id.encode() + payload).hexdigest()
+    sensor_key = val.register_sensor(sensor_id)
+    valid_sig = val.sign_sensor_payload(sensor_key, sensor_id, payload)
     assert val.verify_sensor_signature(sensor_id, payload, valid_sig) is True
     assert val.verify_sensor_signature(sensor_id, payload, "0" * 32) is False
     assert val.verify_sensor_signature(sensor_id, payload, "") is False

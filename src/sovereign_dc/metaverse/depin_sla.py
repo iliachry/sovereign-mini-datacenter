@@ -2,17 +2,19 @@
 
 Implements the 6-sublayer blockchain architecture:
 1. DePIN sublayer: Node registration, stake-weighted selection & reputation.
-2. Consensus sublayer: Hybrid PoS/dBFT with ceil(2N/3) + 1 validator signatures.
+2. Consensus sublayer: Hybrid PoS/dBFT with floor(2N/3) + 1 validator signatures.
 3. Protocol sublayer: Smart contract SLA verification (reject SINR < -15 dB, alert SINR < -10 dB).
 4. Execution sublayer: Gas pricing limits and compute verification.
 5. dApp sublayer: Cryptographic authorization & spatial interface access.
-6. Transaction sublayer: ECDSA / PQC signature attestation on sensor telemetry.
+6. Transaction sublayer: keyed HMAC-SHA256 attestation on sensor telemetry (simulation
+   stand-in for ECDSA / PQC signatures: symmetric per-sensor / per-validator keys).
 """
 
 from __future__ import annotations
 
 import hashlib
-import math
+import hmac
+import secrets
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -29,6 +31,11 @@ class ValidatorNode:
     uptime_pct: float
     reputation_score: float = 1.0
     is_active: bool = True
+    signing_key: bytes = field(default_factory=lambda: secrets.token_bytes(32), repr=False)
+
+    def sign(self, message: bytes) -> str:
+        """HMAC-SHA256 signature of ``message`` under this validator's key (hex)."""
+        return hmac.new(self.signing_key, message, hashlib.sha256).hexdigest()
 
     @property
     def consensus_weight(self) -> float:
@@ -60,6 +67,8 @@ class DePINSLAValidator:
     # Programmatic SLA Thresholds (from IEEE IoT Magazine spec)
     MIN_SINR_THRESHOLD_DB = -15.0  # Minimum SINR for reliable 5G NR QPSK modulation
     OPTIMIZATION_ALERT_THRESHOLD_DB = -10.0  # Emits trigger event when SINR degrades
+    SIMULATED_FINALITY_SEC = 3.5  # Modelled constant (no real chain); reported as finality_time_sec
+    MAX_FINALIZED_BLOCKS_RETAINED = 1000  # In-memory history cap for long-running processes
 
     def __init__(self, num_validators: int = 7) -> None:
         self.validators: list[ValidatorNode] = [
@@ -73,20 +82,43 @@ class DePINSLAValidator:
             for i in range(1, num_validators + 1)
         ]
         self.finalized_blocks: list[dict[str, Any]] = []
+        self.total_finalized_blocks: int = 0
+        self._sensor_keys: dict[str, bytes] = {}
 
     @property
     def consensus_threshold(self) -> int:
-        """Computes Byzantine Fault Tolerant threshold: ceil(2N / 3) + 1."""
+        """Computes the Byzantine Fault Tolerant quorum: floor(2N / 3) + 1.
+
+        With N = 3f + 1 validators this is 2f + 1 (e.g. N=7 tolerates f=2 -> quorum 5)
+        and it never exceeds N.
+        """
         n = len(self.validators)
-        return math.ceil((2.0 * n) / 3.0) + 1
+        return (2 * n) // 3 + 1
+
+    def register_sensor(self, sensor_id: str, key: bytes | None = None) -> bytes:
+        """Registers (or rotates) a sensor's attestation key and returns it."""
+        sensor_key = key if key is not None else secrets.token_bytes(32)
+        if len(sensor_key) < 16:
+            raise ValueError("sensor attestation key must be at least 16 bytes")
+        self._sensor_keys[sensor_id] = sensor_key
+        return sensor_key
+
+    @staticmethod
+    def sign_sensor_payload(sensor_key: bytes, sensor_id: str, payload_bytes: bytes) -> str:
+        """Sensor-side helper: HMAC-SHA256 over ``sensor_id || 0x00 || payload`` (hex)."""
+        return hmac.new(sensor_key, sensor_id.encode() + b"\x00" + payload_bytes, hashlib.sha256).hexdigest()
 
     def verify_sensor_signature(self, sensor_id: str, payload_bytes: bytes, signature_hex: str) -> bool:
-        """Verifies ECDSA / cryptographic attestation signature on IoT sensor data."""
-        if not signature_hex or len(signature_hex) < 16:
+        """Verifies the keyed attestation signature on IoT sensor data.
+
+        The full HMAC-SHA256 tag is compared in constant time against the key registered
+        for ``sensor_id``. Unknown sensors and malformed signatures are rejected.
+        """
+        sensor_key = self._sensor_keys.get(sensor_id)
+        if sensor_key is None or not signature_hex:
             return False
-        # Deterministic verification of sensor attestation digest prefix
-        expected_digest = hashlib.sha256(sensor_id.encode() + payload_bytes).hexdigest()
-        return signature_hex.lower().startswith(expected_digest[:16])
+        expected = self.sign_sensor_payload(sensor_key, sensor_id, payload_bytes)
+        return hmac.compare_digest(expected, signature_hex.strip().lower())
 
     def evaluate_uav_position_sla(
         self,
@@ -117,7 +149,7 @@ class DePINSLAValidator:
             return SLAVerificationResult(
                 valid=False,
                 position_approved=False,
-                rejection_reason="ECDSA sensor signature verification failed (Sybil / Injection risk)",
+                rejection_reason="Sensor attestation signature verification failed (Sybil / Injection risk)",
                 sinr_check_passed=False,
                 min_sinr_db=min_sinr,
                 optimization_event_triggered=True,
@@ -171,16 +203,21 @@ class DePINSLAValidator:
         # 5. Commit to Blockchain with Asynchronous Finality (3-6s simulated)
         block_content = f"uav_pos:{uav_pos}:{per_receiver_sinr}:{time.time()}"
         block_hash = hashlib.sha256(block_content.encode()).hexdigest()
-        finality_time = 3.5  # Typical 3.5s finality
+        finality_time = self.SIMULATED_FINALITY_SEC
 
+        signers = approving_validators[:req_threshold]
         record = {
             "block_hash": block_hash,
             "uav_pos": uav_pos,
             "min_sinr_db": min_sinr,
-            "validator_signatures": [v.node_id for v in approving_validators[:req_threshold]],
+            "validator_signatures": [v.node_id for v in signers],
+            "validator_signature_digests": {v.node_id: v.sign(block_hash.encode()) for v in signers},
             "timestamp": datetime.now(UTC).isoformat(),
         }
         self.finalized_blocks.append(record)
+        self.total_finalized_blocks += 1
+        if len(self.finalized_blocks) > self.MAX_FINALIZED_BLOCKS_RETAINED:
+            del self.finalized_blocks[: -self.MAX_FINALIZED_BLOCKS_RETAINED]
 
         return SLAVerificationResult(
             valid=True,

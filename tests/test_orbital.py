@@ -26,7 +26,16 @@ def test_satellite_orbit_and_look_angles():
 
 def test_satellite_pass_predictions():
     gs = GroundStation("Test-GS", 37.98, 23.72)
-    sat = SatelliteOrbit("LEO-Test-1", 99901, inclination_deg=53.0, altitude_km=550.0, period_minutes=95.0)
+    # Explicit epoch = now keeps this scenario independent of the wall clock (the default
+    # epoch is a fixed reference constant, so default-epoch geometry varies with the date).
+    sat = SatelliteOrbit(
+        "LEO-Test-1",
+        99901,
+        inclination_deg=53.0,
+        altitude_km=550.0,
+        period_minutes=95.0,
+        epoch_timestamp=time.time(),
+    )
 
     passes = gs.predict_passes(sat, duration_hours=12.0, min_elevation_deg=10.0)
     assert isinstance(passes, list)

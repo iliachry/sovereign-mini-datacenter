@@ -7,7 +7,9 @@ semantic vector RAG, and PQC cryptographic attestations as standardized MCP tool
 from __future__ import annotations
 
 import glob
+import logging
 import os
+import stat
 import tempfile
 import time
 from collections.abc import Callable
@@ -20,6 +22,8 @@ from sovereign_dc.hal.gpu import detect_gpus
 from sovereign_dc.hal.power import read_power
 from sovereign_dc.hal.storage import detect_storage
 from sovereign_dc.hal.thermal import read_thermal
+
+logger = logging.getLogger("smdc.mcp.tools")
 
 
 @dataclass
@@ -51,17 +55,48 @@ def reset_enterprise_manager() -> None:
     _ENTERPRISE_MANAGER = None
 
 
+_FALLBACK_STATE_DIR: str | None = None
+
+
+def _is_private_dir(path: str) -> bool:
+    """True if ``path`` is a real directory (not a symlink) owned by us with mode 0700."""
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return False
+    return stat.S_ISDIR(st.st_mode) and st.st_uid == os.getuid() and stat.S_IMODE(st.st_mode) == 0o700
+
+
 def _get_mcp_state_dir() -> str:
-    """Returns a user-private directory (0o700) for MCP wallet and ledger state."""
+    """Returns a user-private directory (0o700) for MCP wallet and ledger state.
+
+    If the configured state directory is unusable, falls back to ``<tmp>/smdc-<uid>`` only
+    when that directory is verifiably ours (owned by this user, mode 0700, not a symlink);
+    a pre-existing directory that fails the check is never trusted and a fresh
+    ``mkdtemp()`` directory is used for the rest of the process instead.
+    """
+    global _FALLBACK_STATE_DIR
     base_dir = os.environ.get("SMDC_STATE_DIR") or os.path.expanduser("~/.smdc")
     try:
         os.makedirs(base_dir, mode=0o700, exist_ok=True)
         os.chmod(base_dir, 0o700)
         return base_dir
     except OSError:
-        fallback = os.path.join(tempfile.gettempdir(), f"smdc-{os.getuid()}")
-        os.makedirs(fallback, mode=0o700, exist_ok=True)
-        return fallback
+        pass
+
+    if _FALLBACK_STATE_DIR is not None and _is_private_dir(_FALLBACK_STATE_DIR):
+        return _FALLBACK_STATE_DIR
+
+    fallback = os.path.join(tempfile.gettempdir(), f"smdc-{os.getuid()}")
+    try:
+        os.mkdir(fallback, 0o700)
+    except OSError:
+        pass  # Already exists (or cannot be created): decided by the check below.
+    if not _is_private_dir(fallback):
+        logger.warning("Not trusting pre-existing state directory %s; using a private temporary directory", fallback)
+        fallback = tempfile.mkdtemp(prefix=f"smdc-{os.getuid()}-")
+    _FALLBACK_STATE_DIR = fallback
+    return fallback
 
 
 # --- Tool Handlers ---
@@ -69,8 +104,8 @@ def _get_mcp_state_dir() -> str:
 
 def tool_get_telemetry(params: dict[str, Any]) -> dict[str, Any]:
     """Retrieves real-time power, thermal, storage, and GPU hardware telemetry."""
-    power = read_power()
-    thermal = read_thermal()
+    power = read_power(exporter_url=get_config().power_exporter_url, simulation=get_config().is_simulation())
+    thermal = read_thermal(exporter_url=get_config().power_exporter_url, simulation=get_config().is_simulation())
     storage = detect_storage()
     gpus = detect_gpus()
 
@@ -116,8 +151,8 @@ def tool_get_system_status(params: dict[str, Any]) -> dict[str, Any]:
     from sovereign_dc.space.dtn.router import DTNRouter
 
     cfg = get_config()
-    power = read_power()
-    thermal = read_thermal()
+    power = read_power(exporter_url=get_config().power_exporter_url, simulation=get_config().is_simulation())
+    thermal = read_thermal(exporter_url=get_config().power_exporter_url, simulation=get_config().is_simulation())
     router = DTNRouter(db_path=cfg.dtn_db_path)
     dtn_stats = router.get_queue_stats()
     market = ComputeMarket()
@@ -144,7 +179,12 @@ def tool_get_system_status(params: dict[str, Any]) -> dict[str, Any]:
 
 
 def tool_set_load_shedding(params: dict[str, Any]) -> dict[str, Any]:
-    """Sets or adjusts the hardware load shedding state."""
+    """Publishes a load-shedding level change on the in-process event bus.
+
+    This does not actuate hardware (no PDU, GPU or TDP control is driven from here): the
+    only effect is the ``load_shedding.changed`` event, to which the EnterpriseManager
+    reacts by pausing/resuming tracked background-tier apps.
+    """
     from sovereign_dc.events import Event, EventType, get_event_bus
 
     level = str(params.get("level", "L0")).upper()
@@ -155,6 +195,7 @@ def tool_set_load_shedding(params: dict[str, Any]) -> dict[str, Any]:
             "error": f"Invalid level '{level}'. Must be one of {valid_levels}.",
         }
 
+    # What each level is *meant* to do at the hardware layer (policy description only).
     actions = {
         "L0": "Full AI Inference, Training & Space DTN active (Nominal power)",
         "L1": "Background RAG indexing paused; high-priority LLM inference allowed",
@@ -166,19 +207,28 @@ def tool_set_load_shedding(params: dict[str, Any]) -> dict[str, Any]:
     # Ensure enterprise manager is subscribed and publish load shedding event
     get_enterprise_manager()
     numeric_level = int(level[1])
-    get_event_bus().publish(
+    handlers_notified = get_event_bus().publish(
         Event(
             event_type=EventType.LOAD_SHEDDING_CHANGED,
             source="mcp",
             payload={"level": numeric_level, "mode": level},
         )
     )
+    published_at = time.time()
 
     return {
         "success": True,
         "level": level,
         "description": actions[level],
-        "applied_at": time.time(),
+        "effect": "event_published",
+        "hardware_actuated": False,
+        "handlers_notified": handlers_notified,
+        "note": (
+            "Only a load_shedding.changed event was published; 'description' is the intended "
+            "policy for this level, not a confirmation that hardware changed state."
+        ),
+        "published_at": published_at,
+        "applied_at": published_at,
     }
 
 
@@ -186,7 +236,7 @@ def tool_query_market_pricing(params: dict[str, Any]) -> dict[str, Any]:
     """Queries dynamic solar-aware compute, token, and DTN relay pricing rates."""
     from sovereign_dc.economy.market import ComputeMarket, ServiceType
 
-    power = read_power()
+    power = read_power(exporter_url=get_config().power_exporter_url, simulation=get_config().is_simulation())
     soc = float(params.get("battery_soc", power.battery_soc))
     solar = float(params.get("solar_watts", power.solar_watts))
 
@@ -243,7 +293,7 @@ def tool_get_wallet_balances(params: dict[str, Any]) -> dict[str, Any]:
 
 
 def tool_spool_dtn_bundle(params: dict[str, Any]) -> dict[str, Any]:
-    """Creates, signs, and queues an RFC 9171 BPv7 bundle into the store-and-forward spool."""
+    """Creates and queues an (unsigned) RFC 9171 BPv7 bundle into the store-and-forward spool."""
     from sovereign_dc.space.dtn.bundle import Bundle, BundlePriority
     from sovereign_dc.space.dtn.router import DTNRouter
 
@@ -275,17 +325,24 @@ def tool_spool_dtn_bundle(params: dict[str, Any]) -> dict[str, Any]:
     )
 
     router = DTNRouter(db_path=cfg.dtn_db_path)
-    router.queue_bundle(bundle)
+    queued = router.queue_bundle(bundle)
 
-    return {
-        "success": True,
+    result: dict[str, Any] = {
+        "success": bool(queued),
         "bundle_id": bundle.bundle_id,
         "source": bundle.source_eid,
         "destination": bundle.destination_eid,
         "priority": prio_name,
         "payload_bytes": len(bundle.payload),
-        "status": "QUEUED_IN_NVME_SPOOL",
+        "signed": False,
+        "status": "QUEUED_IN_NVME_SPOOL" if queued else "REJECTED",
     }
+    if not queued:
+        result["error"] = (
+            "Bundle was rejected by the DTN router and was not queued "
+            f"(lifetime {bundle.lifetime_seconds}s: already expired or invalid)."
+        )
+    return result
 
 
 def tool_predict_satellite_passes(params: dict[str, Any]) -> dict[str, Any]:
@@ -357,9 +414,7 @@ def tool_query_knowledge_indexer(params: dict[str, Any]) -> dict[str, Any]:
                         }
                     )
         except Exception as exc:
-            import logging
-
-            logging.getLogger("smdc.mcp.tools").debug("Error reading doc file %s: %s", fpath, exc)
+            logger.debug("Error reading doc file %s: %s", fpath, exc)
             continue
 
     chunks.sort(key=lambda x: x.get("relevance_score", 0), reverse=True)
@@ -371,7 +426,12 @@ def tool_query_knowledge_indexer(params: dict[str, Any]) -> dict[str, Any]:
 
 
 def tool_run_security_audit(params: dict[str, Any]) -> dict[str, Any]:
-    """Executes a NIST SP 800-207 Zero Trust and FIPS 203/204 Post-Quantum cryptographic attestation."""
+    """Runs FIPS 204 ML-DSA-87 and FIPS 203 ML-KEM-1024 round-trip self-tests.
+
+    This is a functional self-test of the PQC engines only. It does not inspect mesh
+    encryption, node identity or any other NIST SP 800-207 Zero Trust control, so that
+    section is reported as NOT_ASSESSED.
+    """
     from sovereign_dc.security.pqc import PQCKEM, PQCAlgorithm, PQCSigner
 
     signer = PQCSigner(PQCAlgorithm.ML_DSA_87)
@@ -390,9 +450,8 @@ def tool_run_security_audit(params: dict[str, Any]) -> dict[str, Any]:
     return {
         "timestamp": time.time(),
         "nist_sp_800_207_zero_trust": {
-            "status": "COMPLIANT",
-            "mesh_encryption": "WireGuard ChaCha20-Poly1305",
-            "node_identity": "Mutual Cryptographic Keypairs",
+            "status": "NOT_ASSESSED",
+            "note": "No Zero Trust controls (mesh encryption, node identity, policy enforcement) are inspected by this tool.",
         },
         "post_quantum_attestation": {
             "digital_signatures": {
@@ -406,7 +465,12 @@ def tool_run_security_audit(params: dict[str, Any]) -> dict[str, Any]:
                 "ciphertext_bytes": len(ct),
             },
         },
+        "pqc_self_tests_passed": int(sig_valid) + int(kem_valid),
+        "pqc_self_tests_total": 2,
+        # Kept for compatibility: this is the share of PQC self-tests that passed
+        # (two-step scale), not a compliance assessment.
         "compliance_score_percent": 100.0 if (sig_valid and kem_valid) else 50.0,
+        "score_basis": "pqc_self_tests_only",
     }
 
 
@@ -467,7 +531,7 @@ def get_mcp_tools() -> list[MCPTool]:
         ),
         MCPTool(
             name="set_load_shedding",
-            description="Set or adjust hardware load-shedding state (L0: nominal, L1: background pause, L2: single GPU, L3: CPU only, L4: emergency PDU shed).",
+            description="Publish a load-shedding level change (L0 nominal ... L4 emergency) on the node event bus; tracked background-tier enterprise apps are paused at L2+ and resumed at L0. Does not itself actuate hardware.",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -504,7 +568,7 @@ def get_mcp_tools() -> list[MCPTool]:
         ),
         MCPTool(
             name="spool_dtn_bundle",
-            description="Create, sign, and queue an RFC 9171 BPv7 Delay-Tolerant bundle into NVMe storage awaiting satellite contact passes.",
+            description="Create and queue an unsigned RFC 9171 BPv7 Delay-Tolerant bundle into the local store-and-forward spool awaiting satellite contact passes.",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -557,7 +621,7 @@ def get_mcp_tools() -> list[MCPTool]:
         ),
         MCPTool(
             name="run_security_audit",
-            description="Execute a NIST SP 800-207 Zero Trust and FIPS 203/204 Post-Quantum cryptographic attestation audit.",
+            description="Run FIPS 204 ML-DSA-87 and FIPS 203 ML-KEM-1024 round-trip self-tests. Zero Trust (NIST SP 800-207) posture is reported as NOT_ASSESSED.",
             input_schema={
                 "type": "object",
                 "properties": {},
@@ -592,7 +656,7 @@ def get_mcp_tools() -> list[MCPTool]:
         ),
         MCPTool(
             name="manage_enterprise_app",
-            description="Supervise enterprise workload lifecycle (start, stop, restart, pause, resume) with power budget enforcement.",
+            description="Change the tracked lifecycle state of an enterprise workload (start, stop, restart, pause, resume). State tracking only: no OS process is launched or signalled, and resource figures are manifest-based estimates.",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -737,10 +801,12 @@ def tool_manage_enterprise_app(params: dict[str, Any]) -> dict[str, Any]:
 def tool_scaffold_enterprise_app(params: dict[str, Any]) -> dict[str, Any]:
     """Generates an enterprise application manifest and directory template."""
     from sovereign_dc.enterprise.registry import EnterpriseRegistry
-    from sovereign_dc.enterprise.schema import AppCategory, PowerPriority, RuntimeType
+    from sovereign_dc.enterprise.schema import AppCategory, PowerPriority, RuntimeType, slugify_app_id
 
     name = str(params.get("name", "Custom App"))
-    app_id = str(params.get("app_id") or name.lower().replace(" ", "-"))
+    # An explicit app_id is used verbatim (and reported invalid if it is); a derived one is
+    # slugified so it always satisfies the manifest's own app_id rule.
+    app_id = str(params.get("app_id") or slugify_app_id(name))
 
     try:
         category = AppCategory(str(params.get("category", "custom")))
@@ -766,9 +832,12 @@ def tool_scaffold_enterprise_app(params: dict[str, Any]) -> dict[str, Any]:
         gpu_required=bool(params.get("gpu_required", False)),
         power_tier=power_tier,
     )
+    errors = manifest.validate()
     return {
         "manifest": manifest.to_dict(),
-        "yaml_preview": manifest.to_json(),
+        "valid": not errors,
+        "validation_errors": errors,
+        "yaml_preview": EnterpriseRegistry.render_manifest_yaml(manifest),
     }
 
 

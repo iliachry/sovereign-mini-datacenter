@@ -29,15 +29,39 @@ variable "domain" {
 }
 
 variable "ollama_model" {
-  description = "Default Ollama LLM model to pre-fetch/load"
+  description = "Ollama model pulled in the background after the container starts (best effort; empty string disables the pre-pull)"
   type        = string
   default     = "qwen2.5-coder:7b"
 }
 
-variable "enable_gpu" {
-  description = "Allocate NVIDIA GPU resources to AI workloads"
+variable "storage_class" {
+  description = "StorageClass used by every PersistentVolumeClaim of the chart. The cluster must already have a dynamic provisioner for it (k3s ships `local-path`; Talos and vanilla Kubernetes ship none). An empty string selects the cluster's default StorageClass."
+  type        = string
+  default     = "local-path"
+}
+
+variable "ingress_enabled" {
+  description = "Create the chart's Ingress. Requires an ingress controller that is already installed in the cluster (this module installs none)."
   type        = bool
   default     = true
+}
+
+variable "ingress_class_name" {
+  description = "IngressClass of the pre-installed ingress controller (k3s ships `traefik`). An empty string selects the cluster's default IngressClass."
+  type        = string
+  default     = "traefik"
+}
+
+variable "enable_gpu" {
+  description = "Request nvidia.com/gpu for Ollama. Requires NVIDIA drivers, the NVIDIA container runtime and the NVIDIA device plugin to be present in the cluster already (this module installs none); otherwise the pod stays Pending and the release times out."
+  type        = bool
+  default     = true
+}
+
+variable "gpu_runtime_class_name" {
+  description = "RuntimeClass for the AI pod (e.g. `nvidia`). Leave empty when the NVIDIA runtime is the container runtime default or when enable_gpu is false."
+  type        = string
+  default     = ""
 }
 
 variable "gpu_limit" {
@@ -47,9 +71,9 @@ variable "gpu_limit" {
 }
 
 variable "simulate_telemetry" {
-  description = "Run simulated power/thermal telemetry if hardware serial is disconnected"
+  description = "Serve simulated power/thermal telemetry. Keep true: hardware mode (false) requires an ESP32 telemetry bridge or a serial device, and the chart does not wire either yet, so with false the exporter has no real measurements to report."
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "custom_values" {

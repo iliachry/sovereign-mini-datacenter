@@ -4,7 +4,7 @@ Provides standardized schemas, registries, lifecycle supervision, and SDK interf
 for onboarding custom enterprise applications and workloads onto the SMDC platform.
 """
 
-from sovereign_dc.enterprise.manager import AppRuntimeState, EnterpriseManager
+from sovereign_dc.enterprise.manager import AppRuntimeState, EnterpriseManager, verify_package
 from sovereign_dc.enterprise.registry import EnterpriseRegistry
 from sovereign_dc.enterprise.schema import (
     AppCategory,
@@ -17,6 +17,7 @@ from sovereign_dc.enterprise.schema import (
     ResourceQuotas,
     RuntimeType,
     StoragePolicy,
+    slugify_app_id,
 )
 from sovereign_dc.enterprise.sdk import AppLifecycleHandler, SMDCClient
 
@@ -36,4 +37,6 @@ __all__ = [
     "AppRuntimeState",
     "SMDCClient",
     "AppLifecycleHandler",
+    "verify_package",
+    "slugify_app_id",
 ]

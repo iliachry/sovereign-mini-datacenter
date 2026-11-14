@@ -34,6 +34,7 @@ class Transition:
     next_state: list[float]
     done: bool
     advantage: float = 0.0
+    action_prob: float = 0.0  # pi_old(action | state) at collection time (0.0 = not recorded)
 
 
 class MLPNetwork:
@@ -120,6 +121,12 @@ class SceneAwarePPO:
         self.rng = random.Random(seed)
         self.buffer: list[Transition] = []
         self.training_episodes = 0
+        # Running advantage statistics (Welford) used to standardise advantages when a
+        # rollout is too short to provide its own (e.g. single-transition updates).
+        self._adv_count = 0
+        self._adv_mean = 0.0
+        self._adv_m2 = 0.0
+        self.last_update_stats: dict[str, float] = {}
 
     def encode_state(
         self,
@@ -194,6 +201,7 @@ class SceneAwarePPO:
         v_curr = self.value_net.forward(state)[0]
         v_next = self.value_net.forward(next_state)[0] if not done else 0.0
         advantage = reward + (self.gamma * v_next) - v_curr
+        action_prob = self.policy_net.forward(state)[action]
         self.buffer.append(
             Transition(
                 state=state,
@@ -202,11 +210,46 @@ class SceneAwarePPO:
                 next_state=next_state,
                 done=done,
                 advantage=advantage,
+                action_prob=action_prob,
             )
         )
 
+    def normalize_advantages(self, advantages: list[float]) -> list[float]:
+        """Standardises raw advantages to zero mean / unit variance.
+
+        Raw TD advantages are on the reward scale (tens of dB), so they must be
+        normalised before use; clipping them directly would saturate every update.
+        Rollouts with >= 2 samples use their own statistics; shorter ones fall back to
+        the running statistics accumulated over previous updates.
+        """
+        for adv in advantages:
+            self._adv_count += 1
+            delta = adv - self._adv_mean
+            self._adv_mean += delta / self._adv_count
+            self._adv_m2 += delta * (adv - self._adv_mean)
+
+        if len(advantages) >= 2:
+            mean = sum(advantages) / len(advantages)
+            var = sum((a - mean) ** 2 for a in advantages) / (len(advantages) - 1)
+        elif self._adv_count >= 2:
+            mean = self._adv_mean
+            var = self._adv_m2 / (self._adv_count - 1)
+        else:
+            # A single sample ever seen carries no scale information: no policy signal.
+            return [0.0 for _ in advantages]
+
+        std = math.sqrt(max(var, 0.0))
+        if std < 1e-8:
+            return [0.0 for _ in advantages]
+        return [(a - mean) / std for a in advantages]
+
     def train_step(self) -> dict[str, float]:
-        """Executes PPO surrogate policy update step over buffer."""
+        """Executes PPO surrogate policy update step over buffer.
+
+        Advantages are standardised first. The PPO clip (``clip_ratio``) is applied to
+        the probability ratio pi_new/pi_old: a sample whose ratio has already moved past
+        the clip range in the direction favoured by its advantage contributes no gradient.
+        """
         if not self.buffer:
             return {"loss_policy": 0.0, "loss_value": 0.0}
 
@@ -214,19 +257,28 @@ class SceneAwarePPO:
         advs = [t.advantage for t in self.buffer]
         mean_adv = sum(advs) / max(len(advs), 1)
         value_loss = sum(a * a for a in advs) / max(len(advs), 1)
+        norm_advs = self.normalize_advantages(advs)
+        clipped_updates = 0
 
         # Apply PPO clipped policy and value network gradient updates
-        for t in self.buffer:
+        for t, norm_adv in zip(self.buffer, norm_advs, strict=True):
             probs = self.policy_net.forward(t.state)
             act_prob = max(probs[t.action], 1e-6)
-            clipped_adv = max(-self.clip_ratio, min(self.clip_ratio, t.advantage))
-            grad_scale = (1.0 - act_prob) * clipped_adv * self.learning_rate_policy
-            out_w = self.policy_net.weights[-1]
-            hidden = self.policy_net.last_hidden
-            for i in range(len(out_w)):
-                h_val = hidden[i] if i < len(hidden) else 1.0
-                out_w[i][t.action] += grad_scale * h_val
-            self.policy_net.biases[-1][t.action] += grad_scale
+            old_prob = t.action_prob if t.action_prob > 0.0 else act_prob
+            ratio = act_prob / max(old_prob, 1e-6)
+            ratio_clipped = (norm_adv > 0.0 and ratio > 1.0 + self.clip_ratio) or (
+                norm_adv < 0.0 and ratio < 1.0 - self.clip_ratio
+            )
+            if ratio_clipped:
+                clipped_updates += 1
+            else:
+                grad_scale = (1.0 - act_prob) * norm_adv * self.learning_rate_policy
+                out_w = self.policy_net.weights[-1]
+                hidden = self.policy_net.last_hidden
+                for i in range(len(out_w)):
+                    h_val = hidden[i] if i < len(hidden) else 1.0
+                    out_w[i][t.action] += grad_scale * h_val
+                self.policy_net.biases[-1][t.action] += grad_scale
 
             # Update critic (value network) output weights toward TD target
             self.value_net.forward(t.state)
@@ -238,6 +290,11 @@ class SceneAwarePPO:
                 val_w[i][0] += val_grad * vh_val
             self.value_net.biases[-1][0] += val_grad
 
+        self.last_update_stats = {
+            "samples": float(len(norm_advs)),
+            "ratio_clipped_fraction": clipped_updates / len(norm_advs),
+            "max_abs_normalized_advantage": max(abs(a) for a in norm_advs),
+        }
         self.buffer.clear()
         self.training_episodes += 1
         return {"loss_policy": round(-mean_adv, 4), "loss_value": round(value_loss, 4)}
@@ -261,8 +318,9 @@ class ModelDrivenPPO(SceneAwarePPO):
         dz = rx_pos[2] - uav_pos[2]
         dist = max(math.sqrt(dx * dx + dy * dy + dz * dz), 1.0)
 
-        # Standard statistical path loss (alpha = 2.4)
-        fspl = 20.0 * math.log10(dist) + 20.0 * math.log10(3.5) + 92.45 + (self.rng.gauss(0, 2.5))
+        # Free-space path loss in the metres / GHz form used by SionnaRayTracer:
+        # FSPL(dB) = 32.44 + 20*log10(d_m) + 20*log10(f_GHz)   (92.45 is the km / GHz constant)
+        fspl = 32.44 + 20.0 * math.log10(dist) + 20.0 * math.log10(3.5) + (self.rng.gauss(0, 2.5))
         rx_power = 23.0 - fspl
         noise_floor = -94.0
         return rx_power - noise_floor

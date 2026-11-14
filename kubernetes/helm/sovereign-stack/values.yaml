@@ -1,8 +1,17 @@
 # Default values for sovereign-stack.
 # This is a YAML-formatted file.
 
+# ── Cluster prerequisites (NOT installed by this chart) ─────────────────────
+#   * a StorageClass with a dynamic provisioner  -> global.storageClass
+#   * an ingress controller                      -> ingress.className
+#   * the NVIDIA device plugin (nvidia.com/gpu)  -> ai.ollama.gpu.enabled
+# k3s ships `local-path` and Traefik out of the box. Talos and vanilla
+# Kubernetes ship none of them: install them first or disable the feature.
+
 global:
   domain: sovereign.local
+  # StorageClass for every PVC. "" omits storageClassName so the cluster's
+  # default StorageClass is used.
   storageClass: local-path
 
 # Local AI Cluster (Ollama + Qdrant)
@@ -13,25 +22,40 @@ ai:
       repository: ollama/ollama
       tag: latest
       pullPolicy: IfNotPresent
+    # GPU request. Requires the NVIDIA device plugin to advertise
+    # nvidia.com/gpu on a node; without it the pod stays Pending. Set
+    # enabled: false for CPU-only inference. Do not also put nvidia.com/gpu
+    # into resources.limits below.
+    gpu:
+      enabled: true
+      count: 1
+    # RuntimeClass for the AI pod. Leave empty when the NVIDIA runtime is the
+    # container runtime default. Set to "nvidia" where the RuntimeClass exists
+    # (k3s creates it when it detects the NVIDIA container toolkit; on Talos
+    # you create it yourself per the Talos NVIDIA guide).
+    runtimeClassName: ""
     resources:
       limits:
-        nvidia.com/gpu: "1"
         memory: 16Gi
         cpu: "8"
       requests:
         memory: 8Gi
         cpu: "4"
     persistence:
+      # false -> emptyDir (models are re-downloaded after every pod restart)
       enabled: true
       size: 100Gi
+    # Pulled in the background after the container starts (best effort; needs
+    # outbound access to the model registry). "" disables the pre-pull.
     defaultModel: "qwen2.5-coder:7b"
-  
+
   qdrant:
     image:
       repository: qdrant/qdrant
       tag: v1.11.0
       pullPolicy: IfNotPresent
     persistence:
+      # false -> emptyDir (vector collections are lost on pod restart)
       enabled: true
       size: 20Gi
 
@@ -83,11 +107,19 @@ telemetry:
       repository: ghcr.io/iliachry/sovereign-power-exporter
       tag: latest
     port: 9101
+    # true  -> synthetic, physics-shaped demo data.
+    # false -> hardware mode, which is NOT wired yet: the exporter has no
+    #          hardware reader and this chart mounts no serial device and
+    #          scrapes no ESP32 bridge, so no real measurement is available.
+    #          Keep true unless you add that wiring yourself.
     simulate: true
 
-# Space Communications & LoRa
+# Space Communications (DTN node)
 space:
-  enabled: true
+  # Disabled by default: no CI workflow builds or publishes the
+  # sovereign-space-node image referenced below, so enabling this without
+  # first building and pushing that image yourself ends in ImagePullBackOff.
+  enabled: false
   dtnNode:
     image:
       repository: ghcr.io/iliachry/sovereign-space-node
@@ -102,17 +134,18 @@ space:
     persistence:
       enabled: true
       size: 10Gi
-  loraGateway:
-    enabled: true
-    serialPort: "/dev/ttyUSB0"
 
-# Ingress Configuration (Traefik)
+# Ingress Configuration (defaults target the Traefik bundled with k3s)
 ingress:
   enabled: true
+  # "" omits ingressClassName (the cluster's default IngressClass is used).
   className: traefik
   annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-prod
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    # No certificate issuer is requested by default: a public ACME CA such as
+    # Let's Encrypt cannot issue for the default *.sovereign.local names. With
+    # a publicly resolvable domain (or an internal CA ClusterIssuer) add e.g.:
+    # cert-manager.io/cluster-issuer: <your-cluster-issuer>
   # Hostnames are prefixed onto global.domain (e.g. ai.sovereign.local)
   hosts:
     openWebUI: ai
@@ -120,4 +153,6 @@ ingress:
     nextcloud: cloud
   tls:
     enabled: true
+    # Must exist (created by cert-manager via the annotation above, or by you).
+    # If it is missing the ingress controller serves its default certificate.
     secretName: sovereign-tls-cert

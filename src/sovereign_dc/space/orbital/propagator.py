@@ -12,6 +12,11 @@ from typing import Any
 EARTH_RADIUS_KM = 6378.137
 SPEED_OF_LIGHT_MS = 299792458.0
 
+# Fixed reference epoch (J2000.0, 2000-01-01T12:00:00Z) used when an orbit is created
+# without an explicit epoch. Using a constant instead of the process start time makes
+# satellite positions a deterministic function of wall-clock time across restarts.
+REFERENCE_EPOCH_TIMESTAMP = 946728000.0
+
 
 class SatelliteOrbit:
     def __init__(
@@ -32,7 +37,7 @@ class SatelliteOrbit:
         self.period_minutes = period_minutes
         self.mean_motion_rad_s = (2.0 * math.pi) / (period_minutes * 60.0)
         self.raan_rad = math.radians(raan_deg)
-        self.epoch_timestamp = epoch_timestamp or time.time()
+        self.epoch_timestamp = REFERENCE_EPOCH_TIMESTAMP if epoch_timestamp is None else epoch_timestamp
 
     def get_position_at(self, timestamp: float) -> tuple[float, float, float]:
         """Calculates satellite geodetic position (lat_deg, lon_deg, alt_km)."""
@@ -119,7 +124,11 @@ class GroundStation:
         min_elevation_deg: float = 10.0,
         time_step_s: float = 30.0,
     ) -> list[dict[str, Any]]:
-        """Predicts upcoming contact passes with AOS, TCA, LOS, and Max Elevation."""
+        """Predicts upcoming contact passes with AOS, TCA, LOS, and Max Elevation.
+
+        A pass that is still in progress when the prediction window ends is closed at
+        the window end and flagged with ``"truncated": True``.
+        """
         now = time.time()
         end_time = now + duration_hours * 3600.0
         t = now
@@ -147,6 +156,7 @@ class GroundStation:
                         "max_elevation": round(el, 1),
                         "tca_time": t,
                         "duration_seconds": 0,
+                        "truncated": False,
                     }
                 else:
                     if el > max_el:
@@ -163,5 +173,15 @@ class GroundStation:
                     current_pass = {}
 
             t += time_step_s
+
+        if in_pass:
+            # Pass still open at the end of the window: report it instead of dropping it.
+            sat_lat, sat_lon, sat_alt = satellite.get_position_at(end_time)
+            az, _el, _rng = self.calculate_look_angles(sat_lat, sat_lon, sat_alt)
+            current_pass["los_time"] = end_time
+            current_pass["los_azimuth"] = round(az, 1)
+            current_pass["duration_seconds"] = int(end_time - aos_t)
+            current_pass["truncated"] = True
+            passes.append(current_pass)
 
         return passes

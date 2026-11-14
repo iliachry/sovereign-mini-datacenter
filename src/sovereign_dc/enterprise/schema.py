@@ -7,10 +7,41 @@ any enterprise workload, IoT aggregator, AI model, or microservice onto SMDC.
 from __future__ import annotations
 
 import json
+import math
 import re
 from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 from typing import Any
+
+APP_ID_PATTERN = re.compile(r"[a-z0-9][a-z0-9_-]{2,63}")
+# Versions end up in file names (``<app_id>-<version>.smdc-app``): no separators, no leading dot.
+APP_VERSION_PATTERN = re.compile(r"[0-9A-Za-z][0-9A-Za-z._+-]{0,63}")
+
+
+def is_valid_app_id(app_id: object) -> bool:
+    """True if ``app_id`` is a string of 3-64 lowercase alphanumerics, hyphens or underscores."""
+    return isinstance(app_id, str) and APP_ID_PATTERN.fullmatch(app_id) is not None
+
+
+def is_valid_app_version(version: object) -> bool:
+    """True if ``version`` is a 1-64 character token that is safe to embed in a file name."""
+    return isinstance(version, str) and APP_VERSION_PATTERN.fullmatch(version) is not None
+
+
+def slugify_app_id(name: str) -> str:
+    """Derives a manifest-valid ``app_id`` from a free-form display name.
+
+    Lowercases, collapses every run of characters outside ``[a-z0-9]`` into a single hyphen
+    and pads/truncates to the 3-64 character range, e.g. ``"My App! v2"`` -> ``"my-app-v2"``.
+    """
+    slug = re.sub(r"[^a-z0-9]+", "-", str(name).lower()).strip("-")[:64].rstrip("-")
+    if len(slug) < 3:
+        slug = f"app-{slug}" if slug else "app"
+    return slug
+
+
+def _is_finite_number(value: object) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
 class AppCategory(StrEnum):
@@ -231,20 +262,34 @@ class AppManifest:
             List of validation error messages (empty if valid).
         """
         errors: list[str] = []
-        if not self.name or not self.name.strip():
+        if not isinstance(self.name, str) or not self.name.strip():
             errors.append("App 'name' is required.")
-        if not self.app_id or not re.match(r"^[a-z0-9][a-z0-9_-]{2,63}$", self.app_id):
+        if not is_valid_app_id(self.app_id):
             errors.append("App 'app_id' must be 3-64 characters, lowercase alphanumeric with hyphens/underscores.")
-        if not self.entrypoint or not self.entrypoint.strip():
+        if not is_valid_app_version(self.version):
+            errors.append(
+                "App 'version' must be 1-64 characters of letters, digits, '.', '_', '+' or '-' "
+                "and start with a letter or digit."
+            )
+        if not isinstance(self.entrypoint, str) or not self.entrypoint.strip():
             errors.append("App 'entrypoint' command is required.")
-        if self.resources.cpu_cores <= 0:
-            errors.append("Resource 'cpu_cores' must be greater than 0.")
-        if self.resources.ram_mb < 32:
+        if not _is_finite_number(self.resources.cpu_cores) or self.resources.cpu_cores <= 0:
+            errors.append("Resource 'cpu_cores' must be a finite number greater than 0.")
+        if not _is_finite_number(self.resources.ram_mb) or self.resources.ram_mb < 32:
             errors.append("Resource 'ram_mb' must be at least 32 MB.")
-        if self.power.min_battery_soc < 0 or self.power.min_battery_soc > 100:
+        for quota in ("gpu_vram_mb", "storage_mb", "max_power_w"):
+            value = getattr(self.resources, quota)
+            if not _is_finite_number(value) or value < 0:
+                errors.append(f"Resource '{quota}' must be a finite, non-negative number.")
+        soc = self.power.min_battery_soc
+        if not _is_finite_number(soc) or soc < 0 or soc > 100:
             errors.append("Power 'min_battery_soc' must be between 0 and 100.")
+        if not _is_finite_number(self.power.min_solar_watts) or self.power.min_solar_watts < 0:
+            errors.append("Power 'min_solar_watts' must be a finite, non-negative number.")
+        if not _is_finite_number(self.power.max_ambient_temp_c):
+            errors.append("Power 'max_ambient_temp_c' must be a finite number.")
         for port in self.network.ports:
-            if port < 1 or port > 65535:
+            if not isinstance(port, int) or isinstance(port, bool) or port < 1 or port > 65535:
                 errors.append(f"Network port {port} is out of valid range (1-65535).")
         return errors
 

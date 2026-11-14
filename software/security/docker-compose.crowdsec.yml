@@ -1,3 +1,15 @@
+# CrowdSec security engine overlay — DETECTION ONLY.
+#
+# CrowdSec parses the Traefik access log and host logs and records decisions,
+# but no bouncer (remediation component) is configured, so nothing is blocked.
+# Inspect with: docker exec sovereign_crowdsec cscli alerts list
+# To block, add a bouncer (e.g. a Traefik bouncer plugin or the host firewall
+# bouncer) and register it with: docker exec sovereign_crowdsec cscli bouncers add <name>
+#
+# Relative paths below are resolved against the Compose project directory,
+# which is `software/` when this file is merged with the core stack
+# (`./setup.sh --with-security`). To run it standalone, pin the project directory:
+#   docker compose --project-directory software -f software/security/docker-compose.crowdsec.yml up -d
 services:
   crowdsec:
     image: crowdsecurity/crowdsec:v1.6.0
@@ -7,9 +19,12 @@ services:
       - COLLECTIONS=crowdsecurity/traefik crowdsecurity/linux crowdsecurity/http-cve
     volumes:
       - /var/log:/var/log:ro
-      - traefik_logs:/var/log/traefik:ro
+      # Written by Traefik in the core stack (--accesslog.filepath). Mounted outside
+      # /var/log: a volume cannot be nested under that read-only bind mount.
+      - traefik_logs:/traefik-logs:ro
       - crowdsec_data:/var/lib/crowdsec/data
       - crowdsec_config:/etc/crowdsec
+      - ./security/acquis.d/traefik.yaml:/etc/crowdsec/acquis.d/traefik.yaml:ro
     networks:
       - sovereign_net
 

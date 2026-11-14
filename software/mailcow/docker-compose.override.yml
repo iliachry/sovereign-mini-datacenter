@@ -1,12 +1,16 @@
 # ====================================================================
 # Mailcow Docker Compose Override
-# Place this file at: software/mailcow/core/docker-compose.override.yml
+# Copy to: software/mailcow/core/docker-compose.override.yml
+# (it is merged automatically by `docker compose` inside mailcow-dockerized;
+#  it is not a standalone Compose file).
 #
 # Purpose:
-#   1. Attach nginx-mailcow to the sovereign_net network so Traefik
-#      can route to it.
-#   2. Ensure mailcow containers can reach the main stack services
-#      (for SMTP relay integration).
+#   1. Attach nginx-mailcow to the sovereign_net network of the core stack.
+#   2. Add the Traefik labels that route https://${MAILCOW_HOSTNAME} to it.
+#
+# Variables come from mailcow.conf (mailcow links it as .env): MAILCOW_HOSTNAME
+# and HTTP_PORT, the port nginx-mailcow listens on (see mailcow.conf.example).
+# The core stack must be running first so that software_sovereign_net exists.
 # ====================================================================
 version: '2.1'
 
@@ -20,3 +24,15 @@ services:
     networks:
       - mailcow-network
       - sovereign_net
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=software_sovereign_net"
+      - "traefik.http.routers.mailcow.rule=Host(`${MAILCOW_HOSTNAME}`)"
+      - "traefik.http.routers.mailcow.entrypoints=websecure"
+      - "traefik.http.routers.mailcow.tls.certresolver=le"
+      - "traefik.http.services.mailcow.loadbalancer.server.port=${HTTP_PORT:-8025}"
+      - "traefik.http.middlewares.mailcow-headers.headers.stsSeconds=31536000"
+      - "traefik.http.middlewares.mailcow-headers.headers.forceSTSHeader=true"
+      - "traefik.http.middlewares.mailcow-headers.headers.contentTypeNosniff=true"
+      - "traefik.http.middlewares.mailcow-headers.headers.browserXssFilter=true"
+      - "traefik.http.routers.mailcow.middlewares=mailcow-headers"

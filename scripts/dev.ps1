@@ -145,11 +145,25 @@ switch ($Command) {
 
     "docker-validate" {
         Write-Host "`n--> Validating Docker Compose configuration..." -ForegroundColor Cyan
-        if (-not (Test-Path "software\.env")) {
-            Copy-Item "software\env.example" "software\.env"
+        # Same file list as scripts/validate_compose.sh (used by CI).
+        $envFile = "software/env.example"
+        $overlays = @("vpn/docker-compose.vpn.yml", "backup/docker-compose.backup.yml",
+            "telemetry/docker-compose.telemetry.yml", "space/docker-compose.space.yml",
+            "agents/docker-compose.agents.yml", "security/docker-compose.crowdsec.yml")
+        docker compose --env-file $envFile -f software/docker-compose.yml config --quiet
+        if ($LASTEXITCODE -ne 0) { exit 1 }
+        $merged = @("-f", "software/docker-compose.yml")
+        foreach ($o in $overlays) {
+            docker compose --env-file $envFile --project-directory software -f "software/$o" config --quiet
+            if ($LASTEXITCODE -ne 0) { exit 1 }
+            $merged += @("-f", "software/$o")
         }
-        docker compose -f software/docker-compose.yml config --quiet
-        Write-Host "Docker Compose configurations valid." -ForegroundColor Green
+        docker compose --env-file $envFile -f software/mesh/lora/docker-compose.lora.yml config --quiet
+        if ($LASTEXITCODE -ne 0) { exit 1 }
+        # Merged set, as deployed by software/setup.sh --all.
+        docker compose --env-file $envFile @merged config --quiet
+        if ($LASTEXITCODE -ne 0) { exit 1 }
+        Write-Host "Docker Compose configurations valid (bind-mount sources are checked by scripts/validate_compose.sh only)." -ForegroundColor Green
     }
 
     "scad-export" {

@@ -14,6 +14,15 @@ const orbitRadiusX = 880;
 const orbitRadiusZ = 780;
 const orbitY = 560;
 let pulseSpeed = 0.008;
+let beamMat = null;
+let txResetTimer = null;
+
+// Scratch objects reused every frame (no per-frame allocation)
+const GROUND_POS = new THREE.Vector3(0, 280, 0); // Ground phased array terminal
+const UP = new THREE.Vector3(0, 1, 0);
+const _midPoint = new THREE.Vector3();
+const _orientation = new THREE.Matrix4();
+const BEAM_AXIS_FIX = new THREE.Matrix4().makeRotationX(Math.PI / 2);
 
 function createSatelliteHUDLabel() {
   const canvas = document.createElement('canvas');
@@ -26,7 +35,11 @@ function createSatelliteHUDLabel() {
   ctx.strokeStyle = '#c084fc';
   ctx.lineWidth = 3;
   ctx.beginPath();
-  ctx.roundRect(6, 6, 372, 84, 16);
+  if (typeof ctx.roundRect === 'function') {
+    ctx.roundRect(6, 6, 372, 84, 16);
+  } else {
+    ctx.rect(6, 6, 372, 84); // Older browsers without CanvasRenderingContext2D.roundRect
+  }
   ctx.fill();
   ctx.stroke();
 
@@ -148,7 +161,7 @@ export function init(scene) {
 
   // 3. Volumetric Glowing RF Laser/Microwave Beam
   const beamGeom = new THREE.CylinderGeometry(14, 5, 1, 16, 1, true);
-  const beamMat = new THREE.MeshBasicMaterial({
+  beamMat = new THREE.MeshBasicMaterial({
     color: 0xc084fc,
     transparent: true,
     opacity: 0.5,
@@ -156,6 +169,7 @@ export function init(scene) {
     depthWrite: false,
   });
   spaceBeamMesh = new THREE.Mesh(beamGeom, beamMat);
+  spaceBeamMesh.userData.noThermal = true; // RF beam is not a thermal surface
   spaceGroup.add(spaceBeamMesh);
 
   // 4. Data Transmission Pulses (RFC 9171 DTN Bundles)
@@ -165,6 +179,7 @@ export function init(scene) {
       new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.85, side: THREE.DoubleSide, depthWrite: false })
     );
     pulse.userData.offset = i * 0.2;
+    pulse.userData.noThermal = true;
     dataPulses.push(pulse);
     spaceGroup.add(pulse);
   }
@@ -181,40 +196,45 @@ export function update() {
   satelliteMesh.rotation.y = -satAngle + Math.PI / 2;
 
   // Connect beam between ground phased array terminal (0, 280, 0) and Satellite
-  const groundPos = new THREE.Vector3(0, 280, 0);
   const satPos = satelliteMesh.position;
+  const distance = GROUND_POS.distanceTo(satPos);
+  _midPoint.addVectors(GROUND_POS, satPos).multiplyScalar(0.5);
 
-  const distance = groundPos.distanceTo(satPos);
-  const midPoint = new THREE.Vector3().addVectors(groundPos, satPos).multiplyScalar(0.5);
-
-  spaceBeamMesh.position.copy(midPoint);
+  spaceBeamMesh.position.copy(_midPoint);
   spaceBeamMesh.scale.set(1, distance, 1);
 
-  const orientation = new THREE.Matrix4();
-  orientation.lookAt(groundPos, satPos, new THREE.Vector3(0, 1, 0));
-  orientation.multiply(new THREE.Matrix4().makeRotationX(Math.PI / 2));
-  spaceBeamMesh.quaternion.setFromRotationMatrix(orientation);
+  _orientation.lookAt(GROUND_POS, satPos, UP);
+  _orientation.multiply(BEAM_AXIS_FIX);
+  spaceBeamMesh.quaternion.setFromRotationMatrix(_orientation);
 
   // Animate travelling DTN pulses
   dataPulses.forEach((pulse) => {
-    pulse.userData.offset = (pulse.userData.offset + pulseSpeed) % 1.0;
-    const pulsePos = new THREE.Vector3().lerpVectors(groundPos, satPos, pulse.userData.offset);
-    pulse.position.copy(pulsePos);
+    const offset = (pulse.userData.offset + pulseSpeed) % 1.0;
+    pulse.userData.offset = offset;
+    pulse.position.lerpVectors(GROUND_POS, satPos, offset);
     pulse.quaternion.copy(spaceBeamMesh.quaternion);
-    pulse.scale.set(1 + pulse.userData.offset * 2.0, 1 + pulse.userData.offset * 2.0, 1);
+    pulse.scale.set(1 + offset * 2.0, 1 + offset * 2.0, 1);
   });
 }
 
 export function triggerSpaceTransmission() {
+  if (!beamMat) return;
+  // Always mutate the beam's own material, never whatever is currently assigned to the mesh.
   pulseSpeed = 0.025;
-  spaceBeamMesh.material.opacity = 0.9;
-  spaceBeamMesh.material.color.setHex(0x38bdf8);
+  beamMat.opacity = 0.9;
+  beamMat.color.setHex(0x38bdf8);
 
-  setTimeout(() => {
+  clearTimeout(txResetTimer);
+  txResetTimer = setTimeout(() => {
     pulseSpeed = 0.008;
-    spaceBeamMesh.material.opacity = 0.5;
-    spaceBeamMesh.material.color.setHex(0xc084fc);
+    beamMat.opacity = 0.5;
+    beamMat.color.setHex(0xc084fc);
   }, 2500);
+}
+
+/** Show/hide the orbit ring, satellite, beam and pulses (subsystem layer isolation). */
+export function setVisible(visible) {
+  if (spaceGroup) spaceGroup.visible = visible;
 }
 
 export function getSatellite() { return satelliteMesh; }

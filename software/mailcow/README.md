@@ -48,17 +48,20 @@ autodiscover.yourdomain.com. CNAME  mail.yourdomain.com.
 
 ## Installation
 
+Mailcow is installed manually; `software/setup.sh --with-mailcow` only prints
+these steps. Step 1 runs from the repository root; the later steps run inside
+`software/mailcow/core`.
+
 ### 1. Clone mailcow-dockerized
 
 ```bash
-cd software/mailcow
-git clone https://github.com/mailcow/mailcow-dockerized.git core
-cd core
+git clone https://github.com/mailcow/mailcow-dockerized.git software/mailcow/core
 ```
 
 ### 2. Generate mailcow.conf
 
 ```bash
+cd software/mailcow/core
 # Interactive generator
 bash generate_config.sh
 # When prompted:
@@ -66,64 +69,52 @@ bash generate_config.sh
 #   Timezone: Europe/Athens
 ```
 
-Or copy and edit the template:
+Or, instead of the generator, copy and edit the template (still inside `core/`):
 ```bash
-cp ../mailcow.conf.example core/mailcow.conf
+cp ../mailcow.conf.example mailcow.conf
 # Edit MAILCOW_HOSTNAME, TZ, and other values
 ```
 
-### 3. Disable mailcow's built-in nginx on ports 80/443
+### 3. Move mailcow's built-in nginx off ports 80/443
 
-Add to `core/mailcow.conf`:
+Set in `software/mailcow/core/mailcow.conf` (already set in the template):
 ```bash
 HTTPS_BIND=127.0.0.1
 HTTPS_PORT=8443
 HTTP_BIND=127.0.0.1
 HTTP_PORT=8025
-```
-
-### 4. Connect to the sovereign_net Docker network
-
-```bash
-# Add to core/mailcow.conf:
 COMPOSE_PROJECT_NAME=mailcow
+SKIP_LETS_ENCRYPT=y
 ```
 
-Then edit `core/docker-compose.yml` (or use the override file):
+### 4. Install the override (network + Traefik labels)
+
+The override attaches `nginx-mailcow` to the core stack's `software_sovereign_net`
+network and carries the Traefik labels that route `https://<MAILCOW_HOSTNAME>` to it.
+The core stack must already be running so that the network exists.
+
 ```bash
-cp ../docker-compose.override.yml core/docker-compose.override.yml
+# inside software/mailcow/core
+cp ../docker-compose.override.yml docker-compose.override.yml
 ```
 
 ### 5. Start mailcow
 
 ```bash
-cd core
+# inside software/mailcow/core
 docker compose up -d
 ```
 
-### 6. Add Traefik route (from repo root)
+Traefik picks up the labels automatically; no change to the core stack is needed.
 
-The file `../docker-compose.mailcow-traefik.yml` adds Traefik labels.
-Run it as an extension of the main stack:
-
-```bash
-cd software
-docker compose -f docker-compose.yml -f mailcow/docker-compose.mailcow-traefik.yml up -d
-```
-
-Or add this to your shell alias in `.bashrc`:
-```bash
-alias sovereign-up='docker compose -f ~/sovereign-mini-datacenter/software/docker-compose.yml -f ~/sovereign-mini-datacenter/software/mailcow/docker-compose.mailcow-traefik.yml up -d'
-```
-
-### 7. First login
+### 6. First login
 
 - Admin panel: `https://mail.yourdomain.com/admin`  
 - Default credentials: `admin` / `moohoo`  
 - **Change immediately after first login!**
 - SOGo Webmail: `https://mail.yourdomain.com/SOGo`
 
-### 8. Copy DKIM key to DNS
+### 7. Copy DKIM key to DNS
 
 In the admin panel: **Configuration → Domains → DNS** — copy the DKIM TXT record to your DNS provider.
 

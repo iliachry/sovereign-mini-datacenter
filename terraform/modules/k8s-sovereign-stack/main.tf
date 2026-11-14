@@ -9,18 +9,23 @@ resource "helm_release" "sovereign_stack" {
   values = concat([
     yamlencode({
       global = {
-        domain = var.domain
+        domain       = var.domain
+        storageClass = var.storage_class
       }
       ai = {
         enabled = true
         ollama = {
-          defaultModel = var.ollama_model
-          resources = var.enable_gpu ? {
-            limits = {
-              "nvidia.com/gpu" = var.gpu_limit
-            }
-          } : null
+          defaultModel     = var.ollama_model
+          runtimeClassName = var.gpu_runtime_class_name
+          gpu = {
+            enabled = var.enable_gpu
+            count   = var.gpu_limit
+          }
         }
+      }
+      ingress = {
+        enabled   = var.ingress_enabled
+        className = var.ingress_class_name
       }
       telemetry = {
         powerExporter = {

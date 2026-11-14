@@ -10,17 +10,13 @@ terraform {
       source  = "hashicorp/helm"
       version = "~> 2.16.0"
     }
-    kubernetes = {
-      source  = "hashicorp/kubernetes"
-      version = "~> 2.35.0"
-    }
     proxmox = {
       source  = "bpg/proxmox"
       version = "~> 0.70.0"
     }
     libvirt = {
       source  = "dmacvicar/libvirt"
-      version = "~> 0.8.1"
+      version = "~> 0.8.0"
     }
     wireguard = {
       source  = "OJFord/wireguard"
@@ -29,10 +25,6 @@ terraform {
     local = {
       source  = "hashicorp/local"
       version = "~> 2.5.0"
-    }
-    tls = {
-      source  = "hashicorp/tls"
-      version = "~> 4.0.0"
     }
   }
 }

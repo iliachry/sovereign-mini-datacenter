@@ -33,9 +33,23 @@ class MCPServer:
         self.initialized = False
 
     def handle_request(self, request: dict[str, Any]) -> dict[str, Any] | None:
-        """Processes a single JSON-RPC 2.0 request or notification."""
+        """Processes a single JSON-RPC 2.0 request or notification.
+
+        Returns the response object, or None for a notification: JSON-RPC 2.0 forbids
+        replying to any message that carries no ``id``, whatever its method or validity.
+        """
         if not isinstance(request, dict):
             return self._error_response(None, -32600, "Invalid Request: Expected JSON object")
+
+        if "id" not in request:
+            method_name = request.get("method")
+            if method_name == "notifications/initialized":
+                logger.info("MCP client acknowledged initialization.")
+            else:
+                # Notifications never get a reply and never execute request-style methods
+                # (a tools/call without an id could not report its outcome anyway).
+                logger.debug("Ignoring JSON-RPC notification %r", method_name)
+            return None
 
         # Check for JSON-RPC version
         req_id = request.get("id")
@@ -69,10 +83,7 @@ class MCPServer:
                 },
             }
 
-        # 2. Initialized Notification (no response expected)
-        if method == "notifications/initialized":
-            logger.info("MCP client acknowledged initialization.")
-            return None
+        # 2. Notifications (messages without an id) were already handled above.
 
         # 3. Ping
         if method == "ping":
@@ -107,8 +118,9 @@ class MCPServer:
             elif not isinstance(tool_args, dict):
                 return self._error_response(req_id, -32602, "Invalid arguments: Expected JSON object")
 
-            if not tool_name or tool_name not in self.tools:
-                return self._error_response(req_id, -32601, f"Tool '{tool_name}' not found")
+            if not isinstance(tool_name, str) or tool_name not in self.tools:
+                # MCP: an unknown tool is an invalid *parameter* of tools/call, not an unknown method.
+                return self._error_response(req_id, -32602, f"Unknown tool: {tool_name!r}")
 
             tool = self.tools[tool_name]
             try:
@@ -159,7 +171,7 @@ class MCPServer:
 
         if method == "resources/read":
             uri = params.get("uri")
-            if not uri or uri not in self.resources:
+            if not isinstance(uri, str) or uri not in self.resources:
                 return self._error_response(req_id, -32602, f"Resource URI '{uri}' not found")
 
             resource = self.resources[uri]
@@ -214,8 +226,8 @@ class MCPServer:
             elif not isinstance(prompt_args, dict):
                 return self._error_response(req_id, -32602, "Invalid arguments: Expected JSON object")
 
-            if not prompt_name or prompt_name not in self.prompts:
-                return self._error_response(req_id, -32601, f"Prompt '{prompt_name}' not found")
+            if not isinstance(prompt_name, str) or prompt_name not in self.prompts:
+                return self._error_response(req_id, -32602, f"Unknown prompt: {prompt_name!r}")
 
             prompt = self.prompts[prompt_name]
             try:
@@ -262,7 +274,9 @@ class MCPServer:
 
                 try:
                     request = json.loads(line)
-                except json.JSONDecodeError as err:
+                except (ValueError, RecursionError) as err:
+                    # ValueError covers JSONDecodeError and oversized integer literals;
+                    # RecursionError a pathologically nested document. Neither may end the loop.
                     err_response = self._error_response(None, -32700, f"Parse error: {err}")
                     out_stream.write(json.dumps(err_response) + "\n")
                     out_stream.flush()

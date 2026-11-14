@@ -72,7 +72,9 @@ class FileNotifier(BaseNotifier):
 
     def send(self, message: TechnicianMessage) -> bool:
         try:
-            os.makedirs(os.path.dirname(self.log_path), exist_ok=True)
+            directory = os.path.dirname(self.log_path)
+            if directory:  # a bare filename means "current directory": nothing to create
+                os.makedirs(directory, exist_ok=True)
             with open(self.log_path, "a", encoding="utf-8") as f:
                 f.write(message.to_json() + "\n")
             logger.info("Technician notification written to %s", self.log_path)
@@ -83,7 +85,11 @@ class FileNotifier(BaseNotifier):
 
 
 class MQTTNotifier(BaseNotifier):
-    """Publishes alerts to MQTT broker for Home Assistant integration and ESP32 OLED display."""
+    """MQTT channel for Home Assistant / ESP32 OLED alerts.
+
+    NOT IMPLEMENTED: no MQTT client is wired in, so ``send`` publishes nothing and
+    reports failure. It never claims delivery.
+    """
 
     def __init__(
         self,
@@ -97,22 +103,33 @@ class MQTTNotifier(BaseNotifier):
 
     def send(self, message: TechnicianMessage) -> bool:
         topic = f"{self.topic_prefix}/{message.node_id}/alerts"
-        payload = message.to_json()
-        logger.info("MQTT publish to %s on %s:%d: %s", topic, self.broker_host, self.broker_port, payload)
-        # In actual production, connects via paho-mqtt if present, or logs structured event
-        return True
+        logger.warning(
+            "MQTT transport is not implemented: %s alert NOT published to %s on %s:%d",
+            message.event_type,
+            topic,
+            self.broker_host,
+            self.broker_port,
+        )
+        return False
 
 
 class LoRaNotifier(BaseNotifier):
-    """Broadcasts emergency compact alerts via Sub-GHz Meshtastic gateway."""
+    """Sub-GHz Meshtastic channel for compact emergency alerts.
+
+    NOT IMPLEMENTED: no radio transport exists, so ``send`` broadcasts nothing and
+    reports failure. It never claims delivery.
+    """
 
     def __init__(self, gateway_eid: str = "smdc-lora-gw-01"):
         self.gateway_eid: str = gateway_eid
 
     def send(self, message: TechnicianMessage) -> bool:
-        compact_msg = message.to_compact_text()
-        logger.info("LoRa Sub-GHz broadcast via %s: %s", self.gateway_eid, compact_msg)
-        return True
+        logger.warning(
+            "LoRa transport is not implemented: alert NOT broadcast via %s: %s",
+            self.gateway_eid,
+            message.to_compact_text(),
+        )
+        return False
 
 
 class DTNNotifier(BaseNotifier):
@@ -145,7 +162,9 @@ class DTNNotifier(BaseNotifier):
                 priority=priority,
                 lifetime_seconds=86400 * 3,
             )
-            router.queue_bundle(bundle)
+            if not router.queue_bundle(bundle):
+                logger.warning("DTNNotifier: spool rejected bundle %s", bundle.bundle_id)
+                return False
             logger.info("DTN bundle queued for technician: %s", bundle.bundle_id)
             return True
         except Exception as e:

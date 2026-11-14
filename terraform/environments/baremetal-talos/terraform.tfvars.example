@@ -3,12 +3,25 @@ cluster_endpoint = "https://10.0.0.10:6443"
 domain           = "sovereign.local"
 ollama_model     = "qwen2.5-coder:7b"
 
+# Static addressing for nodes that set `interface` below.
+gateway               = "10.0.0.1"
+network_prefix_length = 24
+
+# ── Prerequisites you must install on the Talos cluster yourself ─────────────
+# (see "Cluster prerequisites" in terraform/README.md)
+storage_class = "REPLACE_WITH_YOUR_STORAGECLASS" # required: a StorageClass with a dynamic provisioner
+# ingress_enabled        = true                  # after installing an ingress controller
+# ingress_class_name     = "REPLACE_WITH_YOUR_INGRESSCLASS"
+# gpu_installer_image    = "factory.talos.dev/installer/<schematic-id>:<talos-version>" # from https://factory.talos.dev
+# enable_gpu             = true                  # after the NVIDIA device plugin is running
+# gpu_runtime_class_name = "nvidia"
+
 control_plane_nodes = {
   "cp-01" = {
     ip           = "10.0.0.10"
     hostname     = "smdc-cp-01"
     install_disk = "/dev/nvme0n1"
-    interface    = "10gbe0"
+    interface    = "enp1s0" # EXAMPLE name - check: talosctl -n <ip> get links --insecure
   }
 }
 
@@ -18,13 +31,13 @@ worker_nodes = {
     hostname     = "smdc-worker-gpu-01"
     install_disk = "/dev/nvme0n1"
     has_gpu      = true
-    interface    = "10gbe0"
+    interface    = "enp1s0" # EXAMPLE name - check: talosctl -n <ip> get links --insecure
   }
   "worker-gpu-02" = {
     ip           = "10.0.0.21"
     hostname     = "smdc-worker-gpu-02"
     install_disk = "/dev/nvme0n1"
     has_gpu      = true
-    interface    = "10gbe0"
+    interface    = "enp1s0" # EXAMPLE name - check: talosctl -n <ip> get links --insecure
   }
 }

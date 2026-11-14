@@ -48,6 +48,44 @@ def get_project_root():
     return cwd
 
 
+def _economy_state_path(filename: str) -> str:
+    """Default home for the CLI wallet and ledger: the private state dir, not shared /tmp.
+
+    A file already created by an earlier release in the temp directory keeps being used so
+    an existing wallet and its balance are not orphaned.
+    """
+    import tempfile
+
+    from sovereign_dc.mcp.tools import _get_mcp_state_dir
+
+    preferred = os.path.join(_get_mcp_state_dir(), filename)
+    legacy = os.path.join(tempfile.gettempdir(), filename)
+    if not os.path.exists(preferred) and _is_own_private_file(legacy):
+        return legacy
+    return preferred
+
+
+def _is_own_private_file(path: str) -> bool:
+    """True for a regular file owned by this user that nobody else can write (never a planted one)."""
+    import stat
+
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return False
+    if not stat.S_ISREG(st.st_mode):
+        return False
+    if hasattr(os, "getuid") and (st.st_uid != os.getuid() or st.st_mode & 0o022):
+        return False
+    return True
+
+
+def _arg(args: Any, name: str, default: Any) -> Any:
+    """Returns a parsed CLI value, using the default only when it is absent (0 is a real value)."""
+    value = getattr(args, name, None)
+    return default if value is None else value
+
+
 def cmd_status(args):
     """Displays infrastructure status, containers, power telemetry, and space link."""
     print(f"\n{BOLD}{CYAN}=== Sovereign Mini Datacenter — System Status ==={RESET}")
@@ -131,38 +169,46 @@ def cmd_status(args):
     except Exception:
         gs = GroundStation("Sovereign-Ground-01", 37.9838, 23.7275)
         sats = get_active_satellites()
-        passes = gs.predict_passes(sats[0], duration_hours=6.0)
-        next_sec = max(0, int(passes[0]["aos_time"] - time.time())) if passes else 0
         print(f"  • Status:          {YELLOW}STANDBY (Offline Exporter){RESET}")
-        print(f"  • Primary Relay:   {CYAN}{sats[0].name}{RESET}")
-        print(
-            f"  • Next Pass (AOS): {CYAN}{next_sec // 60}m {next_sec % 60}s{RESET} (Max El: {passes[0]['max_elevation']}°)"
-        )
+        if not sats:
+            print(f"  • Primary Relay:   {YELLOW}No satellites in catalog{RESET}")
+        else:
+            passes = gs.predict_passes(sats[0], duration_hours=6.0)
+            print(f"  • Primary Relay:   {CYAN}{sats[0].name}{RESET}")
+            if passes:
+                next_sec = max(0, int(passes[0]["aos_time"] - time.time()))
+                print(
+                    f"  • Next Pass (AOS): {CYAN}{next_sec // 60}m {next_sec % 60}s{RESET} (Max El: {passes[0]['max_elevation']}°)"
+                )
+            else:
+                print(f"  • Next Pass (AOS): {YELLOW}No pass in the next 6 hours{RESET}")
 
     print(f"\n{BOLD}[4] Live 3D Digital Twin:{RESET} {CYAN}https://iliachry.gr/sovereign-mini-datacenter/{RESET}\n")
 
 
 def cmd_audit(args):
-    """Executes automated security compliance and CIS benchmark audit."""
-    print(f"\n{BOLD}{CYAN}=== Sovereign Mini Datacenter — Security Compliance Audit ==={RESET}\n")
-    root = get_project_root()
-    audit_script = os.path.join(root, "software", "security", "audit.sh")
+    """Executes the host security hardening audit (software/security/audit.sh).
 
-    if os.path.exists(audit_script) and sys.platform.startswith("linux"):
-        subprocess.run(["bash", audit_script])
-    else:
-        # Native Python fallback audit
-        checks = [
-            ("Address Space Layout Randomization (ASLR)", True, "(Active)"),
-            ("TCP SYN Flood Protection", True, "(Active)"),
-            ("Container Secret Encryption", True, "(AES-256 Vaultwarden/Restic)"),
-            ("Zero-Trust WireGuard Mesh", True, "(Noise Protocol IK)"),
-            ("Space Link Data Integrity", True, "(SHA-256 Checksums)"),
-        ]
-        for name, passed, note in checks:
-            tag = f"{GREEN}PASS{RESET}" if passed else f"{YELLOW}WARN{RESET}"
-            print(f"  [ {tag} ] {name} {note}")
-        print(f"\n{GREEN}✅ Security audit completed: All critical hardening benchmarks satisfied.{RESET}\n")
+    Returns the audit script's exit code. The audit inspects Linux kernel, Docker and firewall
+    state, so on other platforms it reports that nothing was checked instead of printing results.
+    """
+    print(f"\n{BOLD}{CYAN}=== Sovereign Mini Datacenter — Security Compliance Audit ==={RESET}\n")
+    candidates = [
+        os.path.join(get_project_root(), "software", "security", "audit.sh"),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "security", "audit.sh"),
+    ]
+    audit_script = next((c for c in candidates if os.path.exists(c)), None)
+
+    if audit_script is None:
+        print(f"  {RED}✖ Audit script not found; no checks were run.{RESET}\n")
+        return 2
+    if not sys.platform.startswith("linux"):
+        print(
+            f"  {YELLOW}⚠ The hardening audit only runs on a Linux datacenter node "
+            f"(this is {sys.platform}); no checks were run.{RESET}\n"
+        )
+        return 2
+    return subprocess.run(["bash", audit_script]).returncode
 
 
 def cmd_mesh(args):
@@ -174,7 +220,7 @@ def cmd_mesh(args):
             "Ground Station Alpha (Athens)",
             "100.64.0.1",
             "Primary Gateway",
-            "550 TOPS",
+            "2x DGX Spark",
             "10.24 kWh",
             f"{GREEN}ONLINE{RESET}",
         ),
@@ -261,7 +307,7 @@ def cmd_space_send(args):
     db_path = os.getenv("DTN_DB_PATH", "/tmp/dtn_spool.db")
     router = DTNRouter(db_path=db_path)
 
-    if os.path.exists(args.message_or_file):
+    if os.path.isfile(args.message_or_file):
         with open(args.message_or_file, "rb") as f:
             payload = f.read()
     else:
@@ -291,6 +337,9 @@ def cmd_space_send(args):
         print(f"  • Size:          {len(payload)} bytes")
         print(f"  • Priority:      Tier {prio}")
         print("  • Status:        Waiting in spool for next orbital contact pass.\n")
+        return 0
+    print(f"\n{RED}✖ Bundle was not queued (expired TTL or spool error).{RESET}\n")
+    return 1
 
 
 def cmd_space_queue(args):
@@ -328,6 +377,24 @@ def cmd_space_queue(args):
     print("")
 
 
+# Keep in step with PLACEHOLDER_RE in software/setup.sh.
+_ENV_PLACEHOLDER_MARKERS = ("change_me", "changeme", "replace_this", "your_", "your@", "yourdomain", "yourmailprovider")
+
+
+def _env_placeholder_keys(env_file: str) -> list[str]:
+    """Returns the keys in a .env file whose values still look like template placeholders."""
+    keys: list[str] = []
+    with open(env_file, encoding="utf-8", errors="replace") as f:
+        for raw in f:
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            if any(marker in value.lower() for marker in _ENV_PLACEHOLDER_MARKERS):
+                keys.append(key.strip())
+    return keys
+
+
 def cmd_deploy(args):
     """Deploys specified datacenter stacks using docker compose."""
     root = get_project_root()
@@ -355,15 +422,34 @@ def cmd_deploy(args):
 
     if args.dry_run:
         print(f"{CYAN}DRY RUN: Validating compose stack configuration...{RESET}")
+        # Validation must work on a fresh checkout: fall back to the template when .env is absent.
+        env_example = os.path.join(soft_dir, "env.example")
+        if not os.path.isfile(os.path.join(soft_dir, ".env")) and os.path.isfile(env_example):
+            cmd[2:2] = ["--env-file", env_example]
         cmd.extend(["config", "--quiet"])
         res = subprocess.run(cmd, cwd=soft_dir)
         if res.returncode == 0:
             print(f"{GREEN}✅ Configuration valid.{RESET}")
-        return
+        else:
+            print(f"{RED}✖ Compose configuration is invalid (exit {res.returncode}).{RESET}")
+        return res.returncode
+
+    # Never bring up internet-facing services with the template's public placeholder secrets.
+    env_file = os.path.join(soft_dir, ".env")
+    if not os.path.isfile(env_file):
+        print(f"{RED}✖ {env_file} not found. Copy env.example to .env and set real values first.{RESET}")
+        return 1
+    placeholders = _env_placeholder_keys(env_file)
+    if placeholders:
+        print(f"{RED}✖ Refusing to deploy: placeholder values remain in .env for: {', '.join(placeholders)}{RESET}")
+        return 1
 
     print(f"{BOLD}{GREEN}Launching Sovereign Datacenter Stack...{RESET}")
     cmd.extend(["up", "-d", "--remove-orphans"])
-    subprocess.run(cmd, cwd=soft_dir)
+    res = subprocess.run(cmd, cwd=soft_dir)
+    if res.returncode != 0:
+        print(f"{RED}✖ Stack deployment failed (exit {res.returncode}).{RESET}")
+    return res.returncode
 
 
 def cmd_telemetry(args):
@@ -488,7 +574,7 @@ def cmd_docs(args):
         import webbrowser
         from pathlib import Path
 
-        port = getattr(args, "port", 8088) or 8088
+        port = getattr(args, "port", None) or 8088
         docs_dir = Path(get_project_root()) / "docs"
 
         if not docs_dir.exists():
@@ -507,7 +593,7 @@ def cmd_docs(args):
                 pass
 
         try:
-            with socketserver.TCPServer(("", port), handler) as httpd:
+            with socketserver.TCPServer(("127.0.0.1", port), handler) as httpd:
                 httpd.serve_forever()
         except KeyboardInterrupt:
             print(f"\n  {YELLOW}3D Digital Twin server stopped.{RESET}\n")
@@ -674,6 +760,42 @@ def cmd_doctor(args):
     )
 
 
+def _measure_ollama_generation(base_url: str, model: str, num_predict: int = 128) -> dict[str, Any]:
+    """Measures real token throughput from a running Ollama server using its own timing counters.
+
+    Returns ``{"error": ...}`` when the server or model is unavailable; never estimates.
+    """
+    body = json.dumps(
+        {
+            "model": model,
+            "prompt": "Explain in three sentences why battery state of charge matters for an off-grid server.",
+            "stream": False,
+            "options": {"num_predict": num_predict, "temperature": 0},
+        }
+    ).encode("utf-8")
+    req = urllib.request.Request(
+        f"{base_url.rstrip('/')}/api/generate", data=body, headers={"Content-Type": "application/json"}
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=300) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except Exception as e:
+        return {"model": model, "error": f"Ollama request failed: {e}"}
+    eval_count = data.get("eval_count")
+    eval_ns = data.get("eval_duration")
+    if not isinstance(eval_count, int) or not isinstance(eval_ns, int) or eval_ns <= 0:
+        return {"model": model, "error": "Ollama response carried no timing counters"}
+    return {
+        "model": model,
+        "source": "ollama eval_count / eval_duration",
+        "eval_tokens": eval_count,
+        "eval_seconds": round(eval_ns / 1e9, 3),
+        "tokens_per_second": round(eval_count / (eval_ns / 1e9), 2),
+        "load_seconds": round(int(data.get("load_duration", 0)) / 1e9, 3),
+        "prompt_tokens": data.get("prompt_eval_count"),
+    }
+
+
 def cmd_benchmark(args):
     """Executes empirical performance benchmarks across AI, Space DTN, and System."""
     print(f"\n{BOLD}{CYAN}=== Sovereign Mini Datacenter Benchmark Suite ==={RESET}\n")
@@ -687,7 +809,7 @@ def cmd_benchmark(args):
     run_all = args.all or not (args.ai or args.dtn or args.system)
 
     if run_all or args.ai:
-        print(f"{BOLD}[1/3] Running Local AI & Semantic Embedding Benchmark...{RESET}")
+        print(f"{BOLD}[1/3] Running synthetic CPU vector micro-benchmark (no model inference)...{RESET}")
         t0 = time.time()
         chunks_processed = 500
         # Synthetic dense 768-dim vector embedding calculation
@@ -695,20 +817,41 @@ def cmd_benchmark(args):
         t_embed = time.time() - t0
         rate = chunks_processed / max(0.0001, t_embed)
         print(
-            f"  • Vector Embedding Throughput: {GREEN}{rate:.1f} chunks/sec{RESET} ({chunks_processed} chunks in {t_embed * 1000:.1f} ms)"
+            f"  • Synthetic 768-dim Vector Build: {GREEN}{rate:.1f} vectors/sec{RESET} ({chunks_processed} vectors in {t_embed * 1000:.1f} ms)"
         )
-        print(f"  • Local Model Tested:          {CYAN}{getattr(args, 'model', None) or 'qwen2.5-coder:7b'}{RESET}")
         benchmarks_data["ai_embedding"] = {
             "chunks_per_second": round(rate, 1),
             "latency_ms": round(t_embed * 1000, 2),
-            "model": getattr(args, "model", None) or "qwen2.5-coder:7b",
+            "model": None,
+            "synthetic": True,
         }
+        if getattr(args, "live", False):
+            from sovereign_dc.config import get_config
+
+            model = _arg(args, "model", "qwen2.5-coder:7b")
+            measured = _measure_ollama_generation(get_config().ollama_url, model)
+            if "error" in measured:
+                print(f"  • Live LLM Inference:          {RED}not measured: {measured['error']}{RESET}")
+            else:
+                print(
+                    f"  • Live LLM Inference ({model}): {GREEN}{measured['tokens_per_second']:.1f} tok/s{RESET} "
+                    f"({measured['eval_tokens']} tokens in {measured['eval_seconds']:.2f} s, "
+                    f"first-token load {measured['load_seconds']:.2f} s)"
+                )
+            benchmarks_data["llm_generation"] = measured
+        else:
+            print(
+                f"  • Model Inference:             {YELLOW}not exercised (pass --live to measure a running Ollama){RESET}"
+            )
 
     if run_all or args.dtn:
         print(f"\n{BOLD}[2/3] Running RFC 9171 Space DTN Spool Benchmark...{RESET}")
         t0 = time.time()
         num_bundles = 200
-        spool_path = os.path.join(os.environ.get("TEMP", "/tmp"), "smdc_bench_spool.db")
+        import tempfile
+
+        bench_dir = tempfile.mkdtemp(prefix="smdc-bench-")
+        spool_path = os.path.join(bench_dir, "smdc_bench_spool.db")
         router = DTNRouter(db_path=spool_path)
         for i in range(num_bundles):
             b = Bundle(
@@ -758,7 +901,7 @@ def cmd_demo(args):
     print(f"\n{BOLD}{CYAN}=== Sovereign Mini Datacenter — Live Demonstration Sandbox ==={RESET}")
     print(f"{YELLOW}Simulating full 9U datacenter stack (100% off-grid, 10.24 kWh battery, dual DGX)...{RESET}\n")
 
-    steps = getattr(args, "steps", 3) or 3
+    steps = max(0, _arg(args, "steps", 3))
     no_delay = getattr(args, "no_delay", False)
     for step in range(1, steps + 1):
         solar_w = 1180 + (step * 25)
@@ -778,7 +921,10 @@ def cmd_mesh_consensus(args):
     """Simulates decentralized Raft leader election and task replication across swarm nodes."""
     from sovereign_dc.mesh.consensus import RaftCluster
 
-    node_count = getattr(args, "nodes", 3) or 3
+    node_count = _arg(args, "nodes", 3)
+    if node_count < 1:
+        print(f"{RED}✖ --nodes must be at least 1.{RESET}")
+        return 2
     node_ids = [f"smdc-node-{i:02d}" for i in range(1, node_count + 1)]
 
     print(f"\n{BOLD}{CYAN}=== Decentralized Multi-Node Raft Consensus Simulation ==={RESET}")
@@ -788,9 +934,12 @@ def cmd_mesh_consensus(args):
     candidate_id = node_ids[0]
     print(f"🗳️ Node {BOLD}{candidate_id}{RESET} triggering leader election term 1...")
     leader_id = cluster.step_election(candidate_id)
-    print(
-        f"👑 Leader elected: {GREEN}{BOLD}{leader_id}{RESET} with quorum ({len(node_ids) // 2 + 1}/{len(node_ids)} votes)"
-    )
+    if leader_id:
+        print(
+            f"👑 Leader elected: {GREEN}{BOLD}{leader_id}{RESET} with quorum ({len(node_ids) // 2 + 1}/{len(node_ids)} votes)"
+        )
+    else:
+        print(f"{RED}✖ No leader elected: quorum was not reached.{RESET}")
 
     if leader_id:
         print("📦 Leader submitting GPU batch scheduling command to cluster log...")
@@ -808,7 +957,14 @@ def cmd_mesh_consensus(args):
             f"  • {BOLD}{nid}{RESET}: Role={role_color}{st['role'].upper()}{RESET} | Term={st['term']} | LogEntries={st['log_length']} | Committed={st['commit_index']}"
         )
 
-    print(f"\n{GREEN}✅ Raft consensus and log replication verified.{RESET}\n")
+    if not leader_id:
+        print(f"\n{RED}✖ Raft consensus simulation failed.{RESET}\n")
+        return 1
+    leader_commit = cluster.nodes[leader_id].status()["commit_index"]
+    if leader_commit < cmd_idx:
+        print(f"\n{RED}✖ Log entry #{cmd_idx} was not committed by a majority.{RESET}\n")
+        return 1
+    print(f"\n{GREEN}✅ Leader elected and log entry #{cmd_idx} committed by a majority.{RESET}\n")
 
 
 def cmd_mesh_chaos(args):
@@ -894,13 +1050,12 @@ def cmd_security_pqc(args):
 
 def cmd_economy_wallet(args):
     """Inspects or generates node cryptographic wallet and balances."""
-    import tempfile
 
     from sovereign_dc.economy.ledger import Ledger
     from sovereign_dc.economy.wallet import AddressType, NodeWallet
 
-    wallet_path = getattr(args, "wallet_file", None) or os.path.join(tempfile.gettempdir(), "smdc_default_wallet.json")
-    db_path = getattr(args, "db_path", None) or os.path.join(tempfile.gettempdir(), "smdc_economy_ledger.db")
+    wallet_path = getattr(args, "wallet_file", None) or _economy_state_path("smdc_default_wallet.json")
+    db_path = getattr(args, "db_path", None) or _economy_state_path("smdc_economy_ledger.db")
     ledger = Ledger(db_path=db_path)
 
     if getattr(args, "create", False) or not os.path.exists(wallet_path):
@@ -933,13 +1088,12 @@ def cmd_economy_wallet(args):
 
 def cmd_economy_send(args):
     """Transfers compute credits to a peer node with cryptographic signature."""
-    import tempfile
 
     from sovereign_dc.economy.ledger import Ledger
     from sovereign_dc.economy.wallet import NodeWallet
 
-    wallet_path = getattr(args, "wallet_file", None) or os.path.join(tempfile.gettempdir(), "smdc_default_wallet.json")
-    db_path = getattr(args, "db_path", None) or os.path.join(tempfile.gettempdir(), "smdc_economy_ledger.db")
+    wallet_path = getattr(args, "wallet_file", None) or _economy_state_path("smdc_default_wallet.json")
+    db_path = getattr(args, "db_path", None) or _economy_state_path("smdc_economy_ledger.db")
     if not os.path.exists(wallet_path):
         wallet = NodeWallet.create(node_id="smdc-node-01")
         wallet.save_to_file(wallet_path)
@@ -971,8 +1125,8 @@ def cmd_economy_market(args):
     from sovereign_dc.economy.market import ComputeMarket, ServiceType
 
     market = ComputeMarket()
-    soc = getattr(args, "soc", 85.0) or 85.0
-    solar = getattr(args, "solar", 850.0) or 850.0
+    soc = _arg(args, "soc", 85.0)
+    solar = _arg(args, "solar", 850.0)
 
     print(f"\n{BOLD}{CYAN}=== Sovereign Compute & Energy Marketplace ==={RESET}\n")
     print(f"Simulated Physical Conditions: Battery SoC = {BOLD}{soc:.1f}%{RESET} | Solar = {BOLD}{solar:.0f} W{RESET}")
@@ -991,13 +1145,12 @@ def cmd_economy_market(args):
 
 def cmd_economy_history(args):
     """Displays recent transactions from the compute ledger."""
-    import tempfile
 
     from sovereign_dc.economy.ledger import Ledger
 
-    db_path = getattr(args, "db_path", None) or os.path.join(tempfile.gettempdir(), "smdc_economy_ledger.db")
+    db_path = getattr(args, "db_path", None) or _economy_state_path("smdc_economy_ledger.db")
     ledger = Ledger(db_path=db_path)
-    limit = getattr(args, "limit", 15) or 15
+    limit = max(0, _arg(args, "limit", 15))
     txs = ledger.get_history(limit=limit)
 
     print(f"\n{BOLD}{CYAN}=== Compute Ledger Transaction History ==={RESET}\n")
@@ -1011,6 +1164,36 @@ def cmd_economy_history(args):
     print()
 
 
+def cmd_economy_verify(args):
+    """Verifies the ledger chain and its head anchor; --anchor (re)anchors a verified chain."""
+    from sovereign_dc.economy.ledger import Ledger
+
+    db_path = getattr(args, "db_path", None) or _economy_state_path("smdc_economy_ledger.db")
+    if not os.path.isfile(db_path):
+        print(f"\n{RED}✖ No ledger found at {db_path}.{RESET}\n")
+        return 1
+    ledger = Ledger(db_path=db_path)
+    print(f"\n{BOLD}{CYAN}=== Compute Ledger Integrity ==={RESET}\n")
+    print(f"  • Ledger:        {db_path}")
+
+    if getattr(args, "anchor", False):
+        # Explicit operator step: it vouches for whatever the file holds right now.
+        if ledger.anchor_chain():
+            print(f"  • Anchor:        {GREEN}chain verified and anchored with the node identity key{RESET}")
+        else:
+            print(f"  • Anchor:        {RED}refused: the chain does not verify{RESET}\n")
+            return 1
+
+    chain_ok = ledger.verify_chain()
+    status = ledger.chain_anchor_status()
+    print(f"  • Chain links:   {GREEN + 'VALID' if chain_ok else RED + 'INVALID'}{RESET}")
+    print(f"  • Head anchor:   {GREEN if status == 'valid' else YELLOW}{status.upper()}{RESET}")
+    if chain_ok and status == "absent":
+        print(f"  {YELLOW}Unanchored: tail truncation would go undetected. Run with --anchor to anchor it.{RESET}")
+    print()
+    return 0 if chain_ok and status in ("valid", "absent") else 1
+
+
 def cmd_economy(args):
     """Main entry point for economy commands."""
     cmd_economy_wallet(args)
@@ -1020,9 +1203,9 @@ def cmd_dashboard(args):
     """Launches real-time Web Operations Dashboard and REST API server."""
     from sovereign_dc.web.dashboard import run_dashboard_server
 
-    port = getattr(args, "port", 8080) or 8080
+    port = _arg(args, "port", 8080)
     open_browser = not getattr(args, "no_browser", False)
-    run_dashboard_server(port=port, open_browser=open_browser)
+    run_dashboard_server(port=port, open_browser=open_browser, host=getattr(args, "host", None))
 
 
 def cmd_bootstrap(args):
@@ -1050,7 +1233,11 @@ def cmd_bootstrap(args):
         for ch, ok in res.items():
             st = f"{GREEN}OK{RESET}" if ok else f"{RED}FAILED{RESET}"
             print(f"  • {ch:<16}: {st}")
-        print(f"\n{GREEN}✅ Multi-channel notification test complete.{RESET}\n")
+        failed = [ch for ch, ok in res.items() if not ok]
+        if failed:
+            print(f"\n{YELLOW}⚠ Notification test finished; unavailable channels: {', '.join(failed)}.{RESET}\n")
+        else:
+            print(f"\n{GREEN}✅ Multi-channel notification test complete.{RESET}\n")
         return
 
     phase_target = getattr(args, "phase", None)
@@ -1081,25 +1268,33 @@ def cmd_bootstrap(args):
     print(f"  • Host OS:        {hw.get('os')} {hw.get('release')} ({hw.get('arch')})")
     print(f"  • CPU Cores:      {hw.get('cpu_count')} Cores")
     print(f"  • Accelerators:   {hw.get('gpus', [{}])[0].get('name', 'N/A')}")
-    print(
-        f"  • Battery / PV:   {hw.get('power', {}).get('battery_soc', 0):.1f}% SoC | {hw.get('power', {}).get('solar_w', 0):.0f}W Solar"
-    )
+    power = hw.get("power", {})
+    if "battery_soc" in power:
+        sim_tag = " (simulated)" if power.get("simulated") else ""
+        print(
+            f"  • Battery / PV:   {power.get('battery_soc', 0):.1f}% SoC | {power.get('solar_w', 0):.0f}W Solar{sim_tag}"
+        )
+    else:
+        print(f"  • Battery / PV:   {YELLOW}telemetry unavailable{RESET}")
 
     print(f"\n{BOLD}[2] Phase 2 — Multi-Tier Network Fabric:{RESET}")
     net = state.network_info
     print(f"  • WireGuard Mesh: {GREEN + 'CONNECTED' if net.get('tier1_wireguard') else YELLOW + 'STANDBY'}{RESET}")
     print(f"  • Active Peers:   {', '.join(net.get('active_peers', [])) or 'None'}")
-    print("  • Out-of-Band:    LoRa (868/915MHz) & Space DTN Fallback ARMED")
+    lora = f"{GREEN}ARMED{RESET}" if net.get("tier3_lora") else f"{YELLOW}not available{RESET}"
+    dtn = f"{GREEN}ARMED{RESET}" if net.get("tier4_space_dtn") else f"{YELLOW}not available{RESET}"
+    print(f"  • Out-of-Band:    LoRa {lora} | Space DTN spool {dtn}")
 
     print(f"\n{BOLD}[3] Phase 3 — Service Stacks:{RESET}")
     srv = state.services_info
-    print(f"  • Core Containers:{len(srv.get('services_started', []))} stacks verified")
+    print(f"  • Core Containers:{len(srv.get('services_started', []))} running")
     print(f"  • Local AI Engine:Ollama ({GREEN + 'READY' if srv.get('ollama_ready') else YELLOW + 'STANDBY'}{RESET})")
     print(f"  • Vector Engine:  Qdrant ({GREEN + 'READY' if srv.get('qdrant_ready') else YELLOW + 'STANDBY'}{RESET})")
 
     print(f"\n{BOLD}[4] Phase 4 — Data & State Sync:{RESET}")
     sync = state.sync_info
-    print(f"  • CRDT Status:    {GREEN}{sync.get('crdt_sync', 'SUCCESS')}{RESET}")
+    crdt = sync.get("crdt_sync", "UNKNOWN")
+    print(f"  • CRDT Status:    {GREEN if crdt == 'SUCCESS' else YELLOW}{crdt}{RESET}")
     print(f"  • DTN Spool:      {sync.get('dtn_spool_bundles', 0)} bundles queued")
 
     print(f"\n{BOLD}[5] Phase 5 — Node Operational Attestation:{RESET}")
@@ -1108,7 +1303,10 @@ def cmd_bootstrap(args):
         f"  • Node Status:    {st_color}{BOLD}{'NODE_ONLINE_READY' if state.is_nominal else 'NODE_ONLINE_DEGRADED'}{RESET}"
     )
     print(f"  • Elapsed Time:   {state.elapsed_seconds():.2f}s")
-    print("  • Technician Log: Dispatched via Multi-Channel Notifier (File, MQTT, LoRa, DTN)\n")
+    if dry_run:
+        print("  • Technician Log: not dispatched (dry run)\n")
+    else:
+        print("  • Technician Log: dispatched to the available notifier channels (see log for per-channel results)\n")
 
     if getattr(args, "daemon", False):
         print(f"{CYAN}Entering continuous background health watchdog (interval: 120s)...{RESET}")
@@ -1178,12 +1376,13 @@ def cmd_mcp_prompts(args: Any) -> None:
     print()
 
 
-def cmd_mcp_test(args: Any) -> None:
+def cmd_mcp_test(args: Any) -> int:
     """Performs end-to-end self-test of the MCP server handshake, tools, resources and prompts."""
     from sovereign_dc.mcp.server import MCPServer
 
     print(f"\n{BOLD}{CYAN}=== Sovereign Mini Datacenter — MCP Self-Test & Diagnostic ==={RESET}\n")
     server = MCPServer()
+    failures = 0
 
     # 1. Test initialize handshake
     init_req = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2024-11-05"}}
@@ -1193,6 +1392,7 @@ def cmd_mcp_test(args: Any) -> None:
             f"  [{GREEN}PASS{RESET}] Handshake: MCP Protocol 2024-11-05 initialized ({server.server_name} v{server.version})"
         )
     else:
+        failures += 1
         print(f"  [{RED}FAIL{RESET}] Handshake: Invalid response: {res}")
 
     # 2. Test ping
@@ -1201,13 +1401,18 @@ def cmd_mcp_test(args: Any) -> None:
     if res and res.get("result") == {}:
         print(f"  [{GREEN}PASS{RESET}] Ping: JSON-RPC 2.0 keepalive nominal")
     else:
+        failures += 1
         print(f"  [{RED}FAIL{RESET}] Ping: Failed")
 
     # 3. Test tools/list
     tlist_req = {"jsonrpc": "2.0", "id": 3, "method": "tools/list"}
     res = server.handle_request(tlist_req)
     t_count = len(res.get("result", {}).get("tools", [])) if res else 0
-    print(f"  [{GREEN}PASS{RESET}] Tools List: Discovered {BOLD}{t_count}{RESET} operational tools")
+    if t_count > 0:
+        print(f"  [{GREEN}PASS{RESET}] Tools List: Discovered {BOLD}{t_count}{RESET} operational tools")
+    else:
+        failures += 1
+        print(f"  [{RED}FAIL{RESET}] Tools List: No tools discovered: {res}")
 
     # 4. Test tool call: get_telemetry
     tcall_req = {
@@ -1220,6 +1425,7 @@ def cmd_mcp_test(args: Any) -> None:
     if res and not res.get("result", {}).get("isError"):
         print(f"  [{GREEN}PASS{RESET}] Tool Call: `get_telemetry` returned hardware payload")
     else:
+        failures += 1
         print(f"  [{RED}FAIL{RESET}] Tool Call: `get_telemetry` failed: {res}")
 
     # 5. Test resources/read: smdc://telemetry/current
@@ -1233,6 +1439,7 @@ def cmd_mcp_test(args: Any) -> None:
     if res and "contents" in res.get("result", {}):
         print(f"  [{GREEN}PASS{RESET}] Resource Read: `smdc://telemetry/current` successfully resolved")
     else:
+        failures += 1
         print(f"  [{RED}FAIL{RESET}] Resource Read: Failed: {res}")
 
     # 6. Test prompts/get: diagnose_power_incident
@@ -1246,9 +1453,14 @@ def cmd_mcp_test(args: Any) -> None:
     if res and "messages" in res.get("result", {}):
         print(f"  [{GREEN}PASS{RESET}] Prompt Get: `diagnose_power_incident` synthesized context")
     else:
+        failures += 1
         print(f"  [{RED}FAIL{RESET}] Prompt Get: Failed: {res}")
 
+    if failures:
+        print(f"\n{RED}{BOLD}✖ {failures} MCP diagnostic check(s) failed.{RESET}\n")
+        return 1
     print(f"\n{GREEN}{BOLD}✅ All Model Context Protocol (MCP) diagnostic checks passed.{RESET}\n")
+    return 0
 
 
 def cmd_app_init(args):
@@ -1256,11 +1468,11 @@ def cmd_app_init(args):
     from pathlib import Path
 
     from sovereign_dc.enterprise.registry import EnterpriseRegistry
-    from sovereign_dc.enterprise.schema import AppCategory, PowerPriority, RuntimeType
+    from sovereign_dc.enterprise.schema import AppCategory, PowerPriority, RuntimeType, slugify_app_id
 
     print(f"\n{BOLD}{CYAN}=== Sovereign Mini Datacenter — Enterprise App Scaffolding ==={RESET}\n")
     app_name = args.name or "My Enterprise Workload"
-    app_id = args.app_id or app_name.lower().replace(" ", "-").replace("_", "-")
+    app_id = args.app_id or slugify_app_id(app_name)
 
     try:
         category = AppCategory(args.category)
@@ -1292,9 +1504,7 @@ def cmd_app_init(args):
     print(f"  {GREEN}✔ Created enterprise app scaffold:{RESET} {BOLD}{created_path}{RESET}")
     print(f"  • App Name:      {CYAN}{manifest.name}{RESET} (`{manifest.app_id}`)")
     print(f"  • Category:      {MAGENTA}{manifest.category.value}{RESET}")
-    print(
-        f"  • Power Tier:    {YELLOW}{manifest.power.tier.value}{RESET} (Min SoC: {manifest.power.min_battery_soc}%%)"
-    )
+    print(f"  • Power Tier:    {YELLOW}{manifest.power.tier.value}{RESET} (Min SoC: {manifest.power.min_battery_soc}%)")
     print(f"  • Runtime:       {BLUE}{manifest.runtime.value}{RESET} (`{manifest.entrypoint}`)")
     print(
         f"  • Quotas:        {manifest.resources.cpu_cores} Cores | {manifest.resources.ram_mb} MB RAM | {manifest.resources.max_power_w} W Max"
@@ -1342,7 +1552,7 @@ def cmd_app_validate(args):
         print(f"  • Version:       {manifest.version}")
         print(f"  • Category:      {MAGENTA}{manifest.category.value}{RESET}")
         print(
-            f"  • Power Tier:    {YELLOW}{manifest.power.tier.value}{RESET} (Min SoC: {manifest.power.min_battery_soc}%%)"
+            f"  • Power Tier:    {YELLOW}{manifest.power.tier.value}{RESET} (Min SoC: {manifest.power.min_battery_soc}%)"
         )
         print(f"  • Max Power:     {manifest.resources.max_power_w} W")
         print(f"  • Compute:       {manifest.resources.cpu_cores} Cores | {manifest.resources.ram_mb} MB RAM")
@@ -1432,9 +1642,9 @@ def cmd_app_start(args):
         print(f"  {GREEN}✔ {msg}{RESET}")
         state = manager.get_runtime_state(args.app_id)
         if state:
-            print(f"  • Power Allocation: {YELLOW}{state.power_draw_w:.1f} W{RESET}")
-            print(f"  • Memory Allocated: {state.ram_usage_mb:.1f} MB")
-            print(f"  • CPU Allocation:   {state.cpu_usage_percent:.1f}%\n")
+            print(f"  • Power Budget (estimate): {YELLOW}{state.power_draw_w:.1f} W{RESET}")
+            print(f"  • Memory Budget (estimate): {state.ram_usage_mb:.1f} MB")
+            print(f"  • CPU Budget (estimate):    {state.cpu_usage_percent:.1f}%\n")
     else:
         print(f"  {RED}✖ {msg}{RESET}\n")
 
@@ -1492,10 +1702,10 @@ def cmd_app_status(args):
         print(f"    - Category:         {MAGENTA}{m.category.value}{RESET}")
         print(f"    - Status:           {status_color}{s.status.value.upper()}{RESET} (Health: {s.health_status})")
         print(
-            f"    - Power Policy:     {YELLOW}{m.power.tier.value}{RESET} (Min SoC: {m.power.min_battery_soc}%%, Active Draw: {s.power_draw_w:.1f} W)"
+            f"    - Power Policy:     {YELLOW}{m.power.tier.value}{RESET} (Min SoC: {m.power.min_battery_soc}%, Estimated Draw: {s.power_draw_w:.1f} W)"
         )
         print(
-            f"    - Resource Usage:   CPU: {s.cpu_usage_percent:.1f}% | RAM: {s.ram_usage_mb:.1f} MB (Max: {m.resources.ram_mb} MB)"
+            f"    - Resource Estimate: CPU: {s.cpu_usage_percent:.1f}% | RAM: {s.ram_usage_mb:.1f} MB (Max: {m.resources.ram_mb} MB)"
         )
         print(
             f"    - Network Ports:    {m.network.ports or 'None'} (WireGuard: {m.network.expose_wireguard}, Space DTN: {m.network.space_dtn_enabled})"
@@ -1524,7 +1734,7 @@ def cmd_app_package(args):
         print(f"  • Package Size:      {meta.get('package_size_bytes')} bytes")
         pqc_sig = meta.get("pqc_signature")
         if pqc_sig:
-            print(f"  • PQC Signature:     {GREEN}NIST FIPS 204 ML-DSA-87 Verified{RESET}")
+            print(f"  • PQC Signature:     {GREEN}NIST FIPS 204 ML-DSA-87 signature attached{RESET}")
         else:
             print(f"  • PQC Signature:     {YELLOW}Omitted (--no-pqc){RESET}")
         print("\n  Package is ready for air-gapped deployment and Space DTN synchronization.\n")
@@ -1583,14 +1793,24 @@ def cmd_app_test(args):
         assert start_ok
         state = manager.get_runtime_state("test-iot-ingest")
         assert state is not None and state.status.value == "running"
-        print(f"  [{GREEN}PASS{RESET}] Step 4: Application launched and health status nominal")
+        print(
+            f"  [{GREEN}PASS{RESET}] Step 4: Application state set to running (no process is launched by the manager)"
+        )
 
         # 5. Test Packaging
         print(f"  [{CYAN}RUN{RESET}] Step 5: Packaging into PQC-signed .smdc-app bundle...")
         pkg_ok, _, meta = manager.package_app(app_dir, output_path=tmp_path / "test.smdc-app", sign_pqc=True)
         assert pkg_ok
         assert "sha256" in meta
-        print(f"  [{GREEN}PASS{RESET}] Step 5: Package built with SHA-256 and PQC ML-DSA-87 attestation")
+        from sovereign_dc.enterprise.manager import verify_package
+        from sovereign_dc.security.pqc import PQCAlgorithm, get_node_pqc_keypair
+
+        node_key = get_node_pqc_keypair(PQCAlgorithm.ML_DSA_87).public_key
+        verified, verify_msg = verify_package(tmp_path / "test.smdc-app", node_key)
+        assert verified, verify_msg
+        print(
+            f"  [{GREEN}PASS{RESET}] Step 5: Package built with SHA-256 digest and ML-DSA-87 signature (self-verified)"
+        )
 
     print(f"\n{GREEN}{BOLD}✅ All Enterprise Framework diagnostic checks passed.{RESET}\n")
 
@@ -1622,16 +1842,33 @@ def cmd_sim_run(args):
         rx3 = f"{t.per_receiver_sinr.get('Rx3', -15.0):.1f}"
         cap = f"{t.sum_capacity_bps_hz:.3f}"
         lat = f"{t.critical_path_latency_ms:.2f} ms"
-        depin = f"{GREEN}VALID (7/7 sigs){RESET}" if t.sla_result.valid else f"{RED}REJECTED{RESET}"
+        sla = t.sla_result
+        depin = (
+            f"{GREEN}VALID ({sla.validator_signatures_count} sigs, quorum {sla.required_threshold}){RESET}"
+            if sla.valid
+            else f"{RED}REJECTED{RESET}"
+        )
         print(
             f"  #{t.cycle_index:<6} | {pos_str:<22} | {rx1:<9} | {rx2:<9} | {rx3:<9} | {cap:<13} | {lat:<10} | {depin}"
         )
 
+    if not traces:
+        print(f"\n{YELLOW}No simulation cycles were executed.{RESET}\n")
+        return 0
     last = traces[-1]
+
+    def _verdict(value: float, limit: float) -> str:
+        ok = value < limit
+        return f"{GREEN if ok else RED}{'within' if ok else 'EXCEEDS'} {limit:g} ms target{RESET}"
+
     print(f"\n{BOLD}{GREEN}✓ Simulation Complete:{RESET}")
-    print(f"  • Decision-to-Action Latency: {last.decision_latency_ms:.2f} ms (< 10 ms requirement met)")
-    print(f"  • Critical Path Execution: {last.critical_path_latency_ms:.2f} ms (< 6 ms deadline)")
-    print(f"  • URLLC Slicing Latency: {last.urllc_latency_ms:.2f} ms (< 1.0 ms)")
+    print(
+        f"  • Decision-to-Action Latency: {last.decision_latency_ms:.2f} ms ({_verdict(last.decision_latency_ms, 10.0)})"
+    )
+    print(
+        f"  • Critical Path Execution: {last.critical_path_latency_ms:.2f} ms ({_verdict(last.critical_path_latency_ms, 6.0)})"
+    )
+    print(f"  • URLLC Slicing Latency: {last.urllc_latency_ms:.2f} ms ({_verdict(last.urllc_latency_ms, 1.0)})")
     print(f"  • Total Sum Capacity: {last.sum_capacity_bps_hz:.4f} bps/Hz")
     print(f"  • DePIN Block Finality: {last.sla_result.finality_time_sec:.1f}s (PoS/dBFT consensus)\n")
 
@@ -1641,8 +1878,11 @@ def cmd_sim_benchmark(args):
     from sovereign_dc.metaverse.benchmark import MetaverseBenchmark
 
     print(f"\n{BOLD}{CYAN}=== Metaverse Wireless Management — Parametric RL Benchmark ==={RESET}\n")
-    episodes = getattr(args, "episodes", 15)
-    steps = getattr(args, "steps", 20)
+    episodes = _arg(args, "episodes", 15)
+    steps = _arg(args, "steps", 20)
+    if episodes < 1 or steps < 1:
+        print(f"{RED}✖ --episodes and --steps must be at least 1.{RESET}")
+        return 2
 
     print(
         f"  {BOLD}Benchmarking SA-PPO (Scene-Aware) vs. MD-PPO (Model-Driven baseline){RESET} over {episodes} episodes..."
@@ -1666,9 +1906,12 @@ def cmd_sim_benchmark(args):
     print(f"\n{BOLD}{GREEN}✓ Benchmark Results Summary:{RESET}")
     print(f"  • Total Sum Capacity (SA-PPO): {report.sa_ppo_total_sum_capacity:.4f} bps/Hz")
     print(f"  • Total Sum Capacity (MD-PPO): {report.md_ppo_total_sum_capacity:.4f} bps/Hz")
-    print(f"  • Overall Capacity Gain: {GREEN}{report.overall_capacity_gain_pct:+.1f}%{RESET}")
+    overall = report.overall_capacity_gain_pct
+    rx1_gain = report.receiver_metrics["Rx1"].capacity_gain_pct
+    print(f"  • Overall Capacity Gain: {GREEN if overall > 0 else RED}{overall:+.1f}%{RESET}")
     print(
-        f"  • Rx1 (Disadvantaged) Gain: {GREEN}{report.receiver_metrics['Rx1'].capacity_gain_pct:+.1f}%{RESET} (Substantial unfairness reduction)"
+        f"  • Rx1 (Disadvantaged) Gain: {GREEN if rx1_gain > 0 else RED}{rx1_gain:+.1f}%{RESET} "
+        f"({'SA-PPO ahead' if rx1_gain > 0 else 'SA-PPO behind'} for this seed; results vary by seed)"
     )
     print(
         f"  • Ray-Tracing Step Time: {report.avg_ray_tracing_latency_ms:.1f} ms | URLLC: {report.avg_urllc_latency_ms:.1f} ms\n"
@@ -1709,7 +1952,7 @@ def cmd_sim_sla(args):
     val = DePINSLAValidator()
 
     print(f"  • Total DePIN Validator Nodes: {len(val.validators)}")
-    print(f"  • Byzantine Consensus Threshold: ceil(2N/3) + 1 = {val.consensus_threshold} signatures")
+    print(f"  • Byzantine Consensus Threshold: floor(2N/3) + 1 = {val.consensus_threshold} signatures")
     print("  • Min SINR Rejection Rule: < -15.0 dB")
     print("  • Optimization Alert Rule: < -10.0 dB\n")
 
@@ -1779,7 +2022,12 @@ def main():
     p_bench.add_argument("--ai", action="store_true", help="Benchmark AI token throughput and embedding rate")
     p_bench.add_argument("--dtn", action="store_true", help="Benchmark Space DTN bundle spool ingestion")
     p_bench.add_argument("--system", action="store_true", help="Benchmark unified memory bandwidth")
-    p_bench.add_argument("--model", type=str, default="qwen2.5-coder:7b", help="Model to benchmark")
+    p_bench.add_argument(
+        "--live",
+        action="store_true",
+        help="Also measure real token throughput against the configured Ollama server (OLLAMA_URL)",
+    )
+    p_bench.add_argument("--model", type=str, default="qwen2.5-coder:7b", help="Model to measure with --live")
     p_bench.add_argument("--export", type=str, help="Export benchmark results to JSON file path")
     p_bench.set_defaults(func=cmd_benchmark)
 
@@ -1834,7 +2082,10 @@ def main():
     p_telem = subparsers.add_parser("telemetry", help="Run power, solar & thermal Prometheus exporter")
     p_telem.add_argument("--port", type=int, default=9101, help="Port to listen on (default: 9101)")
     p_telem.add_argument(
-        "--hardware", action="store_true", help="Read physical serial/RS485 data instead of simulation"
+        "--hardware",
+        action="store_true",
+        help="Disable simulation. No serial/RS485 reader is implemented yet, so the exporter then "
+        "reports sovereign_telemetry_source_up 0 and no measurements",
     )
     p_telem.set_defaults(func=cmd_telemetry)
 
@@ -1891,7 +2142,7 @@ def main():
     # Economy & Monetary Subcommand Suite
     p_econ = subparsers.add_parser(
         "economy",
-        aliases=["market", "wallet"],
+        aliases=["wallet"],
         help="Sovereign Compute & Energy Monetary Layer (M2M micro-payments & credits)",
     )
     econ_subs = p_econ.add_subparsers(dest="economy_command", help="Economy actions")
@@ -1925,6 +2176,13 @@ def main():
     p_ec_history.add_argument("--db-path", type=str, help="Custom ledger SQLite database path")
     p_ec_history.set_defaults(func=cmd_economy_history)
 
+    p_ec_audit = econ_subs.add_parser("audit", help="Audit ledger chain integrity and its head anchor")
+    p_ec_audit.add_argument("--db-path", type=str, help="Custom ledger SQLite database path")
+    p_ec_audit.add_argument(
+        "--anchor", action="store_true", help="Anchor the verified chain head with this node's identity key"
+    )
+    p_ec_audit.set_defaults(func=cmd_economy_verify)
+
     p_econ.set_defaults(func=cmd_economy_wallet)
 
     # Docs
@@ -1937,6 +2195,12 @@ def main():
     # Dashboard
     p_dash = subparsers.add_parser("dashboard", help="Launch real-time Web Operations Dashboard & REST API")
     p_dash.add_argument("--port", type=int, default=8080, help="Port to listen on (default: 8080)")
+    p_dash.add_argument(
+        "--host",
+        default=None,
+        help="Bind address (default: 127.0.0.1, or SMDC_DASHBOARD_HOST). Exposing beyond loopback "
+        "requires SMDC_DASHBOARD_TOKEN for control endpoints",
+    )
     p_dash.add_argument("--no-browser", action="store_true", help="Do not automatically open default web browser")
     p_dash.set_defaults(func=cmd_dashboard)
 
@@ -2029,7 +2293,7 @@ def main():
     p_app_status.set_defaults(func=cmd_app_status)
 
     p_app_pkg = app_subs.add_parser(
-        "package", help="Package application into verified .smdc-app bundle with PQC attestation"
+        "package", help="Package application into a .smdc-app bundle with an ML-DSA-87 signature"
     )
     p_app_pkg.add_argument("path", nargs="?", default=".", help="Path to application directory")
     p_app_pkg.add_argument("--output", type=str, help="Custom output package file path")
@@ -2077,7 +2341,10 @@ def main():
 
     args = parser.parse_args()
     if hasattr(args, "func"):
-        args.func(args)
+        rc = args.func(args)
+        # Commands return None on success; an int is an explicit process exit status.
+        if isinstance(rc, int) and not isinstance(rc, bool) and rc != 0:
+            sys.exit(rc)
     else:
         parser.print_help()
 

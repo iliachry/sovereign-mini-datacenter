@@ -59,9 +59,9 @@
         <span class="telem-val" style="color:var(--accent-purple);">IN CONTACT</span>
       </div>
       <div class="telem-pill" id="hud-conn-badge">
-        <div class="telem-dot"></div>
-        <span class="telem-label" style="color:var(--accent-emerald);">LIVE SHADOW:</span>
-        <span class="telem-val">CONNECTING...</span>
+        <div class="telem-dot amber"></div>
+        <span class="telem-label" style="color:var(--accent-amber);">AIR-GAPPED:</span>
+        <span class="telem-val">SIMULATION</span>
       </div>
     </div>
 
@@ -107,7 +107,7 @@
         <span class="badge" style="color:var(--accent-sky);">360mm</span>
       </button>
       <button class="layer-btn" data-layer="solar">
-        <span>☀️ Bifacial Solar Array</span>
+        <span>☀️ Solar PV Array</span>
         <span class="badge" style="color:var(--accent-emerald);">1.6kW</span>
       </button>
       <button class="layer-btn" data-layer="metaverse">
@@ -144,11 +144,11 @@
 
     <div class="inspector-card" id="inspector-card">
       <div class="comp-header">
-        <span class="comp-title" id="comp-name">NVIDIA Jetson Orin AGX AI Core 1</span>
+        <span class="comp-title" id="comp-name">NVIDIA DGX Spark AI Core 1</span>
         <span class="comp-badge" id="comp-badge">AI COMPUTE</span>
       </div>
       <p class="comp-desc" id="comp-desc">
-        Primary edge accelerator delivering 275 TOPS INT8 AI compute with 64GB unified memory, hosting local Ollama LLMs and Qdrant semantic vector embeddings.
+        Primary AI node built on the NVIDIA GB10 Grace Blackwell Superchip with 128GB unified memory and 4TB NVMe, hosting local Ollama LLMs and Qdrant semantic vector embeddings.
       </p>
       <div class="spec-table" id="comp-specs">
         <!-- Dynamically Populated by HUDManager -->
@@ -159,14 +159,14 @@
     <div class="inspector-card">
       <div class="comp-header">
         <span class="comp-title">Architecture Summary</span>
-        <span class="comp-badge" style="color:var(--accent-emerald); border-color:var(--accent-emerald);">BOM ~$10.6K</span>
+        <span class="comp-badge" style="color:var(--accent-emerald); border-color:var(--accent-emerald);">BOM ~$18.5K</span>
       </div>
       <div class="spec-table">
-        <div class="spec-row"><span class="spec-key">AI Compute</span><span class="spec-val" style="color:var(--accent-emerald);">2x DGX (550 TOPS)</span></div>
+        <div class="spec-row"><span class="spec-key">AI Compute</span><span class="spec-val" style="color:var(--accent-emerald);">2x DGX Spark (256 GB)</span></div>
         <div class="spec-row"><span class="spec-key">Space Link</span><span class="spec-val" style="color:var(--accent-purple);">BPv7 DTN Array</span></div>
         <div class="spec-row"><span class="spec-key">Storage</span><span class="spec-val">8 TB NVMe RAID-1</span></div>
         <div class="spec-row"><span class="spec-key">Battery Bank</span><span class="spec-val" style="color:var(--accent-amber);">10.24 kWh LiFePO4</span></div>
-        <div class="spec-row"><span class="spec-key">Solar PV</span><span class="spec-val" style="color:var(--accent-emerald);">1,640W Monocrystalline</span></div>
+        <div class="spec-row"><span class="spec-key">Solar PV</span><span class="spec-val" style="color:var(--accent-emerald);">1,640W Mono PERC</span></div>
         <div class="spec-row"><span class="spec-key">Cooling</span><span class="spec-val" style="color:var(--accent-sky);">Dual 360mm Rads</span></div>
       </div>
     </div>
@@ -200,7 +200,7 @@
       </div>
       <div class="modal-body">
         <div class="control-slider-group">
-          <div class="slider-label-row"><span>Compute Nodes (DGX):</span><span id="calc-val-nodes">2 Nodes (550 TOPS)</span></div>
+          <div class="slider-label-row"><span>Compute Nodes (DGX):</span><span id="calc-val-nodes">2 Nodes (256 GB unified)</span></div>
           <input type="range" id="calc-nodes" min="1" max="4" value="2">
         </div>
         <div class="control-slider-group">
@@ -217,11 +217,12 @@
         </div>
 
         <div class="metric-grid-4">
-          <div class="metric-box"><div class="metric-box-label">DAILY DRAW</div><div class="metric-box-val" id="calc-res-draw">7.2 kWh</div></div>
-          <div class="metric-box"><div class="metric-box-label">DAILY SOLAR YIELD</div><div class="metric-box-val" id="calc-res-yield" style="color:var(--accent-emerald);">8.5 kWh</div></div>
-          <div class="metric-box"><div class="metric-box-label">ZERO-SUN AUTONOMY</div><div class="metric-box-val" id="calc-res-autonomy" style="color:var(--accent-amber);">28.8 hrs</div></div>
-          <div class="metric-box"><div class="metric-box-label">ESTIMATED BOM</div><div class="metric-box-val" id="calc-res-cost" style="color:var(--accent-sky);">$10,600</div></div>
+          <div class="metric-box"><div class="metric-box-label">DAILY DRAW</div><div class="metric-box-val" id="calc-res-draw">11.2 kWh</div></div>
+          <div class="metric-box"><div class="metric-box-label">DAILY SOLAR YIELD</div><div class="metric-box-val" id="calc-res-yield" style="color:var(--accent-rose);">7.2 kWh</div></div>
+          <div class="metric-box"><div class="metric-box-label">ZERO-SUN AUTONOMY</div><div class="metric-box-val" id="calc-res-autonomy" style="color:var(--accent-amber);">18.7 hrs</div></div>
+          <div class="metric-box"><div class="metric-box-label">ESTIMATED BOM</div><div class="metric-box-val" id="calc-res-cost" style="color:var(--accent-sky);">$18,475</div></div>
         </div>
+        <div id="calc-res-balance" style="font-family:var(--font-mono); font-size:11px; color:var(--accent-rose);">⚠ Energy deficit: 3.9 kWh/day — solar covers 64% of the draw (not fully off-grid at this configuration)</div>
       </div>
       <div class="modal-footer">
         <button class="btn-secondary modal-close">Close</button>
@@ -254,21 +255,22 @@
         </div>
 
         <div class="metric-grid-4">
-          <div class="metric-box"><div class="metric-box-label">PAYBACK PERIOD</div><div class="metric-box-val" id="roi-res-payback" style="color:var(--accent-emerald);">5.1 Months</div></div>
-          <div class="metric-box"><div class="metric-box-label">3-YEAR NET SAVINGS</div><div class="metric-box-val" id="roi-res-savings" style="color:var(--accent-sky);">$88,336</div></div>
-          <div class="metric-box"><div class="metric-box-label">3-YEAR ROI</div><div class="metric-box-val" id="roi-res-roi" style="color:var(--accent-amber);">278.9%</div></div>
-          <div class="metric-box"><div class="metric-box-label">CO₂ AVOIDED / YEAR</div><div class="metric-box-val" id="roi-res-co2" style="color:var(--accent-purple);">14.2 Tons</div></div>
+          <div class="metric-box"><div class="metric-box-label">PAYBACK PERIOD</div><div class="metric-box-val" id="roi-res-payback" style="color:var(--accent-emerald);">10.3 Months</div></div>
+          <div class="metric-box"><div class="metric-box-label">3-YEAR NET SAVINGS</div><div class="metric-box-val" id="roi-res-savings" style="color:var(--accent-sky);">$61,114</div></div>
+          <div class="metric-box"><div class="metric-box-label">3-YEAR ROI</div><div class="metric-box-val" id="roi-res-roi" style="color:var(--accent-amber);">249.4%</div></div>
+          <div class="metric-box"><div class="metric-box-label">CO₂ AVOIDED / YEAR</div><div class="metric-box-val" id="roi-res-co2" style="color:var(--accent-purple);">1.1 Tons</div></div>
         </div>
 
         <div class="cost-comparison-container">
           <div style="display:flex; justify-content:space-between; font-family:var(--font-mono); font-size:11px; margin-bottom:4px;">
             <span style="color:var(--accent-emerald);">🟢 SMDC 3-Yr: <b id="roi-bar-val-smdc">$31.7k</b></span>
-            <span style="color:var(--accent-rose);">🔴 Cloud 3-Yr: <b id="roi-bar-val-cloud">$120.0k</b></span>
+            <span style="color:var(--accent-rose);">🔴 Cloud + Grid Energy 3-Yr: <b id="roi-bar-val-cloud">$92.8k</b></span>
           </div>
           <div class="cost-bar-track">
-            <div class="cost-bar-smdc" id="roi-bar-smdc" style="width: 26%;">SMDC</div>
-            <div class="cost-bar-cloud" id="roi-bar-cloud" style="width: 74%;">CLOUD</div>
+            <div class="cost-bar-smdc" id="roi-bar-smdc" style="width: 25%;">SMDC</div>
+            <div class="cost-bar-cloud" id="roi-bar-cloud" style="width: 75%;">CLOUD + GRID</div>
           </div>
+          <div id="roi-res-energy" style="font-family:var(--font-mono); font-size:11px; color:var(--text-muted);">Includes $2,778 of grid energy displaced by solar over 3 yr (7.2 kWh/day per node at $0.35/kWh)</div>
         </div>
       </div>
       <div class="modal-footer">

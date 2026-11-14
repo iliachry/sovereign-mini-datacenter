@@ -2,7 +2,13 @@
 """
 Sovereign Mini Datacenter - Terrestrial LoRa / Meshtastic Emergency Mesh Gateway
 Bridges 868/915MHz off-grid field radios into BPv7 Space DTN bundles and Prometheus telemetry.
+
+STATUS: the radio transport (serial / TCP Meshtastic link) is NOT implemented. The
+packet codec and the DTN forwarding path are real; ``run_lora_daemon`` attaches no
+radio, bridges nothing and reports no traffic counters.
 """
+
+from __future__ import annotations
 
 import json
 import logging
@@ -10,12 +16,15 @@ import os
 import time
 from typing import Any
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [LoRaGateway] %(message)s")
+logger = logging.getLogger("LoRaGateway")
 
 SERIAL_PORT = os.getenv("LORA_SERIAL_PORT", "/dev/ttyUSB0")
 BAUD_RATE = int(os.getenv("LORA_BAUD_RATE", "115200"))
 TCP_HOST = os.getenv("LORA_TCP_HOST", "")
 DTN_ENABLED = os.getenv("DTN_FALLBACK_ENABLED", "true").lower() == "true"
+GATEWAY_EID = os.getenv("LORA_GATEWAY_EID", "dtn://lora-mesh-gw")
+IDLE_POLL_SECONDS = 15.0
+IDLE_REMINDER_EVERY = 240  # iterations (~1 h at the default poll interval)
 
 
 def encode_packet(sender: str, receiver: str, payload: dict[str, Any]) -> bytes:
@@ -27,42 +36,79 @@ def encode_packet(sender: str, receiver: str, payload: dict[str, Any]) -> bytes:
 def decode_packet(raw_bytes: bytes) -> dict[str, Any]:
     """Decodes a raw binary packet into a dictionary structure."""
     try:
-        return json.loads(raw_bytes.decode("utf-8"))
+        decoded = json.loads(raw_bytes.decode("utf-8"))
     except Exception as e:
         return {"error": f"Corrupt packet: {e}", "raw": raw_bytes.hex()}
+    if not isinstance(decoded, dict):
+        return {"error": "Corrupt packet: top-level JSON value is not an object", "raw": raw_bytes.hex()}
+    return decoded
 
 
-def forward_to_space_dtn(sender: str, message: str) -> None:
-    """Wraps an emergency LoRa message into a BPv7 bundle for orbital satellite relay."""
-    logging.info(f"🛰️ Forwarding emergency LoRa message from '{sender}' to Space DTN relay...")
+def resolve_dtn_spool_path() -> str:
+    """Returns the configured DTN spool path (``DTN_DB_PATH`` env, then SMDC config)."""
+    env_path = os.getenv("DTN_DB_PATH")
+    if env_path:
+        return env_path
+    try:
+        from sovereign_dc.config import get_config
+
+        return str(get_config().dtn_db_path)
+    except Exception:
+        return os.path.join(os.environ.get("TEMP", "/tmp"), "dtn_spool.db")
+
+
+def forward_to_space_dtn(sender: str, message: str) -> bool:
+    """Wraps an emergency LoRa message into a BPv7 bundle for orbital satellite relay.
+
+    Returns True only if the bundle was actually written to the configured DTN spool.
+    """
+    logger.info("🛰️ Forwarding emergency LoRa message from '%s' to Space DTN relay...", sender)
     try:
         from sovereign_dc.space.dtn.bundle import Bundle, BundlePriority
         from sovereign_dc.space.dtn.router import DTNRouter
 
-        router = DTNRouter(local_node_eid="dtn://lora-mesh-gw")
+        router = DTNRouter(db_path=resolve_dtn_spool_path(), local_node_eid=GATEWAY_EID)
         bundle = Bundle(
             source_eid=f"dtn://lora-mesh/{sender}",
             destination_eid="dtn://emergency-coordination.space/inbox",
             payload=message.encode("utf-8"),
             priority=BundlePriority.CRITICAL,
         )
-        router.queue_bundle(bundle)
-        logging.info(f"✅ Emergency bundle {bundle.bundle_id} queued in space spool.")
+        if not router.queue_bundle(bundle):
+            logger.warning("DTN routing fallback notice: spool rejected bundle %s", bundle.bundle_id)
+            return False
+        logger.info("✅ Emergency bundle %s queued in space spool.", bundle.bundle_id)
+        return True
     except Exception as e:
-        logging.warning(f"DTN routing fallback notice: {e}")
+        logger.warning("DTN routing fallback notice: %s", e)
+        return False
 
 
-def run_lora_daemon():
-    logging.info(f"Starting Sovereign LoRa / Meshtastic Mesh Gateway (Port: {SERIAL_PORT})...")
-    nodes_discovered = 4
-    packets_received = 0
+def run_lora_daemon(max_iterations: int | None = None) -> int:
+    """Runs the gateway loop and returns the number of packets actually bridged.
 
-    while True:
-        packets_received += 1
-        if packets_received % 10 == 0:
-            logging.info(f"[LoRa] Active nodes: {nodes_discovered} | Total packets bridged: {packets_received}")
-        time.sleep(15)
+    No radio transport is implemented, so nothing is received and nothing is bridged:
+    the loop only keeps the service alive (so supervisors do not restart-loop) and
+    periodically repeats that no radio is attached. ``max_iterations`` bounds the
+    loop for tests; ``None`` runs forever.
+    """
+    logger.info("Starting Sovereign LoRa / Meshtastic Mesh Gateway (Port: %s)...", SERIAL_PORT)
+    logger.error(
+        "No LoRa radio attached: the serial/TCP Meshtastic transport is not implemented "
+        "(configured port %s @ %d baud is never opened). 0 nodes discovered, 0 packets bridged.",
+        SERIAL_PORT,
+        BAUD_RATE,
+    )
+    packets_bridged = 0
+    iteration = 0
+    while max_iterations is None or iteration < max_iterations:
+        iteration += 1
+        if iteration % IDLE_REMINDER_EVERY == 0:
+            logger.warning("[LoRa] Still no radio attached; packets bridged: %d", packets_bridged)
+        time.sleep(IDLE_POLL_SECONDS)
+    return packets_bridged
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [LoRaGateway] %(message)s")
     run_lora_daemon()

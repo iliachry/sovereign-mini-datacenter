@@ -29,8 +29,8 @@ def main() -> None:
 
         # Read local DC environmental telemetry
         dc_telemetry = client.get_telemetry()
-        soc = dc_telemetry.get("battery_soc", 100.0)
-        solar = dc_telemetry.get("solar_watts", 0.0)
+        soc = float(dc_telemetry.get("battery_soc") or 0.0)
+        solar = float(dc_telemetry.get("solar_watts") or 0.0)
 
         # Ingest simulated industrial sensors (temperature, vibration, pressure)
         sensor_data = {

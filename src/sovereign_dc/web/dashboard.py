@@ -9,6 +9,7 @@ Provides an ultra-portable, zero-external-dependency HTTP server hosting:
 from __future__ import annotations
 
 import hmac
+import ipaddress
 import json
 import logging
 import os
@@ -18,6 +19,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler
 from http.server import ThreadingHTTPServer as HTTPServer
 from typing import Any
+from urllib.parse import urlsplit
 
 from sovereign_dc import __version__
 from sovereign_dc.config import get_config
@@ -212,7 +214,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     <div class="card">
       <div class="card-title"><span>🌐 Sovereign Mesh Cluster</span><span class="code" id="raft-role">RAFT LEADER</span></div>
       <div id="mesh-nodes-list">
-        <div class="status-row"><span>smdc-node-01 (Athens Core)</span><span class="code" style="color: var(--accent);">100.64.0.1 • 550 TOPS • ONLINE</span></div>
+        <div class="status-row"><span>smdc-node-01 (Athens Core)</span><span class="code" style="color: var(--accent);">100.64.0.1 • 2x DGX Spark • ONLINE</span></div>
         <div class="status-row"><span>smdc-node-02 (Alpine Edge)</span><span class="code" style="color: var(--accent);">100.64.0.2 • 275 TOPS • ONLINE</span></div>
         <div class="status-row"><span>smdc-node-03 (Aegean Island)</span><span class="code" style="color: var(--accent-blue);">100.64.0.3 • 275 TOPS • DTN ARMED</span></div>
       </div>
@@ -229,11 +231,11 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
     <!-- Card 7: Storage & Security -->
     <div class="card">
-      <div class="card-title"><span>🔐 Storage & Cryptography</span><span class="code">ZFS ENCRYPTED</span></div>
+      <div class="card-title"><span>🔐 Storage & Cryptography</span><span class="code">PQC OPERATIONAL</span></div>
       <div class="status-row"><span>NVMe Storage</span><span class="code" id="storage-used">-- GB / -- GB Free</span></div>
       <div class="status-row"><span>PQC Digital Signatures</span><span class="code" style="color: var(--accent);">ML-DSA-87 (FIPS 204)</span></div>
       <div class="status-row"><span>PQC Key Encapsulation</span><span class="code" style="color: var(--accent-purple);">ML-KEM-1024 (FIPS 203)</span></div>
-      <div class="status-row"><span>Intrusion Prevention</span><span class="code" style="color: var(--accent);">CrowdSec ACTIVE</span></div>
+      <div class="status-row"><span>Intrusion Detection</span><span class="code">CrowdSec overlay (not probed)</span></div>
     </div>
 
     <!-- Card 8: 5G RAN & UAV Metaverse (IEEE IoT Mag 2026) -->
@@ -260,6 +262,11 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     async function updateTelemetry() {
       try {
         const res = await fetch('/api/status');
+        if (!res.ok) {
+          const live = document.getElementById('live-indicator');
+          if (live) { live.textContent = '● TELEMETRY UNAVAILABLE'; live.style.color = 'var(--accent-red)'; }
+          return;
+        }
         if (!res.ok) return;
         const data = await res.json();
 
@@ -279,6 +286,15 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         document.getElementById('solar-watts').textContent = `${solar.toFixed(0)} W`;
         document.getElementById('net-power').textContent = `Net Flow: ${(solar - data.power.system_load_watts).toFixed(0)} W`;
         document.getElementById('solar-bar').style.width = `${Math.min(100, (solar / 1640) * 100)}%`;
+
+        // Telemetry provenance: never present simulated values as live
+        const simulated = data.power.is_simulated || data.thermal.is_simulated;
+        const live = document.getElementById('live-indicator');
+        if (live) {
+          live.textContent = simulated ? '● SIMULATED TELEMETRY' : '● LIVE TELEMETRY';
+          live.style.color = simulated ? 'var(--accent-orange)' : '';
+          live.style.borderColor = simulated ? 'var(--accent-orange)' : '';
+        }
 
         // Thermal
         const coolant = data.thermal.coolant_celsius || 0;
@@ -309,6 +325,9 @@ DASHBOARD_HTML = """<!DOCTYPE html>
           const pos = data.metaverse.uav_position;
           document.getElementById('uav-pos-display').textContent = `(${pos[0].toFixed(1)}m, ${pos[1].toFixed(1)}m, ${pos[2].toFixed(1)}m)`;
           const stopped = data.metaverse.emergency_stopped;
+          uavStopped = !!stopped;
+          const stopBtn = document.getElementById('btn-stop-uav');
+          if (stopBtn) { stopBtn.textContent = stopped ? '▶ Resume UAV' : '🛑 E-Stop'; }
           document.getElementById('metaverse-sla-status').textContent = stopped ? 'E-STOPPED' : 'SLA NOMINAL';
           document.getElementById('metaverse-sla-status').style.color = stopped ? 'var(--accent-red)' : 'var(--accent)';
         }
@@ -317,18 +336,42 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       }
     }
 
+    // Operator token (SMDC_DASHBOARD_TOKEN): supply once via ?token=... ; kept in sessionStorage only.
+    let uavStopped = false;
+    function controlToken() {
+      try {
+        const fromUrl = new URLSearchParams(window.location.search).get('token');
+        if (fromUrl) { sessionStorage.setItem('smdc_token', fromUrl); }
+        return sessionStorage.getItem('smdc_token') || '';
+      } catch (err) { return ''; }
+    }
+    async function postControl(path, body) {
+      const headers = {'Content-Type': 'application/json'};
+      const token = controlToken();
+      if (token) { headers['Authorization'] = `Bearer ${token}`; }
+      const res = await fetch(path, { method: 'POST', headers, body: JSON.stringify(body) });
+      if (!res.ok) {
+        const el = document.getElementById('metaverse-sla-status');
+        if (el) {
+          el.textContent = res.status === 401 || res.status === 403 ? 'CONTROL DENIED (TOKEN)' : `CONTROL ERROR ${res.status}`;
+          el.style.color = 'var(--accent-red)';
+        }
+      }
+      return res;
+    }
+
     document.addEventListener('DOMContentLoaded', () => {
       const btnOpt = document.getElementById('btn-opt-uav');
       if (btnOpt) {
         btnOpt.addEventListener('click', async () => {
-          await fetch('/api/metaverse/optimize', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({cycles: 3}) });
+          await postControl('/api/metaverse/optimize', {cycles: 3});
           updateTelemetry();
         });
       }
       const btnStop = document.getElementById('btn-stop-uav');
       if (btnStop) {
         btnStop.addEventListener('click', async () => {
-          await fetch('/api/metaverse/emergency-stop', { method: 'POST' });
+          await postControl(uavStopped ? '/api/metaverse/resume' : '/api/metaverse/emergency-stop', {});
           updateTelemetry();
         });
       }
@@ -340,6 +383,32 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 </body>
 </html>
 """
+
+
+def _is_loopback_host(host: str) -> bool:
+    """True for localhost names and loopback IP literals (IPv4, IPv6, IPv4-mapped)."""
+    host = host.strip().strip("[]").lower()
+    if host in ("localhost", ""):
+        return host == "localhost"
+    try:
+        addr = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    mapped = getattr(addr, "ipv4_mapped", None)
+    return bool(addr.is_loopback or (mapped is not None and mapped.is_loopback))
+
+
+def _as_bool(value: Any, field: str) -> bool:
+    """Accepts only real JSON booleans (``bool("false")`` would otherwise be True)."""
+    if not isinstance(value, bool):
+        raise ValueError(f"'{field}' must be a JSON boolean")
+    return value
+
+
+def _as_int(value: Any, field: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"'{field}' must be an integer")
+    return value
 
 
 # Global Digital Shadow Hardware State (Synchronized across all connected 3D Twins)
@@ -358,18 +427,14 @@ _MAX_POST_BODY_BYTES = 1_048_576  # 1 MiB cap for control POST payloads
 
 
 def _get_state_dir() -> str:
-    """Returns a user-private directory (0o700) for dashboard wallet & ledger state."""
-    base_dir = os.environ.get("SMDC_STATE_DIR") or os.path.expanduser("~/.smdc")
-    try:
-        os.makedirs(base_dir, mode=0o700, exist_ok=True)
-        os.chmod(base_dir, 0o700)
-        return base_dir
-    except OSError:
-        import tempfile
+    """Returns a user-private directory (0o700) for dashboard wallet & ledger state.
 
-        fallback = os.path.join(tempfile.gettempdir(), f"smdc-{os.getuid()}")
-        os.makedirs(fallback, mode=0o700, exist_ok=True)
-        return fallback
+    Shares the MCP server's resolution so a pre-existing world-accessible temp directory
+    is never trusted as the home of wallet key material.
+    """
+    from sovereign_dc.mcp.tools import _get_mcp_state_dir
+
+    return _get_mcp_state_dir()
 
 
 def _get_raft_state() -> tuple[RaftCluster, str]:
@@ -400,8 +465,9 @@ def get_system_status_payload() -> dict[str, Any]:
     from sovereign_dc.economy.wallet import NodeWallet
 
     cfg = get_config()
-    power = read_power()
-    thermal = read_thermal()
+    # Outside simulation mode a failed read raises instead of returning invented values.
+    power = read_power(exporter_url=cfg.power_exporter_url, simulation=cfg.is_simulation())
+    thermal = read_thermal(exporter_url=cfg.power_exporter_url, simulation=cfg.is_simulation())
     storage = detect_storage()
 
     # Dynamic Fan RPM calculation based on thermal state and system load
@@ -460,12 +526,14 @@ def get_system_status_payload() -> dict[str, Any]:
             "battery_voltage": power.battery_voltage,
             "system_load_watts": power.system_load_watts,
             "load_shedding_active": power.load_shedding_active,
+            "is_simulated": power.is_simulated,
         },
         "thermal": {
             "coolant_celsius": thermal.coolant_celsius,
             "rack_inlet_celsius": thermal.rack_inlet_celsius,
             "rack_exhaust_celsius": thermal.rack_exhaust_celsius,
             "is_overtemp": thermal.is_overtemp,
+            "is_simulated": thermal.is_simulated,
         },
         "storage": {
             "total_gb": storage.total_gb,
@@ -510,16 +578,46 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
+    # SSE pacing; tests bound the stream with sse_max_events.
+    sse_interval_seconds: float = 2.0
+    sse_max_events: int | None = None
+
     def _check_post_auth(self) -> bool:
-        """Verifies bearer token on POST endpoints when SMDC_DASHBOARD_TOKEN is set."""
+        """Authorizes a control POST.
+
+        With SMDC_DASHBOARD_TOKEN set, a matching bearer token is required. Without a token,
+        control is limited to requests that originate on this machine: the TCP peer must be
+        loopback and any browser ``Origin`` must itself be a loopback origin, so neither a
+        LAN host nor a web page from another site can actuate hardware.
+        """
         expected_token = os.environ.get("SMDC_DASHBOARD_TOKEN", "").strip()
-        if not expected_token:
-            return True
-        auth_header = str(self.headers.get("Authorization", ""))
-        if not auth_header.startswith("Bearer "):
+        if expected_token:
+            auth_header = str(self.headers.get("Authorization", ""))
+            if not auth_header.startswith("Bearer "):
+                return False
+            provided = auth_header[len("Bearer ") :].strip()
+            return hmac.compare_digest(provided.encode("utf-8"), expected_token.encode("utf-8"))
+
+        client = getattr(self, "client_address", None)
+        peer_host = str(client[0]) if client else ""
+        if not _is_loopback_host(peer_host):
             return False
-        provided = auth_header[len("Bearer ") :].strip()
-        return hmac.compare_digest(provided, expected_token)
+        origin = str(self.headers.get("Origin", "") or "")
+        if origin and not _is_loopback_host(urlsplit(origin).hostname or ""):
+            return False
+        return True
+
+    def _send_json(self, status: int, body: dict[str, Any]) -> None:
+        payload = json.dumps(body).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self._send_cors_headers()
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def _send_bad_request(self, message: str) -> None:
+        self._send_json(400, {"success": False, "error": message})
 
     def do_OPTIONS(self) -> None:
         self.send_response(204)
@@ -527,7 +625,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self) -> None:
-        if self.path in ("/", "/index.html"):
+        # Route on the path only: the page is opened as /?token=... and probes add query strings.
+        path = urlsplit(self.path).path
+        if path in ("/", "/index.html"):
             payload = DASHBOARD_HTML.encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -535,15 +635,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
             self.wfile.write(payload)
-        elif self.path == "/api/status":
-            payload = json.dumps(get_system_status_payload()).encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self._send_cors_headers()
-            self.send_header("Content-Length", str(len(payload)))
-            self.end_headers()
-            self.wfile.write(payload)
-        elif self.path == "/api/metaverse/status":
+        elif path == "/api/status":
+            try:
+                status_payload = get_system_status_payload()
+            except Exception as e:
+                # Hardware mode with no telemetry source: report it, do not invent readings.
+                logger.warning("System status unavailable: %s", e)
+                self._send_json(503, {"success": False, "error": f"telemetry unavailable: {e}"})
+                return
+            self._send_json(200, status_payload)
+        elif path == "/api/metaverse/status":
             orch = get_metaverse_orchestrator()
             payload = json.dumps(orch.get_latest_status()).encode("utf-8")
             self.send_response(200)
@@ -552,7 +653,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
             self.wfile.write(payload)
-        elif self.path == "/api/metaverse/slices":
+        elif path == "/api/metaverse/slices":
             from sovereign_dc.metaverse.slicing import NetworkSlicingManager
 
             mgr = NetworkSlicingManager()
@@ -563,24 +664,35 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
             self.wfile.write(payload)
-        elif self.path == "/api/telemetry/stream":
+        elif path == "/api/telemetry/stream":
             # Server-Sent Events (SSE) Live Telemetry Stream
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream; charset=utf-8")
             self.send_header("Cache-Control", "no-cache")
-            self.send_header("Connection", "keep-alive")
+            self.send_header("Connection", "close")
             self._send_cors_headers()
             self.end_headers()
+            # The response has no Content-Length, so the socket must close when the stream ends.
+            self.close_connection = True
 
-            # Transmit snapshot event
-            status_data = get_system_status_payload()
-            event_payload = f"data: {json.dumps(status_data)}\n\n".encode()
+            sent = 0
             try:
-                self.wfile.write(event_payload)
-                self.wfile.flush()
-            except Exception:
-                pass
-        elif self.path in ("/health", "/healthz"):
+                while self.sse_max_events is None or sent < self.sse_max_events:
+                    try:
+                        frame = f"data: {json.dumps(get_system_status_payload())}\n\n"
+                    except (BrokenPipeError, ConnectionError):
+                        raise
+                    except Exception as e:
+                        frame = f"event: unavailable\ndata: {json.dumps({'error': str(e)})}\n\n"
+                    self.wfile.write(frame.encode())
+                    self.wfile.flush()
+                    sent += 1
+                    if self.sse_max_events is not None and sent >= self.sse_max_events:
+                        break
+                    time.sleep(self.sse_interval_seconds)
+            except (BrokenPipeError, ConnectionError, OSError):
+                logger.debug("SSE client disconnected after %d events", sent)
+        elif path in ("/health", "/healthz"):
             self.send_response(200)
             self.send_header("Content-Type", "text/plain")
             self._send_cors_headers()
@@ -593,13 +705,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         if not self._check_post_auth():
-            err_payload = json.dumps({"success": False, "error": "Unauthorized"}).encode("utf-8")
-            self.send_response(401)
-            self.send_header("Content-Type", "application/json")
-            self._send_cors_headers()
-            self.send_header("Content-Length", str(len(err_payload)))
-            self.end_headers()
-            self.wfile.write(err_payload)
+            token_set = bool(os.environ.get("SMDC_DASHBOARD_TOKEN", "").strip())
+            if token_set:
+                self._send_json(401, {"success": False, "error": "Unauthorized"})
+            else:
+                self._send_json(
+                    403,
+                    {"success": False, "error": "Remote control requires SMDC_DASHBOARD_TOKEN to be configured"},
+                )
             return
 
         try:
@@ -618,19 +731,32 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
         body = self.rfile.read(content_length).decode("utf-8", errors="replace") if content_length > 0 else "{}"
         try:
-            req_data = json.loads(body) if body else {}
-            if not isinstance(req_data, dict):
-                req_data = {}
-        except Exception:
-            req_data = {}
+            req_data = json.loads(body) if body.strip() else {}
+        except ValueError:
+            self._send_bad_request("Request body is not valid JSON")
+            return
+        if not isinstance(req_data, dict):
+            self._send_bad_request("Request body must be a JSON object")
+            return
 
-        if self.path == "/api/control/rack-door":
+        try:
+            self._route_post(req_data)
+        except ValueError as e:
+            self._send_bad_request(str(e))
+
+    def _route_post(self, req_data: dict[str, Any]) -> None:
+        """Dispatches an authorized control POST; raises ValueError on invalid fields."""
+        path = urlsplit(self.path).path
+        if path == "/api/control/rack-door":
             # Toggle or explicitly set rack door state
             from sovereign_dc.events import Event
 
             with _HARDWARE_LOCK:
-                target_state = req_data.get("open", not _HARDWARE_STATE["door_open"])
-                _HARDWARE_STATE["door_open"] = bool(target_state)
+                if "open" in req_data:
+                    target_state = _as_bool(req_data["open"], "open")
+                else:
+                    target_state = not _HARDWARE_STATE["door_open"]
+                _HARDWARE_STATE["door_open"] = target_state
                 door_open_val = _HARDWARE_STATE["door_open"]
 
             get_event_bus().publish(
@@ -650,16 +776,19 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(payload)
 
-        elif self.path == "/api/control/pdu-outlet":
+        elif path == "/api/control/pdu-outlet":
             from sovereign_dc.events import Event
 
-            outlet_idx = int(req_data.get("outlet", 0))
+            outlet_idx = _as_int(req_data.get("outlet", 0), "outlet")
+            requested_state = _as_bool(req_data["state"], "state") if "state" in req_data else None
             outlet_changed = False
             outlet_state = False
             with _HARDWARE_LOCK:
                 if 0 <= outlet_idx < len(_HARDWARE_STATE["pdu_outlets"]):
-                    new_state = req_data.get("state", not _HARDWARE_STATE["pdu_outlets"][outlet_idx])
-                    _HARDWARE_STATE["pdu_outlets"][outlet_idx] = bool(new_state)
+                    current = _HARDWARE_STATE["pdu_outlets"][outlet_idx]
+                    _HARDWARE_STATE["pdu_outlets"][outlet_idx] = (
+                        (not current) if requested_state is None else requested_state
+                    )
                     outlet_state = _HARDWARE_STATE["pdu_outlets"][outlet_idx]
                     outlet_changed = True
                 outlets_snapshot = list(_HARDWARE_STATE["pdu_outlets"])
@@ -673,6 +802,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     )
                 )
 
+            if not outlet_changed:
+                raise ValueError(f"'outlet' must be between 0 and {len(outlets_snapshot) - 1}")
             res = {"success": True, "pdu_outlets": outlets_snapshot}
             payload = json.dumps(res).encode("utf-8")
             self.send_response(200)
@@ -682,7 +813,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(payload)
 
-        elif self.path == "/api/control/dtn-transmit":
+        elif path == "/api/control/dtn-transmit":
             # Spool and dispatch an RFC 9171 Space Bundle
             from sovereign_dc.events import Event
             from sovereign_dc.space.dtn.bundle import Bundle, BundlePriority
@@ -690,7 +821,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             cfg = get_config()
             router = DTNRouter(db_path=cfg.dtn_db_path)
             bundle_payload = str(req_data.get("payload", f"STATUS_TELEMETRY_{int(time.time())}")).encode("utf-8")
-            priority_val = int(req_data.get("priority", 2))
+            priority_val = _as_int(req_data.get("priority", 2), "priority")
             bundle_prio = BundlePriority.EXPEDITED if priority_val >= 2 else BundlePriority.NORMAL
 
             bundle = Bundle(
@@ -699,7 +830,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 payload=bundle_payload,
                 priority=bundle_prio,
             )
-            router.queue_bundle(bundle)
+            if not router.queue_bundle(bundle):
+                self._send_json(507, {"success": False, "error": "DTN spool rejected the bundle"})
+                return
             with _HARDWARE_LOCK:
                 _HARDWARE_STATE["last_bundle_tx"] = time.time()
             get_event_bus().publish(
@@ -723,9 +856,29 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(payload)
 
-        elif self.path == "/api/metaverse/optimize":
+        elif path == "/api/enterprise/telemetry":
+            # Out-of-process enterprise workloads (SMDCClient.emit_telemetry) report metrics here.
+            from sovereign_dc.enterprise.schema import is_valid_app_id
+            from sovereign_dc.events import Event
+
+            app_id = req_data.get("app_id")
+            metrics = req_data.get("metrics")
+            if not isinstance(app_id, str) or not is_valid_app_id(app_id):
+                raise ValueError("'app_id' is missing or not a valid application id")
+            if not isinstance(metrics, dict):
+                raise ValueError("'metrics' must be a JSON object")
+            delivered = get_event_bus().publish(
+                Event(
+                    event_type=f"enterprise.{app_id}.telemetry",
+                    source=f"enterprise.{app_id}",
+                    payload={"app_id": app_id, "timestamp": time.time(), "metrics": metrics},
+                )
+            )
+            self._send_json(200, {"success": True, "subscribers_notified": delivered})
+
+        elif path == "/api/metaverse/optimize":
             orch = get_metaverse_orchestrator()
-            raw_cycles = int(req_data.get("cycles", 1))
+            raw_cycles = _as_int(req_data.get("cycles", 1), "cycles")
             cycles = max(1, min(raw_cycles, 100))
             traces = orch.run_cycles(count=cycles, deterministic=True)
             res = {
@@ -742,12 +895,17 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(payload)
 
-        elif self.path == "/api/metaverse/emergency-stop":
+        elif path == "/api/metaverse/emergency-stop":
+            # Idempotent: a repeated or concurrent press must never restart the UAV.
+            orch = get_metaverse_orchestrator()
+            if not orch.is_emergency_stopped:
+                orch.trigger_emergency_stop()
+            self._send_json(200, {"success": True, "emergency_stopped": orch.is_emergency_stopped})
+
+        elif path == "/api/metaverse/resume":
             orch = get_metaverse_orchestrator()
             if orch.is_emergency_stopped:
                 orch.resume_operation()
-            else:
-                orch.trigger_emergency_stop()
             res = {
                 "success": True,
                 "emergency_stopped": orch.is_emergency_stopped,
@@ -769,11 +927,21 @@ class DashboardHandler(BaseHTTPRequestHandler):
         """Suppress default stdout HTTP access logs in production CLI."""
 
 
-def run_dashboard_server(port: int = 8080, open_browser: bool = False) -> None:
-    """Launches the Sovereign Web Operations Dashboard HTTP server."""
-    server = HTTPServer(("0.0.0.0", port), DashboardHandler)
+def run_dashboard_server(port: int = 8080, open_browser: bool = False, host: str | None = None) -> None:
+    """Launches the Sovereign Web Operations Dashboard HTTP server.
+
+    Binds to loopback unless ``host`` (or SMDC_DASHBOARD_HOST) says otherwise. When exposed
+    beyond loopback, control POSTs are refused unless SMDC_DASHBOARD_TOKEN is configured.
+    """
+    bind_host = host or os.environ.get("SMDC_DASHBOARD_HOST", "").strip() or "127.0.0.1"
+    server = HTTPServer((bind_host, port), DashboardHandler)
+    server.daemon_threads = True  # SSE streams must not block shutdown
     url = f"http://localhost:{port}"
-    logger.info("Sovereign Operations Web Dashboard listening at %s", url)
+    logger.info("Sovereign Operations Web Dashboard listening on %s:%d", bind_host, port)
+    if not _is_loopback_host(bind_host) and not os.environ.get("SMDC_DASHBOARD_TOKEN", "").strip():
+        logger.warning(
+            "Dashboard exposed on %s without SMDC_DASHBOARD_TOKEN: control endpoints are disabled", bind_host
+        )
     print(f"\n🌐 Sovereign Operations Dashboard available at: \033[1;36m{url}\033[0m\n")
 
     if open_browser:
@@ -786,4 +954,5 @@ def run_dashboard_server(port: int = 8080, open_browser: bool = False) -> None:
         server.serve_forever()
     except KeyboardInterrupt:
         logger.info("Dashboard server shutting down.")
+    finally:
         server.server_close()

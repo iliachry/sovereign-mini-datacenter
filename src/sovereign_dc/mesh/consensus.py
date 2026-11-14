@@ -134,6 +134,11 @@ class RaftNode:
         last_log_index = len(self.log)
         last_log_term = self.log[-1].term if self.log else 0
 
+        # A cluster whose majority is the node itself (single-node) wins immediately:
+        # there is no peer whose vote reply could otherwise trigger the transition.
+        if len(self.votes_received) >= ((len(self.peers) + 1) // 2) + 1:
+            self.become_leader()
+
         return RequestVoteArgs(
             term=self.current_term,
             candidate_id=self.node_id,
@@ -228,10 +233,12 @@ class RaftNode:
         self.reset_election_timeout()
         self.leader_id = args.leader_id
 
-        if args.term > self.current_term or self.role != NodeRole.FOLLOWER:
+        # Only a genuine term increase clears the vote: a candidate stepping down for a
+        # same-term leader must keep voted_for, or it could vote twice in one term.
+        if args.term > self.current_term:
             self.current_term = args.term
-            self.role = NodeRole.FOLLOWER
             self.voted_for = None
+        self.role = NodeRole.FOLLOWER
 
         # 2. Reply false if log doesn't contain an entry at prev_log_index matching prev_log_term
         if args.prev_log_index > 0:
@@ -260,15 +267,19 @@ class RaftNode:
             else:
                 self.log.append(entry)
 
-        # 4. If leader_commit > commit_index, update commit_index
+        # Only the prefix verified by this RPC is known to match the leader's log; any
+        # entries beyond it may be stale leftovers from an earlier term.
+        last_new_index = args.prev_log_index + len(args.entries)
+
+        # 4. If leader_commit > commit_index, set commit_index = min(leader_commit, last new entry)
         if args.leader_commit > self.commit_index:
-            self.commit_index = min(args.leader_commit, len(self.log))
+            self.commit_index = max(self.commit_index, min(args.leader_commit, last_new_index))
 
         return AppendEntriesReply(
             term=self.current_term,
             success=True,
             responder_id=self.node_id,
-            match_index=len(self.log),
+            match_index=last_new_index,
         )
 
     def handle_append_reply(self, peer_id: str, reply: AppendEntriesReply, total_nodes: int) -> None:
@@ -281,19 +292,28 @@ class RaftNode:
             return
 
         if reply.success:
-            self.next_index[peer_id] = reply.match_index + 1
-            self.match_index[peer_id] = reply.match_index
-
-            # Check if majority has committed entries
-            match_indexes = sorted(list(self.match_index.values()) + [len(self.log)])
-            median_index = match_indexes[len(match_indexes) // 2]
-            if median_index > self.commit_index and (
-                median_index == 0 or self.log[median_index - 1].term == self.current_term
-            ):
-                self.commit_index = median_index
+            # match_index is monotonic: a delayed/reordered reply must not move it backwards.
+            self.match_index[peer_id] = max(self.match_index.get(peer_id, 0), reply.match_index)
+            self.next_index[peer_id] = self.match_index[peer_id] + 1
+            self._advance_commit_index(total_nodes)
         else:
             # Step back next_index on conflict
             self.next_index[peer_id] = max(1, self.next_index.get(peer_id, 1) - 1)
+
+    def _advance_commit_index(self, total_nodes: int) -> None:
+        """Commit the highest index stored on a strict majority of ``total_nodes``.
+
+        Only entries from the leader's current term are committed by counting
+        replicas (Raft section 5.4.2); earlier-term entries commit indirectly.
+        """
+        cluster_size = max(total_nodes, len(self.peers) + 1)
+        majority = (cluster_size // 2) + 1
+        replicated = sorted([*self.match_index.values(), len(self.log)], reverse=True)
+        if len(replicated) < majority:
+            return
+        quorum_index = replicated[majority - 1]
+        if quorum_index > self.commit_index and self.log[quorum_index - 1].term == self.current_term:
+            self.commit_index = quorum_index
 
     def submit_command(self, command: dict[str, Any]) -> int | None:
         """Submit a job/command to cluster state. Returns log index if Leader, None otherwise."""
@@ -331,27 +351,35 @@ class RaftCluster:
             peers = [p for p in node_ids if p != nid]
             self.nodes[nid] = RaftNode(node_id=nid, peers=peers)
 
-    def step_election(self, candidate_id: str) -> str | None:
-        """Simulate an election cycle triggered by a candidate node."""
+    def step_election(self, candidate_id: str, reachable: set[str] | None = None) -> str | None:
+        """Simulate an election cycle triggered by a candidate node.
+
+        ``reachable`` models a network partition: only peers in that set receive the
+        RequestVote RPC. Cluster membership (and therefore quorum size) is unchanged.
+        """
         candidate = self.nodes[candidate_id]
         args = candidate.start_election()
 
         for peer_id in candidate.peers:
-            peer = self.nodes[peer_id]
-            reply = peer.handle_request_vote(args)
+            if peer_id not in self.nodes or (reachable is not None and peer_id not in reachable):
+                continue
+            reply = self.nodes[peer_id].handle_request_vote(args)
             if candidate.handle_vote_reply(reply, len(self.nodes)):
                 return candidate_id
 
         return candidate.leader_id
 
-    def replicate_heartbeats(self, leader_id: str) -> None:
+    def replicate_heartbeats(self, leader_id: str, reachable: set[str] | None = None) -> None:
         """Simulate a round of leader heartbeats and log replication."""
         leader = self.nodes[leader_id]
         if leader.role != NodeRole.LEADER:
             return
 
         for peer_id in leader.peers:
-            peer = self.nodes[peer_id]
+            if peer_id not in self.nodes or (reachable is not None and peer_id not in reachable):
+                continue
             args = leader.create_append_entries(peer_id)
-            reply = peer.handle_append_entries(args)
+            reply = self.nodes[peer_id].handle_append_entries(args)
             leader.handle_append_reply(peer_id, reply, len(self.nodes))
+        # A leader with no reachable peers (single-node cluster) still commits on its own majority.
+        leader._advance_commit_index(len(self.nodes))

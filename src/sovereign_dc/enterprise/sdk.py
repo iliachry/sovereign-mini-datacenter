@@ -1,7 +1,7 @@
 """Sovereign Mini Datacenter — Enterprise Application SDK & Client Library.
 
-Provides a lightweight, zero-dependency client SDK for enterprise workloads to
-interface with SMDC power telemetry, event bus, DTN space routing, and PQC security.
+Provides a lightweight, standard-library-only client SDK for enterprise workloads to
+read SMDC power telemetry, publish app telemetry, spool DTN bundles and query pricing.
 """
 
 from __future__ import annotations
@@ -26,15 +26,32 @@ class SMDCClient:
         self,
         base_url: str | None = None,
         timeout_sec: float = 3.0,
+        token: str | None = None,
     ) -> None:
+        """Creates a client for the SMDC node at ``base_url`` (default ``SMDC_API_URL`` or loopback).
+
+        ``token`` is the node's dashboard operator token; it defaults to the
+        ``SMDC_DASHBOARD_TOKEN`` environment variable and is sent as
+        ``Authorization: Bearer <token>``, which the node requires for control POSTs from
+        non-loopback clients. It is sent to ``base_url`` only and is never logged.
+        """
         self.base_url = (base_url or os.getenv("SMDC_API_URL") or "http://127.0.0.1:8080").rstrip("/")
         self.timeout_sec = timeout_sec
+        self._token = (token if token is not None else os.getenv("SMDC_DASHBOARD_TOKEN", "")).strip()
+
+    def _headers(self, extra: dict[str, str] | None = None) -> dict[str, str]:
+        headers = {"User-Agent": "SMDC-Enterprise-SDK/1.0", "Accept": "application/json"}
+        if extra:
+            headers.update(extra)
+        if self._token:
+            headers["Authorization"] = f"Bearer {self._token}"
+        return headers
 
     def _http_get(self, endpoint: str) -> dict[str, Any]:
         """Perform internal HTTP GET request against SMDC REST API."""
         url = f"{self.base_url}{endpoint}"
         try:
-            req = Request(url, headers={"User-Agent": "SMDC-Enterprise-SDK/1.0", "Accept": "application/json"})
+            req = Request(url, headers=self._headers())
             with urlopen(req, timeout=self.timeout_sec) as response:
                 if response.status == 200:
                     res_data = json.loads(response.read().decode("utf-8"))
@@ -49,15 +66,7 @@ class SMDCClient:
         url = f"{self.base_url}{endpoint}"
         try:
             data = json.dumps(payload).encode("utf-8")
-            req = Request(
-                url,
-                data=data,
-                headers={
-                    "User-Agent": "SMDC-Enterprise-SDK/1.0",
-                    "Content-Type": "application/json",
-                    "Accept": "application/json",
-                },
-            )
+            req = Request(url, data=data, headers=self._headers({"Content-Type": "application/json"}))
             with urlopen(req, timeout=self.timeout_sec) as response:
                 if response.status in [200, 201]:
                     res_data = json.loads(response.read().decode("utf-8"))
@@ -67,54 +76,115 @@ class SMDCClient:
             logger.debug("Failed POST %s: %s", url, e)
         return {}
 
+    @staticmethod
+    def _flatten_status_payload(data: dict[str, Any]) -> dict[str, Any] | None:
+        """Maps the dashboard ``/api/status`` document onto the SDK's flat telemetry schema.
+
+        Returns None when the document carries no usable power section.
+        """
+        power = data.get("power")
+        thermal = data.get("thermal")
+        if not isinstance(power, dict):
+            return None
+        try:
+            flat: dict[str, Any] = {
+                "solar_watts": float(power["solar_watts"]),
+                "battery_soc": float(power["battery_soc"]),
+            }
+        except (KeyError, TypeError, ValueError):
+            return None
+        thermal = thermal if isinstance(thermal, dict) else {}
+        for flat_key, nested_key in (("coolant_temp_c", "coolant_celsius"), ("ambient_temp_c", "rack_inlet_celsius")):
+            try:
+                flat[flat_key] = float(thermal[nested_key])
+            except (KeyError, TypeError, ValueError):
+                flat[flat_key] = None
+        flat["power_state"] = "LOAD_SHEDDING" if power.get("load_shedding_active") else "NOMINAL"
+        flat["source"] = "api"
+        return flat
+
     def get_telemetry(self) -> dict[str, Any]:
-        """Fetch current hardware, solar, battery, and thermal telemetry snapshot."""
+        """Fetch current solar, battery and thermal telemetry as one flat dictionary.
+
+        The same keys are returned whichever path supplies the data:
+        ``solar_watts``, ``battery_soc`` (percent), ``coolant_temp_c``, ``ambient_temp_c``
+        (rack inlet air), ``power_state`` (``"NOMINAL"`` / ``"LOAD_SHEDDING"`` /
+        ``"UNKNOWN"``) and ``source``:
+
+        - ``"api"``: read from the node's ``/api/status`` endpoint (the endpoint's own nested
+          sections such as ``power`` and ``thermal`` are kept alongside the flat keys);
+        - ``"hal"``: read in-process from the hardware abstraction layer, using the node's
+          configured exporter URL and HAL mode (``is_simulated`` tells whether those are
+          simulated readings; simulated values are only ever returned in simulation mode);
+        - ``"unavailable"``: nothing could be read; numeric fields are placeholders
+          (0 W solar, 0 % battery) chosen so callers fail safe rather than assume full power.
+        """
         data = self._http_get("/api/status")
         if data:
-            return data
+            flat = self._flatten_status_payload(data)
+            if flat is not None:
+                return {**data, **flat}
 
         # Fallback to direct HAL reading if running locally in-process
         try:
-            from sovereign_dc.telemetry import get_telemetry_metrics
+            from sovereign_dc.config import get_config
+            from sovereign_dc.hal.power import read_power
+            from sovereign_dc.hal.thermal import read_thermal
 
-            metrics = get_telemetry_metrics()
+            # Honour the node's configuration: in hardware mode a dead exporter must surface
+            # as "unavailable", never as the HAL's healthy-looking simulated defaults.
+            cfg = get_config()
+            exporter_url = cfg.power_exporter_url
+            simulation = cfg.is_simulation()
+            power = read_power(exporter_url, simulation=simulation)
+            thermal = read_thermal(exporter_url, simulation=simulation)
             return {
-                "solar_watts": metrics.get("victron_solar_power_watts", 750.0),
-                "battery_soc": metrics.get("victron_battery_soc_percent", 85.0),
-                "coolant_temp_c": metrics.get("cooling_liquid_temp_celsius", 28.5),
-                "ambient_temp_c": metrics.get("cooling_ambient_temp_celsius", 24.0),
-                "power_state": "NOMINAL",
+                "solar_watts": float(power.solar_watts),
+                "battery_soc": float(power.battery_soc),
+                "coolant_temp_c": float(thermal.coolant_celsius),
+                "ambient_temp_c": float(thermal.rack_inlet_celsius),
+                "power_state": "LOAD_SHEDDING" if power.load_shedding_active else "NOMINAL",
+                "source": "hal",
+                "is_simulated": bool(power.is_simulated),
             }
-        except Exception:
+        except Exception as e:
+            logger.warning("SMDC telemetry unavailable (API unreachable, HAL read failed: %s)", e)
             return {
-                "solar_watts": 850.0,
-                "battery_soc": 90.0,
-                "coolant_temp_c": 28.0,
-                "ambient_temp_c": 24.0,
-                "power_state": "NOMINAL",
+                "solar_watts": 0.0,
+                "battery_soc": 0.0,
+                "coolant_temp_c": None,
+                "ambient_temp_c": None,
+                "power_state": "UNKNOWN",
+                "source": "unavailable",
             }
 
     def emit_telemetry(self, app_id: str, metrics: dict[str, Any]) -> bool:
-        """Publish custom application telemetry to SMDC event bus and metrics pipeline."""
+        """Publish custom application telemetry to the SMDC node.
+
+        Tries the node's REST API first and otherwise publishes on this process's shared
+        event bus. Returns True only if the API accepted the sample or at least one
+        in-process subscriber (e.g. an ``EnterpriseManager``) received it; False means the
+        sample reached nobody.
+        """
         payload = {"app_id": app_id, "timestamp": time.time(), "metrics": metrics}
         res = self._http_post("/api/enterprise/telemetry", payload)
         if res:
             return True
 
-        # In-process event bus fallback
+        # In-process event bus fallback: the process-wide bus, where subscribers actually are.
         try:
-            from sovereign_dc.events import Event, SovereignEventBus
+            from sovereign_dc.events import Event, get_event_bus
 
-            bus = SovereignEventBus()
-            bus.publish(
+            delivered = get_event_bus().publish(
                 Event(
                     event_type=f"enterprise.{app_id}.telemetry",
                     source=f"enterprise.{app_id}",
                     payload=payload,
                 )
             )
-            return True
-        except Exception:
+            return delivered > 0
+        except Exception as e:
+            logger.debug("In-process telemetry publish failed: %s", e)
             return False
 
     def send_dtn_bundle(self, destination: str, payload_data: str | bytes, ttl_sec: int = 86400 * 7) -> dict[str, Any]:
@@ -138,10 +208,12 @@ class SMDCClient:
 
         # In-process DTN router fallback
         try:
+            from sovereign_dc.config import get_config
             from sovereign_dc.space.dtn.bundle import Bundle
             from sovereign_dc.space.dtn.router import DTNRouter
 
-            router = DTNRouter()
+            # Use the node's configured spool, not DTNRouter's built-in default path.
+            router = DTNRouter(db_path=get_config().dtn_db_path)
             bundle = Bundle(
                 source_eid="dtn://smdc-enterprise.local/app",
                 destination_eid=destination,
@@ -170,7 +242,15 @@ class SMDCClient:
 
 
 class AppLifecycleHandler:
-    """Manages application signals, shutdown triggers, and power load shedding events."""
+    """Manages application signals, shutdown triggers, and pause/resume notifications.
+
+    ``is_paused`` follows the ``enterprise.<app_id>.paused`` / ``.resumed`` events that an
+    ``EnterpriseManager`` publishes when it pauses this app (operator request or load
+    shedding) or resumes it. Those events travel on the in-process event bus, so they are
+    only received when the app runs in the same Python process as the manager; a workload
+    started as a separate OS process must call ``pause()`` / ``resume()`` itself (for
+    example from its own polling of ``SMDCClient.get_telemetry()``).
+    """
 
     def __init__(
         self,
@@ -185,6 +265,8 @@ class AppLifecycleHandler:
         self.on_resume = on_resume
         self._is_running = True
         self._is_paused = False
+        self._bus: Any = None
+        self._subscribe_power_events()
 
         # Register OS signal handlers for graceful shutdown
         try:
@@ -192,6 +274,34 @@ class AppLifecycleHandler:
             signal.signal(signal.SIGTERM, self._handle_signal)
         except (ValueError, AttributeError):
             pass
+
+    def _subscribe_power_events(self) -> None:
+        """Follows the manager's pause/resume decisions for this app on the shared event bus."""
+        try:
+            from sovereign_dc.events import get_event_bus
+
+            bus = get_event_bus()
+            bus.subscribe(f"enterprise.{self.app_id}.paused", self._on_paused_event)
+            bus.subscribe(f"enterprise.{self.app_id}.resumed", self._on_resumed_event)
+            self._bus = bus
+        except Exception as e:
+            logger.debug("Lifecycle handler for %s could not subscribe to the event bus: %s", self.app_id, e)
+
+    def _unsubscribe_power_events(self) -> None:
+        bus, self._bus = self._bus, None
+        if bus is None:
+            return
+        try:
+            bus.unsubscribe(f"enterprise.{self.app_id}.paused", self._on_paused_event)
+            bus.unsubscribe(f"enterprise.{self.app_id}.resumed", self._on_resumed_event)
+        except Exception as e:
+            logger.debug("Lifecycle handler for %s could not unsubscribe: %s", self.app_id, e)
+
+    def _on_paused_event(self, event: Any) -> None:
+        self.pause()
+
+    def _on_resumed_event(self, event: Any) -> None:
+        self.resume()
 
     def _handle_signal(self, signum: int, frame: Any) -> None:
         logger.info("Received signal %d. Triggering graceful stop for %s...", signum, self.app_id)
@@ -206,10 +316,10 @@ class AppLifecycleHandler:
         return self._is_paused
 
     def pause(self) -> None:
-        """Pause workload execution in response to power shedding."""
+        """Pause workload execution (called on a manager pause event, or directly by the app)."""
         if not self._is_paused:
             self._is_paused = True
-            logger.warning("Enterprise app '%s' paused by SMDC power scheduler.", self.app_id)
+            logger.warning("Enterprise app '%s' paused.", self.app_id)
             if self.on_pause:
                 try:
                     self.on_pause()
@@ -217,10 +327,10 @@ class AppLifecycleHandler:
                     logger.error("Error in on_pause callback: %s", e)
 
     def resume(self) -> None:
-        """Resume workload execution when power conditions recover."""
+        """Resume workload execution (called on a manager resume event, or directly by the app)."""
         if self._is_paused:
             self._is_paused = False
-            logger.info("Enterprise app '%s' resumed by SMDC power scheduler.", self.app_id)
+            logger.info("Enterprise app '%s' resumed.", self.app_id)
             if self.on_resume:
                 try:
                     self.on_resume()
@@ -230,4 +340,5 @@ class AppLifecycleHandler:
     def stop(self) -> None:
         """Terminate workload run loop."""
         self._is_running = False
+        self._unsubscribe_power_events()
         logger.info("Enterprise app '%s' marked stopped.", self.app_id)

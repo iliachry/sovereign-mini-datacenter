@@ -1,3 +1,5 @@
 # ESPHome credentials & build artefacts
 secrets.yaml
+# Arduino flavour Wi-Fi credentials
+secrets.h
 .esphome/

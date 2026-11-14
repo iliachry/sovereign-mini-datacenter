@@ -1,7 +1,7 @@
 """Edge Vision AI Pipeline for Sovereign Mini Datacenter (SMDC).
 
-Demonstrates GPU-accelerated video/image batch inference, dynamic load-shedding
-auto-throttling ($L_2$ background tier), and Space DTN event dispatch.
+Demonstrates a simulated video/image batch inference loop, the pause/resume hooks of an
+$L_2$ background-tier workload, and Space DTN event dispatch.
 """
 
 from __future__ import annotations
@@ -17,11 +17,11 @@ logger = logging.getLogger("edge-vision-ai")
 
 
 def on_power_pause() -> None:
-    logger.warning("Low battery or high thermal detected! Halting GPU vision inference pipelines...")
+    logger.warning("Pause requested by the SMDC enterprise manager. Halting GPU vision inference pipelines...")
 
 
 def on_power_resume() -> None:
-    logger.info("Solar recovery detected! Resuming GPU batch inference...")
+    logger.info("Resume requested by the SMDC enterprise manager. Resuming GPU batch inference...")
 
 
 def main() -> None:
@@ -36,6 +36,9 @@ def main() -> None:
 
     frame_count = 0
     while lifecycle.is_running:
+        # is_paused follows the EnterpriseManager's pause/resume events for this app. They are
+        # delivered over the in-process event bus, i.e. only when this workload shares a
+        # Python process with the manager (see README).
         if lifecycle.is_paused:
             time.sleep(1.0)
             continue

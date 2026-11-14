@@ -48,9 +48,9 @@ def _build_prometheus_output(
                 active_link = True
 
     passes = ground_station.predict_passes(satellites[0], duration_hours=6.0, min_elevation_deg=10.0)
-    next_pass_seconds = 0
-    if passes:
-        next_pass_seconds = max(0, int(passes[0]["aos_time"] - now))
+    from sovereign_dc.space.space_exporter import seconds_until_next_pass
+
+    next_pass_seconds = seconds_until_next_pass(passes, now)
 
     spool_stats = router.get_queue_stats()
     queue_count = spool_stats["queued_bundle_count"]
@@ -194,11 +194,11 @@ def test_spool_metrics_with_queued_bundles(ground_station, satellites, simulator
 
 
 def test_next_pass_non_negative(ground_station, satellites, simulator, router):
-    """Next-pass countdown must be >= 0 (never negative)."""
+    """Next-pass countdown is >= 0, or exactly -1 when no pass is predicted in the window."""
     output = _build_prometheus_output(ground_station, satellites, simulator, router)
     for line in output.strip().split("\n"):
         if line.startswith("sovereign_space_next_pass_seconds"):
-            assert int(line.split()[1]) >= 0
+            assert int(line.split()[1]) >= -1
 
 
 def test_space_exporter_module_metrics():

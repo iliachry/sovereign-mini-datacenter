@@ -15,10 +15,10 @@ By operating **100% on-premise** with hardware-enforced isolation, zero third-pa
 ```mermaid
 flowchart TD
     subgraph Layers["🛡️ Defense-in-Depth Sovereign Security Layers"]
-        L1["🔒 Hardware Layer: TPM 2.0 • Secure Boot • LUKS2 (AES-XTS-256)"]
+        L1["🔒 Hardware Layer: TPM 2.0 • Secure Boot • LUKS2 (AES-256-XTS)"]
         L2["🌐 Network Layer: WireGuard Zero-Trust • Headscale • CrowdSec WAF"]
         L3["🤖 AI / Data Layer: Air-Gapped Ollama LLM • Qdrant Isolated Vectors"]
-        L4["🛰️ Comms Layer: RFC 9171 BPv7 • LoRa AES-256-GCM • Kyber-1024 PQC"]
+        L4["🛰️ Comms Layer: RFC 9171 BPv7 • LoRa Meshtastic • Kyber-1024 PQC"]
     end
 ```
 
@@ -30,8 +30,8 @@ flowchart TD
 | :--- | :--- | :--- | :--- |
 | **CC6.1 - CC6.3** | **Logical Access Controls** | WireGuard Zero-Trust private mesh (`100.64.0.0/16`), Traefik 2FA/Authelia SSO, Vaultwarden password vault with hardware FIDO2/WebAuthn. | `smdc audit` benchmark |
 | **CC6.6 - CC6.8** | **Data Boundary & Perimeter** | Zero outbound unauthenticated telemetry. Micro-segmentation enforced via Docker bridge networks & nftables/iptables kernel firewalls. | Automated in CI Gate 3 |
-| **CC7.1 - CC7.4** | **System & Threat Monitoring** | CrowdSec autonomous intrusion prevention engine, Prometheus + Grafana real-time anomaly detection, Sentinel Copilot watchdog. | Tested in `test_sentinel_copilot.py` |
-| **A1.1 - A1.3** | **High Availability & Power** | Dual 10.24 kWh LiFePO4 battery bank, dual MPPT solar inputs, 5-stage dynamic load shedding ($L_0 \to L_4$), and black-start cold boot. | Tested in `test_telemetry.py` |
+| **CC7.1 - CC7.4** | **System & Threat Monitoring** | CrowdSec intrusion detection (no bouncer wired yet), Prometheus + Grafana real-time anomaly detection, Sentinel Copilot watchdog. | Tested in `test_sentinel_copilot.py` |
+| **A1.1 - A1.3** | **High Availability & Power** | 10.24 kWh LiFePO4 battery bank (2 × 5.12 kWh), dual MPPT solar inputs, 5-stage dynamic load shedding ($L_0 \to L_4$), and black-start cold boot. | Tested in `test_telemetry.py` |
 | **C1.1 - C1.2** | **Confidentiality of Data** | Full-disk encryption at rest (LUKS2 with 512-bit keys), in-transit ChaCha20-Poly1305 encryption, zero cloud telemetry export. | Verified via `smdc audit` |
 
 ---
@@ -42,7 +42,7 @@ flowchart TD
 | :--- | :--- | :--- |
 | **A.5.15 Access Control** | Restricting access to network and assets | Role-Based Access Control (RBAC) across OpenProject, Nextcloud, and GitLab with mutual TLS (mTLS). |
 | **A.8.1 User End-Point Devices** | Protection of edge computing endpoints | Hardware TPM 2.0 sealed keys, Secure Boot kernel signature verification, locked physical chassis. |
-| **A.8.7 Protection Against Malware** | Autonomous defense against cyber attacks | CrowdSec collaborative threat intelligence daemon + real-time IP ban bouncers at reverse-proxy layer. |
+| **A.8.7 Protection Against Malware** | Autonomous defense against cyber attacks | CrowdSec collaborative threat intelligence daemon reading the reverse-proxy access log (detection only; IP-ban bouncer not yet wired). |
 | **A.8.20 Network Security** | Segregation and security of networks | Multi-tier failover: WireGuard VPN $\to$ Starlink $\to$ Sub-GHz LoRa (AES-GCM) $\to$ Space DTN (RFC 9171). |
 | **A.8.24 Use of Cryptography** | Key management and strong algorithms | Automated Restic AES-256 encrypted backups, Ed25519 node identities, and NIST ML-KEM/Kyber-1024 hybrid keys. |
 
@@ -70,7 +70,7 @@ flowchart LR
 | NIST Control ID | Control Description | SMDC Implementation |
 | :--- | :--- | :--- |
 | **AC-3 Access Enforcement** | Enforce approved authorizations | Zero-trust WireGuard mesh; each node identity is cryptographically anchored to its public key. |
-| **SC-8 Transmission Confidentiality** | Protect data in transit | ChaCha20-Poly1305 (WireGuard), TLS 1.3 (Traefik), AES-256-GCM (LoRa), and SHA-256 CRC (Space BPv7). |
+| **SC-8 Transmission Confidentiality** | Protect data in transit | ChaCha20-Poly1305 (WireGuard), TLS 1.3 (Traefik), Meshtastic channel encryption (LoRa, when a radio is attached), and SHA-256 digests (Space BPv7). |
 | **SC-13 Cryptographic Protection** | Employ strong cryptographic standards | FIPS 140-3 validated cryptographic modules, hardware acceleration via ARMv8/AES-NI instructions. |
 | **CP-9 Information System Backup** | Automated immutable data backups | Restic hourly deduplicated and authenticated snapshots written to encrypted local NVMe and S3 spool. |
 
@@ -95,7 +95,7 @@ timeline
 2. **Digital Signatures**:
    - **NIST FIPS 204 (`ML-DSA-87` / Dilithium)**: Authenticates remote control commands and firmware over-the-air (OTA) updates.
 3. **Stateless Hash-Based Signatures**:
-   - **NIST FIPS 205 (`SLH-DSA` / SPHINCS+)**: Cryptographically signs immutable audit trails and backup manifests.
+   - **NIST FIPS 205 (`SLH-DSA` / SPHINCS+)**: Planned (see roadmap) for audit trails and backup manifests; not implemented in the current release.
 
 ---
 
@@ -104,7 +104,7 @@ timeline
 ```mermaid
 flowchart TD
     TPM["🔐 Hardware TPM 2.0 / OpenTitan"] -->|Measure & Attest| SB["🛡️ Secure Boot (UEFI / Coreboot)"]
-    SB -->|Verify Kernel Hash| LUKS["💾 Full Disk Encryption (LUKS2 AES-XTS-512)"]
+    SB -->|Verify Kernel Hash| LUKS["💾 Full Disk Encryption (LUKS2 AES-256-XTS, 512-bit key)"]
     LUKS -->|Mount Rootfs| DOCKER["📦 Isolated Container Workloads (gVisor / Kata)"]
 ```
 
@@ -119,7 +119,7 @@ flowchart TD
 
 ## 7. EU Data Sovereignty, GDPR & Air-Gap Compliance
 
-- **GDPR Article 32 (Security of Processing)**: Complete technical measures including end-to-end encryption, regular automated testing (274+ unit tests, 93.4%+ coverage), and high resilience against power outages.
+- **GDPR Article 32 (Security of Processing)**: Complete technical measures including end-to-end encryption, regular automated testing (681 unit tests, 89.8% coverage), and high resilience against power outages.
 - **100% European & Sovereign Residency**: No outbound data leaves the local physical boundary. Unlike cloud services, prompt tokens and vector embeddings never transit US or third-country infrastructure, completely satisfying **Schrems II** data residency mandates.
 - **Physical Air-Gap Attestation**: When disconnected from terrestrial fiber and Starlink, the system continues full autonomous AI inference, local document indexing, and internal collaboration without degradation.
 

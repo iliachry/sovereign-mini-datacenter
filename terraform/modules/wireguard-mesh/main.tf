@@ -1,5 +1,19 @@
 resource "wireguard_asymmetric_key" "node_key" {
   for_each = var.nodes
+
+  lifecycle {
+    precondition {
+      condition     = cidrhost("${local.mesh_hosts[each.key]}/${local.mesh_prefix_length}", 0) == cidrhost(var.mesh_subnet, 0)
+      error_message = "mesh_ip of node \"${each.key}\" is outside mesh_subnet ${var.mesh_subnet}."
+    }
+  }
+}
+
+locals {
+  mesh_prefix_length = split("/", var.mesh_subnet)[1]
+
+  # Bare overlay host address of every node (mesh_ip without its prefix length).
+  mesh_hosts = { for node_name, node_val in var.nodes : node_name => split("/", node_val.mesh_ip)[0] }
 }
 
 locals {
@@ -30,7 +44,10 @@ locals {
         for peer_name, peer_val in var.nodes : {
           public_key           = wireguard_asymmetric_key.node_key[peer_name].public_key
           preshared_key        = wireguard_preshared_key.pair_key[join("|", sort([node_name, peer_name]))].key
-          allowed_ips          = join(", ", peer_val.allowed_ips)
+          # A peer is only ever the route for its own /32 plus the extra CIDRs
+          # explicitly placed behind it. Routing the whole mesh subnet to every
+          # peer would make WireGuard send all overlay traffic to a single peer.
+          allowed_ips          = join(", ", distinct(concat(["${local.mesh_hosts[peer_name]}/32"], peer_val.allowed_ips)))
           endpoint             = peer_val.endpoint
           persistent_keepalive = peer_val.persistent_keepalive
         } if peer_name != node_name

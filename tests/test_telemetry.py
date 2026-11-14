@@ -32,9 +32,11 @@ def test_telemetry_metrics_parseable():
 def test_telemetry_metrics_non_simulation():
     with patch("sovereign_dc.telemetry.SIMULATION", False):
         metrics_str = get_telemetry_metrics()
-        assert "sovereign_battery_soc_percent 85.00" in metrics_str
-        assert "sovereign_battery_voltage_volts 53.20" in metrics_str
-        assert "sovereign_system_power_draw_watts 300.00" in metrics_str
+        # No hardware reader exists: report the source as down, never constants as measurements.
+        assert "sovereign_telemetry_source_up 0" in metrics_str
+        assert "sovereign_telemetry_simulated 0" in metrics_str
+        assert "sovereign_battery_soc_percent" not in metrics_str
+        assert "sovereign_system_power_draw_watts" not in metrics_str
 
 
 def test_metrics_handler_routes():

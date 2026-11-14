@@ -52,12 +52,17 @@ def read_power(
         with urllib.request.urlopen(req, timeout=2) as resp:
             content = resp.read().decode("utf-8")
             metrics = _parse_prometheus_metrics(content)
+            if "sovereign_battery_soc_percent" not in metrics:
+                # Exporter is up but has no source (sovereign_telemetry_source_up 0):
+                # never substitute a healthy-looking default for a missing measurement.
+                raise RuntimeError("power exporter reports no battery measurements")
             return PowerReading(
-                battery_soc=metrics.get("sovereign_battery_soc_percent", 85.0),
+                battery_soc=metrics["sovereign_battery_soc_percent"],
                 solar_watts=metrics.get("sovereign_solar_pv_power_watts", 0.0),
                 battery_voltage=metrics.get("sovereign_battery_voltage_volts", 52.8),
                 system_load_watts=metrics.get("sovereign_system_power_draw_watts", 280.0),
                 load_shedding_active=metrics.get("sovereign_load_shedding_active", 0.0) > 0,
+                is_simulated=metrics.get("sovereign_telemetry_simulated", 0.0) > 0,
             )
     except Exception as e:
         if simulation:

@@ -106,8 +106,9 @@ def test_mqtt_and_lora_notifiers():
         severity=MessageSeverity.INFO,
         message="WireGuard mesh active.",
     )
-    assert mqtt_notif.send(msg) is True
-    assert lora_notif.send(msg) is True
+    # Neither transport is implemented: they must report failure, never a fake success.
+    assert mqtt_notif.send(msg) is False
+    assert lora_notif.send(msg) is False
 
 
 def test_dtn_notifier(tmp_path):
@@ -197,8 +198,11 @@ def test_bootstrap_provisioner_phases(tmp_path):
         hw = provisioner.phase_1_discovery()
         assert hw["node_id"] == "smdc-test-01"
         assert len(hw["gpus"]) > 0
+        assert hw["gpu_count"] == sum(1 for g in hw["gpus"] if g.get("detected"))
         assert "storage" in hw
-        assert "power" in hw
+        # Exporter unreachable: readings are absent/unknown, never invented.
+        assert hw["power"]["telemetry_available"] is False
+        assert "battery_soc" not in hw["power"]
 
         # Phase 2: Network
         net = provisioner.phase_2_network()
@@ -207,17 +211,25 @@ def test_bootstrap_provisioner_phases(tmp_path):
 
         # Phase 3: Services
         srv = provisioner.phase_3_services()
-        assert "services_started" in srv
-        assert len(srv["services_started"]) >= 5
+        assert isinstance(srv["services_started"], list)
+        assert srv["ollama_ready"] is False
+        assert srv["qdrant_ready"] is False
 
         # Phase 4: Sync
         sync = provisioner.phase_4_sync()
-        assert sync["crdt_sync"] == "SUCCESS"
+        assert sync["crdt_sync"] == "NOT_IMPLEMENTED"
+        assert sync["backup_verified"] is None
 
         # Phase 5: Ready
         ready = provisioner.phase_5_ready()
-        assert ready["status"] == "NODE_ONLINE_READY"
+        assert ready["status"] == "NODE_ONLINE_DEGRADED"
+        assert ready["unverified"]
         assert provisioner.state.is_complete is True
+        assert provisioner.state.is_nominal is False
+
+    # dry_run=True: no notification file and no DTN spool may have been created
+    assert not os.path.exists(log_file)
+    assert not os.path.exists(db_path)
 
 
 def test_bootstrap_provisioner_low_battery():
@@ -227,7 +239,7 @@ def test_bootstrap_provisioner_low_battery():
     provisioner = BootstrapProvisioner(
         node_id="smdc-low-bat",
         notifier_chain=chain,
-        dry_run=True,
+        dry_run=False,
     )
 
     # Mock low battery SoC
@@ -261,8 +273,12 @@ def test_bootstrap_run_all_phases_success():
     with patch("urllib.request.urlopen", side_effect=Exception("Offline in test")):
         state = provisioner.run_all_phases()
         assert state.is_complete is True
-        assert state.is_nominal is True
+        # Everything is offline, so the node must NOT claim to be nominal.
+        assert state.is_nominal is False
+        assert state.phase_results["ready"]["status"] == "NODE_ONLINE_DEGRADED"
         assert state.current_phase == 5
+    # dry-run dispatches nothing
+    assert mock_notif.sent_messages == []
 
 
 def test_bootstrap_run_all_phases_failure():
@@ -272,11 +288,14 @@ def test_bootstrap_run_all_phases_failure():
     provisioner = BootstrapProvisioner(
         node_id="smdc-fail-run",
         notifier_chain=chain,
-        dry_run=True,
+        dry_run=False,
     )
 
     # Cause phase 2 to throw
-    with patch.object(provisioner, "phase_2_network", side_effect=RuntimeError("Mesh network interface down")):
+    with (
+        patch("urllib.request.urlopen", side_effect=Exception("Offline in test")),
+        patch.object(provisioner, "phase_2_network", side_effect=RuntimeError("Mesh network interface down")),
+    ):
         state = provisioner.run_all_phases()
 
     assert state.is_nominal is False
@@ -312,15 +331,18 @@ def test_cli_bootstrap_dry_run(capsys):
         captured = capsys.readouterr()
         assert "Autonomous Node Bootstrap" in captured.out
         assert "Phase 1 — Hardware Discovery" in captured.out
-        assert "NODE_ONLINE_READY" in captured.out
+        # Offline dry-run: nothing could be verified, so READY must not be claimed.
+        assert "NODE_ONLINE_DEGRADED" in captured.out
+        assert "NODE_ONLINE_READY" not in captured.out
 
 
-def test_cli_bootstrap_notify_test(capsys):
+def test_cli_bootstrap_notify_test(capsys, tmp_path, monkeypatch):
+    monkeypatch.setenv("SOVEREIGN_LOG_DIR", str(tmp_path / "logs"))
     with patch("sys.argv", ["smdc", "bootstrap", "--notify-test"]):
         main()
         captured = capsys.readouterr()
         assert "Dispatching test alert across multi-channel technician notifier" in captured.out
-        assert "Multi-channel notification test complete" in captured.out
+        assert "unavailable channels: MQTTNotifier, LoRaNotifier" in captured.out
 
 
 def test_cli_bootstrap_single_phase(capsys):

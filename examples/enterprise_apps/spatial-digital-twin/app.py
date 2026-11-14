@@ -23,13 +23,16 @@ def main() -> None:
     logger.info("Initializing WebGL Digital Shadow stream...")
 
     while lifecycle.is_running:
+        # True only while an in-process EnterpriseManager has paused this app.
         if lifecycle.is_paused:
             time.sleep(1.0)
             continue
 
         telem = client.get_telemetry()
-        soc = telem.get("battery_soc", 100.0)
-        temp_coolant = telem.get("coolant_temp", 26.5)
+        # Flat SDK telemetry schema; missing readings are reported as NaN, never as "healthy".
+        soc = float(telem.get("battery_soc") or 0.0)
+        coolant_reading = telem.get("coolant_temp_c")
+        temp_coolant = float(coolant_reading) if coolant_reading is not None else float("nan")
 
         # Update 3D twin entities
         client.emit_telemetry(

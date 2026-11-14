@@ -377,9 +377,21 @@ class TestEnterpriseSDK(unittest.TestCase):
         self.assertIn("battery_soc", telem)
 
     def test_client_emit_telemetry(self) -> None:
+        from sovereign_dc.events import get_event_bus
+
         client = SMDCClient(base_url="http://127.0.0.1:9999")
-        ok = client.emit_telemetry("my-app", {"temperature": 25.0})
-        self.assertTrue(ok)
+
+        # Nobody is listening (no API, no in-process subscriber): the sample is lost and
+        # the SDK must say so instead of reporting success.
+        self.assertFalse(client.emit_telemetry("my-app", {"temperature": 25.0}))
+
+        # With a subscriber on the process-wide bus the fallback must actually deliver.
+        received: list[Event] = []
+        get_event_bus().subscribe("enterprise.my-app.telemetry", received.append)
+        self.assertTrue(client.emit_telemetry("my-app", {"temperature": 25.0}))
+        self.assertEqual(len(received), 1)
+        self.assertEqual(received[0].payload["app_id"], "my-app")
+        self.assertEqual(received[0].payload["metrics"], {"temperature": 25.0})
 
     def test_client_send_dtn_bundle(self) -> None:
         client = SMDCClient(base_url="http://127.0.0.1:9999")

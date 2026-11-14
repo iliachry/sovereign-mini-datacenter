@@ -14,12 +14,14 @@ if [[ -f "${ROOT_DIR}/.env" ]]; then
     source "${ROOT_DIR}/.env"
 fi
 
-export RESTIC_REPOSITORY="${RESTIC_REPOSITORY:-/var/backups/sovereign}"
-export RESTIC_PASSWORD="${RESTIC_PASSWORD:-changeme_sovereign_backup_key}"
-
 log()  { echo -e "\n\033[1;32m[RESTORE] $*\033[0m"; }
 warn() { echo -e "\033[1;33m[WARN]    $*\033[0m"; }
 err()  { echo -e "\033[1;31m[ERROR]   $*\033[0m" >&2; exit 1; }
+
+export RESTIC_REPOSITORY="${RESTIC_REPOSITORY:-/var/backups/sovereign}"
+# No default: the password must be the one the repository was created with.
+[[ -n "${RESTIC_PASSWORD:-}" ]] || err "RESTIC_PASSWORD is not set. Set it in software/.env or the environment."
+export RESTIC_PASSWORD
 
 if ! command -v restic >/dev/null 2>&1; then
     err "restic CLI not found. Install it with: apt-get install restic"

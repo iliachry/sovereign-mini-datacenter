@@ -13,7 +13,6 @@ build/
 *.egg-info/
 .pytest_cache/
 .coverage
-uv.lock
 
 # Environment & Secrets
 .env
@@ -45,3 +44,5 @@ deploy/data/
 _output/
 kubeconfig
 talosconfig
+# Local walkthrough recordings (not tracked)
+artifacts/

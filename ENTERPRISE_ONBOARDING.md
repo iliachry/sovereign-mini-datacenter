@@ -36,7 +36,7 @@ flowchart TD
     subgraph Hardware ["🔋 Physical & Orbital Layer"]
         BMS["Victron SmartShunt BMS"]
         MPPT["SmartSolar MPPT"]
-        GPU["NVIDIA Jetson Orin AGX"]
+        GPU["NVIDIA DGX Spark"]
         DTN["RFC 9171 Space BPv7 Spool"]
     end
 
@@ -69,7 +69,7 @@ version: "1.0.0"
 description: "Real-time edge analytics and predictive maintenance for assembly line sensors."
 author: "Factory Automation Group"
 category: "ai_inference" # iot | ai_inference | spatial_media | database | distributed | web_service | custom
-runtime: "process"       # process | docker | systemd | patch
+runtime: "process"       # process | docker | systemd | wasm
 
 # Execution Entrypoint
 entrypoint: "python3 main.py --config config.json"
@@ -153,15 +153,14 @@ stateDiagram-v2
 Use the `smdc app init` command to create a starter repository:
 
 ```bash
-smdc app init \
-  --name "Predictive Maintenance" \
+smdc app init "Predictive Maintenance" \
   --app-id "predictive-maint" \
   --category ai_inference \
   --runtime process \
   --power-tier L2_BACKGROUND \
   --entrypoint "python3 app.py" \
   --gpu \
-  ./predictive-maint
+  --target-dir ./predictive-maint
 ```
 
 This generates:
@@ -192,7 +191,8 @@ def on_power_resume():
     logger.info("Solar power restored. Resuming vibration analysis...")
 
 def main():
-    # 1. Connect zero-dependency SMDC client
+    # 1. Connect zero-dependency SMDC client. For a node whose dashboard is exposed beyond
+    #    loopback, set SMDC_DASHBOARD_TOKEN in the environment (or pass token="...").
     client = SMDCClient()
     
     # 2. Hook lifecycle and power management signals
@@ -210,7 +210,7 @@ def main():
 
         # 3. Read live datacenter power telemetry
         telemetry = client.get_telemetry()
-        soc = telemetry.get("battery_soc", 100.0)
+        soc = telemetry.get("battery_soc", 0.0)  # treat unknown as empty, never as full
 
         # 4. Perform domain computation
         vibration_score = 0.12

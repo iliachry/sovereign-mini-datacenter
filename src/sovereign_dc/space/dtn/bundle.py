@@ -41,6 +41,29 @@ class Bundle:
         self.total_application_data_length = total_application_data_length or len(payload)
         self.checksum = self._calculate_checksum()
 
+    @property
+    def header_checksum(self) -> str:
+        """SHA-256 over every serialized field, including ttl / offset / total length.
+
+        Emitted as the additive ``chk2`` field. The legacy ``chk`` field keeps its
+        original coverage so bundles spooled by, or sent to, older nodes still verify.
+        """
+        h = hashlib.sha256()
+        for part in (
+            self.bundle_id,
+            self.source_eid,
+            self.destination_eid,
+            self.priority,
+            self.creation_timestamp,
+            self.lifetime_seconds,
+            self.fragment_offset,
+            self.total_application_data_length,
+        ):
+            h.update(str(part).encode("utf-8"))
+            h.update(b"\x00")
+        h.update(self.payload)
+        return h.hexdigest()
+
     def _calculate_checksum(self) -> str:
         h = hashlib.sha256()
         h.update(self.bundle_id.encode("utf-8"))
@@ -71,6 +94,7 @@ class Bundle:
             "total_len": self.total_application_data_length,
             "payload_b64": base64.b64encode(self.payload).decode("ascii"),
             "chk": self.checksum,
+            "chk2": self.header_checksum,
         }
         return json.dumps(data, separators=(",", ":")).encode("utf-8")
 
@@ -98,10 +122,17 @@ class Bundle:
         if expected_chk != actual_chk:
             raise ValueError(f"Bundle integrity checksum mismatch: {expected_chk} vs {actual_chk}")
 
+        # Bundles written before ``chk2`` existed carry only the legacy checksum.
+        expected_chk2 = data.get("chk2")
+        if expected_chk2 is not None and expected_chk2 != bundle.header_checksum:
+            raise ValueError(f"Bundle header integrity checksum mismatch: {expected_chk2} vs {bundle.header_checksum}")
+
         return bundle
 
     def create_fragments(self, max_fragment_size: int) -> list["Bundle"]:
         """Splits a large bundle into MTU-sized fragments for short satellite passes."""
+        if max_fragment_size <= 0:
+            raise ValueError(f"max_fragment_size must be a positive number of bytes (got {max_fragment_size})")
         if len(self.payload) <= max_fragment_size:
             return [self]
 

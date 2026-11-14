@@ -15,6 +15,20 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [SentinelCopilot] %(
 
 PROMETHEUS_URL = os.getenv("PROMETHEUS_URL", "http://prometheus:9090")
 POWER_EXPORTER_URL = os.getenv("POWER_EXPORTER_URL", "http://power-exporter:9101/metrics")
+# Shared mode file read by other agents (e.g. knowledge_indexer). When the agents run in
+# separate containers this path must be on a volume mounted into each of them.
+MODE_FILE = os.getenv("SOVEREIGN_MODE_FILE", "/tmp/sovereign_mode")
+# Offset (hours, east positive) added to UTC to approximate local solar time for the
+# forecast. Default 0 = the site is assumed to be on the Greenwich meridian; set it to
+# site_longitude_deg / 15 (e.g. 1.58 for Athens).
+SOLAR_UTC_OFFSET_HOURS = float(os.getenv("SOLAR_UTC_OFFSET_HOURS", "0") or 0.0)
+POLL_INTERVAL_SECONDS = 30
+
+SOC_METRIC = "sovereign_battery_soc_percent"
+SOLAR_METRIC = "sovereign_solar_pv_power_watts"
+
+DEFAULT_MODE = "NORMAL"
+VALID_MODES = frozenset({"NORMAL", "SOLAR_SURPLUS_COMPUTE", "ECO_PRESERVATION", "CRITICAL_SHEDDING"})
 
 
 def get_telemetry() -> dict[str, float]:
@@ -35,9 +49,13 @@ def get_telemetry() -> dict[str, float]:
 
 
 def get_solar_forecast() -> float:
-    """Returns a mocked 4-hour forward prediction of solar yield (Watts) based on time of day."""
+    """Returns a mocked 4-hour forward prediction of solar yield (Watts) based on time of day.
+
+    This is a clear-sky bell curve, not a weather forecast. Local solar time is
+    approximated as UTC + ``SOLAR_UTC_OFFSET_HOURS``.
+    """
     # In a real scenario, this would query Open-Meteo or local atmospheric models.
-    hour = (time.time() / 3600) % 24
+    hour = (time.time() / 3600 + SOLAR_UTC_OFFSET_HOURS) % 24
     future_hour = (hour + 4.0) % 24
 
     # Simple bell curve for daylight between 6am and 8pm (20:00)
@@ -69,58 +87,112 @@ def set_mode(mode: str) -> None:
     except Exception as e:
         logging.debug("Event bus notification notice: %s", e)
 
+    mode_file = os.getenv("SOVEREIGN_MODE_FILE", MODE_FILE)
     try:
-        with open("/tmp/sovereign_mode", "w") as f:
+        directory = os.path.dirname(mode_file)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+        # Write-then-rename so a concurrent reader never sees a partial mode string.
+        tmp_file = f"{mode_file}.tmp"
+        with open(tmp_file, "w", encoding="utf-8") as f:
             f.write(mode)
+        os.replace(tmp_file, mode_file)
     except Exception as e:
         logging.warning("Failed to write mode state: %s", e)
 
 
+def read_persisted_mode() -> str | None:
+    """Returns the mode stored in the shared mode file, or None if absent or not a valid mode.
+
+    The file outlives this process (it sits on a volume shared with other agents), so a
+    restarted sentinel must resume from it instead of assuming NORMAL.
+    """
+    mode_file = os.getenv("SOVEREIGN_MODE_FILE", MODE_FILE)
+    try:
+        with open(mode_file, encoding="utf-8") as f:
+            mode = f.read(64).strip()
+    except FileNotFoundError:
+        return None
+    except Exception as e:
+        logging.warning("Failed to read persisted mode state: %s", e)
+        return None
+    return mode if mode in VALID_MODES else None
+
+
+def _finite_metric(metrics: dict[str, float], name: str) -> float | None:
+    value = metrics.get(name)
+    if value is None or not math.isfinite(value):
+        return None
+    return float(value)
+
+
+def evaluate_mode(metrics: dict[str, float], forecast: float) -> tuple[str, str] | None:
+    """Maps telemetry to the target operating mode and the reason for it.
+
+    Returns None when the battery state of charge is unknown (exporter unreachable,
+    series missing or non-finite): the caller must then keep the current mode. Healthy
+    values are never substituted for missing telemetry. An unknown solar reading can
+    never unlock SOLAR_SURPLUS_COMPUTE.
+    """
+    soc = _finite_metric(metrics, SOC_METRIC)
+    if soc is None:
+        return None
+    solar = _finite_metric(metrics, SOLAR_METRIC)
+
+    # Predictive load shedding:
+    # If battery is currently somewhat okay (e.g. < 40%) but forecast is very low (e.g. night time),
+    # preemptively shed load to preserve battery through the night.
+    if soc < 25.0:
+        return "ECO_PRESERVATION", f"Battery SoC at {soc:.1f}%"
+    if soc < 40.0 and forecast < 100.0:
+        return "ECO_PRESERVATION", f"Predictive (SoC {soc:.1f}%, Forecast {forecast:.0f}W)"
+    if solar is not None and solar > 1000.0 and soc > 75.0:
+        return "SOLAR_SURPLUS_COMPUTE", f"{solar:.0f}W, {soc:.1f}% SoC"
+    solar_text = f"{solar:.0f}W" if solar is not None else "solar unknown"
+    return "NORMAL", f"{solar_text}, {soc:.1f}% SoC, Forecast {forecast:.0f}W"
+
+
 def run_copilot() -> None:
     logging.info("Starting Energy-Aware Datacenter Sentinel Copilot...")
-    current_mode = "NORMAL"
+    persisted_mode = read_persisted_mode()
+    current_mode = persisted_mode or DEFAULT_MODE
+    if persisted_mode is not None:
+        logging.info("Resuming from persisted mode %s.", persisted_mode)
+    # The mode file is only known to match the in-memory mode once this process has
+    # written it. Until then the first evaluation writes it even if the mode is unchanged,
+    # so a stale file (e.g. ECO_PRESERVATION left by a previous run) cannot survive.
+    mode_file_synced = False
 
     while True:
         metrics = get_telemetry()
-        soc = metrics.get("sovereign_battery_soc_percent", 85.0)
-        solar = metrics.get("sovereign_solar_pv_power_watts", 1000.0)
-
         forecast = get_solar_forecast()
+        decision = evaluate_mode(metrics, forecast)
 
-        # Predictive load shedding:
-        # If battery is currently somewhat okay (e.g. < 40%) but forecast is very low (e.g. night time),
-        # preemptively shed load to preserve battery through the night.
-        is_critical = soc < 25.0
-        is_predicted_critical = soc < 40.0 and forecast < 100.0
-
-        if is_critical or is_predicted_critical:
-            if current_mode != "ECO_PRESERVATION":
-                current_mode = "ECO_PRESERVATION"
-                set_mode(current_mode)
-                reason = (
-                    f"Battery SoC at {soc:.1f}%"
-                    if is_critical
-                    else f"Predictive (SoC {soc:.1f}%, Forecast {forecast:.0f}W)"
-                )
-                logging.warning(
-                    "⚡ Sentinel Trigger: %s. Throttling non-essential AI batch jobs to conserve power!", reason
-                )
-        elif solar > 1000.0 and soc > 75.0:
-            if current_mode != "SOLAR_SURPLUS_COMPUTE":
-                current_mode = "SOLAR_SURPLUS_COMPUTE"
-                set_mode(current_mode)
-                logging.info(
-                    "☀️ Solar Surplus (%.0fW, %.1f%% SoC): Unlocking full GPU compute capacity for model training & batch vectorization.",
-                    solar,
-                    soc,
-                )
+        if decision is None:
+            logging.warning(
+                "Battery telemetry unavailable (%s missing); holding mode %s. No default values are assumed.",
+                SOC_METRIC,
+                current_mode,
+            )
         else:
-            if current_mode != "NORMAL":
-                current_mode = "NORMAL"
+            target_mode, reason = decision
+            if target_mode != current_mode or not mode_file_synced:
+                current_mode = target_mode
                 set_mode(current_mode)
-                logging.info("Nominal operating conditions (%.0fW, %.1f%% SoC, Forecast %.0fW).", solar, soc, forecast)
+                mode_file_synced = True
+                if target_mode == "ECO_PRESERVATION":
+                    logging.warning(
+                        "⚡ Sentinel Trigger: %s. Throttling non-essential AI batch jobs to conserve power!", reason
+                    )
+                elif target_mode == "SOLAR_SURPLUS_COMPUTE":
+                    logging.info(
+                        "☀️ Solar Surplus (%s): Unlocking full GPU compute capacity for model training & batch vectorization.",
+                        reason,
+                    )
+                else:
+                    logging.info("Nominal operating conditions (%s).", reason)
 
-        time.sleep(30)
+        time.sleep(POLL_INTERVAL_SECONDS)
 
 
 if __name__ == "__main__":

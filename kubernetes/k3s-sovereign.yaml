@@ -10,6 +10,9 @@ metadata:
   namespace: sovereign
 spec:
   replicas: 1
+  # Single GPU + ReadWriteOnce volume: replace the pod instead of surging.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: ollama
@@ -18,6 +21,10 @@ spec:
       labels:
         app: ollama
     spec:
+      # k3s registers the `nvidia` RuntimeClass automatically when it detects
+      # the NVIDIA container toolkit on the node. The nvidia.com/gpu resource
+      # below additionally requires the NVIDIA device plugin to be deployed.
+      runtimeClassName: nvidia
       containers:
         - name: ollama
           image: ollama/ollama:latest
@@ -45,6 +52,8 @@ metadata:
   namespace: sovereign
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: qdrant
@@ -66,6 +75,40 @@ spec:
         - name: qdrant-storage
           persistentVolumeClaim:
             claimName: qdrant-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama
+  namespace: sovereign
+spec:
+  type: ClusterIP
+  selector:
+    app: ollama
+  ports:
+    - name: http
+      port: 11434
+      targetPort: 11434
+      protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: qdrant
+  namespace: sovereign
+spec:
+  type: ClusterIP
+  selector:
+    app: qdrant
+  ports:
+    - name: http
+      port: 6333
+      targetPort: 6333
+      protocol: TCP
+    - name: grpc
+      port: 6334
+      targetPort: 6334
+      protocol: TCP
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim

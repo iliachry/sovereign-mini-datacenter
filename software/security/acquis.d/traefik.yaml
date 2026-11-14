@@ -1,0 +1,6 @@
+# CrowdSec acquisition: Traefik access log written by the core stack
+# (--accesslog.filepath) to the shared sovereign_traefik_logs volume.
+filenames:
+  - /traefik-logs/*.log
+labels:
+  type: traefik

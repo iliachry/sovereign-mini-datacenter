@@ -66,13 +66,21 @@ def test_cmd_status_offline_fallbacks(capsys):
 
 
 def test_cmd_audit(capsys):
+    """Off Linux the audit must say nothing was checked, never print fabricated PASS lines."""
     with patch("sys.platform", "win32"):
-        cli.cmd_audit(Namespace())
+        rc = cli.cmd_audit(Namespace())
     out = capsys.readouterr().out
     assert "Security Compliance Audit" in out
-    assert "Address Space Layout Randomization" in out
-    assert "Zero-Trust WireGuard Mesh" in out
-    assert "All critical hardening benchmarks satisfied" in out
+    assert rc == 2
+    assert "no checks were run" in out
+    assert "PASS" not in out
+    assert "satisfied" not in out
+
+
+def test_cmd_audit_propagates_script_exit_code(capsys):
+    with patch("sys.platform", "linux"), patch("subprocess.run") as run:
+        run.return_value.returncode = 1
+        assert cli.cmd_audit(Namespace()) == 1
 
 
 # === Test cmd_mesh ===

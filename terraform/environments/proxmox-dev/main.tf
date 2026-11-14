@@ -1,7 +1,7 @@
 provider "proxmox" {
-  endpoint = var.proxmox_endpoint
+  endpoint  = var.proxmox_endpoint
   api_token = var.proxmox_api_token
-  insecure = var.proxmox_insecure
+  insecure  = var.proxmox_insecure
 }
 
 module "control_plane" {
@@ -25,5 +25,8 @@ module "worker_gpu" {
   memory_mb                  = 16384
   disk_size_gb               = 100
   enable_pci_gpu_passthrough = true
-  pci_gpu_device             = "0000:01:00.0"
+  # This environment authenticates with an API token, which Proxmox does not
+  # allow to attach a raw PCI id. Create a PCI resource mapping on the cluster
+  # and pass its name here (see var.gpu_mapping).
+  gpu_mapping = var.gpu_mapping
 }

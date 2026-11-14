@@ -16,7 +16,11 @@ logger:
 
 # Home Assistant native API (encrypted). Generate a key with:
 #   openssl rand -base64 32
+# reboot_timeout 0s: this bridge is scraped over HTTP/MQTT and must not reboot
+# every 15 minutes (the default) just because no Home Assistant client is
+# connected to the native API.
 api:
+  reboot_timeout: 0s
   encryption:
     key: !secret api_encryption_key
 
@@ -37,6 +41,9 @@ mqtt:
   discovery: true
   discovery_prefix: homeassistant
   topic_prefix: sovereign/telemetry
+  # Keep serving /metrics when the broker is unreachable instead of rebooting
+  # after the default 15 minutes.
+  reboot_timeout: 0s
 
 # I2C Bus for OLED Display
 i2c:
@@ -110,57 +117,174 @@ uart:
     baud_rate: 19200
     rx_buffer_size: 512
 
-globals:
-  # Accumulates one VE.Direct line (LABEL<TAB>VALUE) between newlines.
-  - id: ve_line
-    type: std::string
-    restore_value: false
-    initial_value: '""'
-
 # VE.Direct parser (replaces the removed ESPHome `platform: custom` sensor).
-# Runs every 100 ms, drains the UART RX buffer and publishes parsed fields to
-# the standard template sensors declared below.
+# Runs every 100 ms, drains the UART RX buffer without blocking and publishes
+# the fields of a frame to the template sensors declared below - but only once
+# the frame's checksum has been verified.
+#
+# Text-protocol frame: a block of "\r\n<Label>\t<Value>" fields that ends with
+# the field "Checksum\t<byte>". The modulo-256 sum of every byte of the block,
+# including that final byte, is 0 for an intact frame. HEX-protocol messages
+# (":....\n") can be interleaved and are not part of the checksum.
+#
+# One VE.Direct port = one device: a SmartShunt/BMV sends V, I and SOC; an MPPT
+# sends V, I, PPV, VPV and H20 and never sends SOC. Sensors the connected
+# device does not provide stay "unknown".
+#
+# Staleness: the parser records millis() of every checksum-valid frame in the
+# globals below. The 1 s watchdog interval further down publishes NAN to every
+# VE.Direct sensor once no valid frame has arrived for 10 s (cable unplugged,
+# device off), so the last reading is not reported forever: Home Assistant
+# shows the sensors as unknown and /metrics reports them as failed instead of
+# exporting a value. They are published again with the next valid frame.
+globals:
+  - id: ve_frame_seen # true once the first checksum-valid frame has arrived
+    type: bool
+    restore_value: no
+    initial_value: "false"
+  - id: ve_last_valid_ms # millis() of the last checksum-valid frame
+    type: uint32_t
+    restore_value: no
+    initial_value: "0"
+  - id: ve_stale # true while the VE.Direct sensors are withdrawn (NAN)
+    type: bool
+    restore_value: no
+    initial_value: "false"
+
 interval:
   - interval: 100ms
     then:
       - lambda: |-
-          auto publish = [](const std::string &label, const std::string &value) {
-            const float v = atof(value.c_str());
-            if (label == "V") {
-              id(battery_voltage).publish_state(v / 1000.0f);       // mV  -> V
-            } else if (label == "I") {
-              id(battery_current).publish_state(v / 1000.0f);       // mA  -> A
-            } else if (label == "PPV") {
-              id(solar_power).publish_state(v);                     // W
-            } else if (label == "SOC") {
-              id(battery_soc).publish_state(v / 10.0f);             // ‰   -> %
-            } else if (label == "VPV") {
-              id(solar_voltage).publish_state(v / 1000.0f);         // mV  -> V
-            } else if (label == "H20") {
-              id(solar_yield_today).publish_state(v * 10.0f);       // 0.01 kWh -> Wh
+          enum VeState : uint8_t { VE_IDLE, VE_RECORD_BEGIN, VE_RECORD_NAME, VE_RECORD_VALUE, VE_CHECKSUM, VE_RECORD_HEX };
+          static const size_t FIELD_COUNT = 6;
+          static const char *const LABELS[FIELD_COUNT] = {"V", "I", "PPV", "SOC", "VPV", "H20"};
+
+          static VeState state = VE_IDLE;
+          static uint8_t checksum = 0;
+          static std::string name;
+          static std::string value;
+          static float staged[FIELD_COUNT] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+          static bool staged_set[FIELD_COUNT] = {false, false, false, false, false, false};
+
+          auto clear_staged = [&]() {
+            for (size_t i = 0; i < FIELD_COUNT; i++) {
+              staged_set[i] = false;
             }
           };
 
-          uint8_t byte;
-          while (id(uart_ve_direct).available() && id(uart_ve_direct).read_byte(&byte)) {
-            if (byte == '\n') {
-              std::string &line = id(ve_line);
-              // Strip a trailing carriage return, if present.
-              if (!line.empty() && line.back() == '\r') {
-                line.pop_back();
+          // Remember a field of the frame in progress (integers only; devices
+          // send "---" while a value is unavailable).
+          auto stage_field = [&]() {
+            for (size_t i = 0; i < FIELD_COUNT; i++) {
+              if (name == LABELS[i]) {
+                char *end = nullptr;
+                const long raw = strtol(value.c_str(), &end, 10);
+                if (end != value.c_str() && *end == '\0') {
+                  staged[i] = static_cast<float>(raw);
+                  staged_set[i] = true;
+                }
+                return;
               }
-              const size_t tab = line.find('\t');
-              if (tab != std::string::npos && tab > 0) {
-                publish(line.substr(0, tab), line.substr(tab + 1));
-              }
-              line.clear();
-            } else if (id(ve_line).size() < 128) {
-              id(ve_line).push_back(static_cast<char>(byte));
-            } else {
-              // Oversized frame (e.g. desynchronised HEX mode) — discard.
-              id(ve_line).clear();
+            }
+          };
+
+          // Publish the fields of a checksum-valid frame.
+          auto publish_frame = [&]() {
+            if (staged_set[0]) id(battery_voltage).publish_state(staged[0] / 1000.0f);   // mV  -> V
+            if (staged_set[1]) id(battery_current).publish_state(staged[1] / 1000.0f);   // mA  -> A
+            if (staged_set[2]) id(solar_power).publish_state(staged[2]);                 // W
+            if (staged_set[3]) id(battery_soc).publish_state(staged[3] / 10.0f);         // per mille -> %
+            if (staged_set[4]) id(solar_voltage).publish_state(staged[4] / 1000.0f);     // mV  -> V
+            if (staged_set[5]) id(solar_yield_today).publish_state(staged[5] * 10.0f);   // 0.01 kWh -> Wh
+            id(ve_last_valid_ms) = millis();
+            id(ve_frame_seen) = true;
+            if (id(ve_stale)) {
+              id(ve_stale) = false;
+              ESP_LOGI("vedirect", "VE.Direct frames resumed");
+            }
+          };
+
+          uint8_t rx;
+          while (id(uart_ve_direct).available() && id(uart_ve_direct).read_byte(&rx)) {
+            if (rx == ':' && state != VE_CHECKSUM && state != VE_RECORD_HEX) {
+              state = VE_RECORD_HEX;
+            }
+            if (state != VE_RECORD_HEX) {
+              checksum = static_cast<uint8_t>(checksum + rx);
+            }
+
+            switch (state) {
+              case VE_IDLE:
+                if (rx == '\n') {
+                  state = VE_RECORD_BEGIN;
+                }
+                break;
+              case VE_RECORD_BEGIN:
+                name.assign(1, static_cast<char>(rx));
+                state = VE_RECORD_NAME;
+                break;
+              case VE_RECORD_NAME:
+                if (rx == '\t') {
+                  if (name == "Checksum") {
+                    state = VE_CHECKSUM;
+                  } else {
+                    value.clear();
+                    state = VE_RECORD_VALUE;
+                  }
+                } else if (name.size() < 16) {
+                  name.push_back(static_cast<char>(rx));
+                }
+                break;
+              case VE_RECORD_VALUE:
+                if (rx == '\n') {
+                  stage_field();
+                  state = VE_RECORD_BEGIN;
+                } else if (rx != '\r' && value.size() < 40) {
+                  value.push_back(static_cast<char>(rx));
+                }
+                break;
+              case VE_CHECKSUM:
+                // `rx` is the checksum rx and is already part of the sum.
+                if (checksum == 0) {
+                  publish_frame();
+                } else {
+                  ESP_LOGW("vedirect", "Dropped VE.Direct frame: bad checksum");
+                }
+                clear_staged();
+                checksum = 0;
+                state = VE_IDLE;
+                break;
+              case VE_RECORD_HEX:
+                // Skip the HEX message; the interrupted text frame is discarded.
+                if (rx == '\n') {
+                  clear_staged();
+                  checksum = 0;
+                  state = VE_IDLE;
+                }
+                break;
             }
           }
+
+  # VE.Direct staleness watchdog: withdraw the readings when frames stop.
+  # Unsigned subtraction keeps the age correct across the 49-day millis() wrap.
+  - interval: 1s
+    then:
+      - lambda: |-
+          static const uint32_t VE_STALE_AFTER_MS = 10000;
+          if (!id(ve_frame_seen) || id(ve_stale)) {
+            return;
+          }
+          if (static_cast<uint32_t>(millis() - id(ve_last_valid_ms)) < VE_STALE_AFTER_MS) {
+            return;
+          }
+          id(ve_stale) = true;
+          ESP_LOGW("vedirect", "No valid VE.Direct frame for 10 s: marking readings unavailable");
+          id(battery_voltage).publish_state(NAN);
+          id(battery_current).publish_state(NAN);
+          id(solar_power).publish_state(NAN);
+          id(battery_soc).publish_state(NAN);
+          id(solar_voltage).publish_state(NAN);
+          id(solar_yield_today).publish_state(NAN);
 
   # OLED page cycling
   - interval: 5s
@@ -169,21 +293,27 @@ interval:
       - component.update: oled_display
 
 sensor:
+  # PLACEHOLDER ADDRESSES - they match no real probe and MUST be replaced.
+  # Flash once and read the boot log: the 1-Wire bus lists the 64-bit address
+  # of every probe it finds (a DS18B20 address ends in the family code 28).
+  # Paste the address of the intake probe and of the exhaust probe below.
+  # Until then both temperature sensors stay unavailable.
   - platform: dallas_temp
-    address: 0x28616410313398c8
+    address: 0x28616410313398c8 # PLACEHOLDER - replace with the intake probe address
     name: "Coolant Loop Intake Temp"
     id: coolant_intake
     unit_of_measurement: "°C"
     accuracy_decimals: 2
 
   - platform: dallas_temp
-    address: 0x28616410313398c9
+    address: 0x28616410313398c9 # PLACEHOLDER - replace with the exhaust probe address
     name: "Radiator Exhaust Temp"
     id: coolant_exhaust
     unit_of_measurement: "°C"
     accuracy_decimals: 2
 
-  # Victron VE.Direct MPPT fields (published by the UART parser interval above)
+  # Victron VE.Direct fields (published by the UART parser interval above and
+  # set to NAN by the staleness watchdog when frames stop for 10 s)
   - platform: template
     name: "Battery Voltage"
     id: battery_voltage
@@ -237,6 +367,23 @@ sensor:
     state_class: total_increasing
     accuracy_decimals: 0
     update_interval: never
+
+  # Seconds since the last checksum-valid VE.Direct frame. Unknown until the
+  # first valid frame; keeps counting while the readings above are withdrawn.
+  - platform: template
+    name: "VE.Direct Last Valid Frame Age"
+    id: ve_frame_age
+    unit_of_measurement: "s"
+    device_class: duration
+    state_class: measurement
+    entity_category: diagnostic
+    accuracy_decimals: 0
+    update_interval: 5s
+    lambda: |-
+      if (!id(ve_frame_seen)) {
+        return NAN;
+      }
+      return static_cast<uint32_t>(millis() - id(ve_last_valid_ms)) / 1000.0f;
 
   # WiFi Signal Strength
   - platform: wifi_signal

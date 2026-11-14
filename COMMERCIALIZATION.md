@@ -21,7 +21,7 @@ flowchart LR
     end
 
     subgraph Solution["☀️ Sovereign Mini Datacenter"]
-        S1["🔋 100% Off-Grid Power<br/>• 10.24 kWh LiFePO4 + 1.64 kW Solar"]
+        S1["🔋 Solar + Battery Power<br/>• 10.24 kWh LiFePO4 + 1.64 kW Solar"]
         S2["🛡️ Local AI Sovereignty<br/>• On-Prem DGX Spark + Qdrant RAG"]
         S3["🛰️ Multi-Spectral Comms<br/>• WireGuard + LoRa + Space DTN"]
     end
@@ -29,7 +29,7 @@ flowchart LR
     Problem ==> Solution
 ```
 
-**Sovereign Mini Datacenter (SMDC)** is the world’s first open-source, self-powered, liquid-cooled 9U micro-datacenter. It delivers **550 TOPS of on-premise AI compute**, **10.24 kWh of energy storage**, and **RFC 9171 Space Delay-Tolerant Networking (BPv7)** in a deployable, turnkey form factor that operates with **zero recurring cloud bills** and **100% computational autonomy**.
+**Sovereign Mini Datacenter (SMDC)** is the world’s first open-source, self-powered, liquid-cooled 9U micro-datacenter. It delivers **on-premise AI compute on two NVIDIA DGX Spark nodes (256 GB of unified memory in total)**, **10.24 kWh of energy storage**, and **RFC 9171 Space Delay-Tolerant Networking (BPv7)** in a deployable, turnkey form factor that operates with **zero recurring cloud bills** and **100% computational autonomy**.
 
 ---
 
@@ -64,7 +64,7 @@ pie title "SAM Breakdown by Target Vertical ($6.4B)"
 | Vertical | Pain Point Solved | Value Proposition & Buying Trigger | Typical Deal Size |
 | :--- | :--- | :--- | :--- |
 | **🛡️ Tactical Defense & Dual-Use** | Battlefield communication denial, cloud interception risk, harsh forward operating bases (FOB). | Air-gapped local LLM copilot, LoRa Meshtastic emergency fallback, Space DTN orbital relay, zero thermal runaway (LiFePO4). | \$150k – \$2.5M (Swarm kits) |
-| **⚡ Remote Energy & Mining** | Zero fiber connectivity at remote solar farms, offshore wind turbines, and open-pit mines. | Autonomous predictive maintenance AI, satellite burst sync, 100% solar self-powering with battery load shedding. | \$75k – \$500k |
+| **⚡ Remote Energy & Mining** | Zero fiber connectivity at remote solar farms, offshore wind turbines, and open-pit mines. | Autonomous predictive maintenance AI, satellite burst sync, solar-first power with battery load shedding. | \$75k – \$500k |
 | **🚢 Maritime & Offshore** | Satellite bandwidth costs (\$10k+/mo), high latency for maritime AI processing. | On-premise oceanographic telemetry indexing, burst satellite DTN sync during contact passes, salt-resistant aluminum rack. | \$50k – \$300k |
 | **🏛️ Sovereign Embassies & Family Offices** | Subpoena risk via CLOUD Act, espionage, power grid instability in unstable regions. | 100% sovereign data residency, local password vault (Vaultwarden), air-gapped private Git/Nextcloud, PQC encryption. | \$35k – \$200k |
 
@@ -78,14 +78,14 @@ The Sovereign Mini Datacenter leverages a proven **hybrid commercialization mode
 flowchart TD
     SMDC["Sovereign Commercial Engine"]
     
-    SMDC --> H["📦 1. Turnkey Hardware Kits (CapEx)<br/>• Standard 9U Node: $24,500<br/>• Gross Margin: ~42%"]
+    SMDC --> H["📦 1. Turnkey Hardware Kits (CapEx)<br/>• Standard 9U Node: $24,500<br/>• Hardware Gross Margin: ~24.6%"]
     SMDC --> S["🔄 2. Sovereign Control Plane (ARR SaaS)<br/>• Fleet Mesh & DTN Management: $199/node/mo<br/>• Gross Margin: ~88%"]
     SMDC --> E["🛡️ 3. Enterprise Support & PQC Audits<br/>• Mission-Critical SLA & Space Ephemeris Relays<br/>• $15,000/year/fleet"]
 ```
 
 ### Revenue Streams
 1. **Turnkey Hardware Deliveries**:
-   - **SMDC-Core-9U**: \$24,500 per unit (BOM cost: \$14,195 $\implies$ \$10,305 gross profit per node).
+   - **SMDC-Core-9U**: \$24,500 per unit (BOM cost: \$18,475 $\implies$ \$6,025 gross profit per node, a 24.6% gross margin). The BOM is the itemised total in [`hardware/COMPONENTS.md`](hardware/COMPONENTS.md): \$9,077 for the priced non-compute lines plus 2 × \$4,699 for the DGX Spark nodes. It excludes assembly labour, shipping, taxes and the unpriced items listed in that file, so the realised margin is lower.
    - **SMDC-Rugged-IP67 (Mobile Tactical)**: \$38,000 per unit (MIL-STD-810H vibration and shock damping).
 2. **Sovereign Control Plane (Recurring SaaS ARR)**:
    - Zero-trust mesh orchestration, federated Qdrant vector index synchronization, orbital pass scheduling, and remote telemetry monitoring at \$199/node/month.
@@ -103,7 +103,7 @@ xychart-beta
     title "3-Year Cumulative Cost ($USD): Sovereign Mini Datacenter vs. AWS Cloud + Grid"
     x-axis ["Year 0 (CapEx)", "Year 1", "Year 2", "Year 3"]
     y-axis "Cumulative Spend ($k)" 0 --> 120
-    bar [24.5, 26.8, 29.2, 31.6]
+    bar [24.5, 27.4, 30.3, 33.2]
     line [12.0, 48.0, 84.0, 120.0]
 ```
 
@@ -112,18 +112,20 @@ xychart-beta
 | Cost Category | Sovereign Mini Datacenter (1 Node) | Hyperscaler Cloud (AWS + Diesel Power) | 3-Year Net Savings |
 | :--- | :---: | :---: | :---: |
 | **Initial Hardware & Setup (CapEx)** | \$24,500 *(One-time)* | \$12,000 *(Edge gateway & diesel gen)* | -\$12,500 |
-| **Electricity / Fuel (3 Years)** | **\$0** *(100% Solar & Battery)* | \$24,800 *(Diesel fuel + grid tariffs)* | **+\$24,800** |
+| **Electricity / Fuel (3 Years)** | \$1,499 *(solar covers ~65%; 3.9 kWh/day top-up at \$0.35/kWh)* | \$24,800 *(Diesel fuel + grid tariffs)* | **+\$23,301** |
 | **AI Inference & GPU Rental (3 Years)** | **\$0** *(2× DGX Spark on-prem)* | \$54,000 *(\$1,500/mo 2× A100/H100 cloud)* | **+\$54,000** |
 | **Data Egress & Cloud SaaS (3 Years)** | **\$0** *(Local Nextcloud / Mailcow)* | \$14,400 *(\$400/mo egress & storage)* | **+\$14,400** |
 | **Maintenance & Mesh SaaS (3 Years)** | \$7,164 *(\$199/mo control plane)* | \$14,800 *(Cloud security & support)* | **+\$7,636** |
-| **TOTAL 3-YEAR SPEND** | **\$31,664** | **\$120,000** | **+\$88,336 (73.6% Savings)** |
+| **TOTAL 3-YEAR SPEND** | **\$33,163** | **\$120,000** | **+\$86,837 (72.4% Savings)** |
+
+The electricity row uses the sizing calculator's reference duty cycle (both DGX Spark nodes under load 12 h/day): an 11.16 kWh/day draw against a 7.25 kWh/day solar yield leaves 3.91 kWh/day to buy, which is 4,283 kWh over 3 years at the calculator's default \$0.35/kWh. Monthly operating savings are the cloud-side recurring costs minus the SMDC-side recurring costs: (\$108,000 − \$8,663) / 36 = \$2,759.
 
 $$
-\text{Payback Period} = \frac{\text{Initial Net CapEx}}{\text{Monthly OpEx Savings}} = \frac{\$12,500}{\$2,453/\text{month}} = \mathbf{5.1\text{ Months}}
+\text{Payback Period} = \frac{\text{Initial Net CapEx}}{\text{Monthly OpEx Savings}} = \frac{\$12,500}{\$2,759/\text{month}} = \mathbf{4.5\text{ Months}}
 $$
 
 > [!TIP]
-> **Key Investor Metric**: The customer breaks even on hardware investment in **just 5.1 months**, saving **\$88,336 (73.6%)** over a 3-year operating lifecycle while gaining 100% data sovereignty and zero blackout vulnerability.
+> **Key Investor Metric**: The customer recovers the additional hardware investment in **about 4.5 months**, saving **\$86,837 (72.4%)** over a 3-year operating lifecycle while gaining 100% data sovereignty and battery-backed resilience to grid blackouts.
 
 ---
 
@@ -143,6 +145,9 @@ EBITDA Margin (%)      -12.4%        14.2%        28.6%        34.1%        37.8
 Net Operating Cash     -$0.18M      +$0.82M      +$5.61M     +$19.76M     +$49.84M
 ```
 
+> [!NOTE]
+> The gross-margin, EBITDA and cash rows above predate the itemised BOM and are not derived from it. At the reference BOM (\$18,475, a 24.6% hardware margin at the \$24,500 list price) and the ~88% SaaS margin, Year 1 blended gross margin cannot exceed about 42% even with zero cost of services, so these rows assume volume BOM reductions that are not yet documented and need to be re-modelled.
+
 ---
 
 ## 7. Defensible Competitive Moats
@@ -151,12 +156,12 @@ Net Operating Cash     -$0.18M      +$0.82M      +$5.61M     +$19.76M     +$49.8
 mindmap
   root((Defensible Moats))
     Hardware-Software Co-Design
-      Dynamic Load Shedding (L0 to L4)
+      Dynamic Load Shedding L0 to L4
       Thermal & Battery-Aware GPU Throttling
       1-Wire & RS485 Native Embedded Telemetry
     Space Delay-Tolerant Networking
       RFC 9171 BPv7 Implementation
-      SGP4 Ground Station Tracking
+      Ground Station Pass Prediction
       Asynchronous Multi-Spectral Contact Routing
     Zero Cloud Lock-In
       100% Open Source Core Stack
@@ -177,14 +182,14 @@ mindmap
 ## 8. Pitch Deck Slide-by-Slide Outline
 
 ```
-Slide 01: Title ────────────── Sovereign Mini Datacenter: 100% Off-Grid AI Infrastructure
+Slide 01: Title ────────────── Sovereign Mini Datacenter: Solar-Powered Sovereign AI Infrastructure
 Slide 02: The Problem ──────── Energy Crises, Cloud Lock-In & Digital Sovereignty Loss
 Slide 03: The Solution ─────── Turnkey 9U Micro-Datacenter: Solar, Liquid-Cooling, Local AI
 Slide 04: Product Demo ─────── Live 3D WebGL Digital Twin & Physical Hardware Specs
 Slide 05: Market Size ──────── $60.4B TAM / $6.4B SAM (Dual-Use Defense, Remote Industry)
-Slide 06: Unit Economics ───── 73.6% 3-Year TCO Savings ($88.3k saved per node, 5.1 mo ROI)
+Slide 06: Unit Economics ───── 72.4% 3-Year TCO Savings ($86.8k saved per node, 4.5 mo payback)
 Slide 07: Business Model ───── Turnkey Hardware ($24.5k) + Sovereign SaaS ($199/node/mo)
-Slide 08: Traction & Code ──── 274+ Automated Tests, 93.4%+ Coverage, Ready-to-Deploy Stacks
+Slide 08: Traction & Code ──── 681 Automated Tests, 89.8% Coverage, Ready-to-Deploy Stacks
 Slide 09: Technology Moat ──── Space DTN (RFC 9171), Energy Load-Shedder, PQC Zero-Trust
 Slide 10: Financials ───────── $1.46M Y1 -> $19.61M Y3 -> $131.85M Y5 (37.8% EBITDA)
 Slide 11: Team & Advisory ──── Metatopia Studio: DeepTech Systems, AI & Embedded Engineers

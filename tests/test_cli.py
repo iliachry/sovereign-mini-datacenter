@@ -131,8 +131,11 @@ def test_smdc_security_audit_cli():
         errors="replace",
         env=ENV,
     )
-    assert res.returncode == 0
+    # The exit status is the audit's own verdict (non-zero off Linux or when a check fails).
     assert "Security Compliance Audit" in res.stdout
+    if not sys.platform.startswith("linux"):
+        assert res.returncode == 2
+        assert "no checks were run" in res.stdout
 
 
 def test_smdc_dashboard_cli_help():

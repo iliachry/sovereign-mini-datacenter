@@ -33,16 +33,16 @@ const COMPONENT_DATA = {
     specs: { 'Protocol': 'RFC 9171 BPv7', 'Frequency': 'S-Band / Ku-Band', 'Throughput': '25 Mbps Downlink', 'Tracking': 'SGP4 Auto-Track', 'EIRP': '42.5 dBW' },
   },
   dgx1: {
-    name: 'NVIDIA Jetson Orin AGX AI Core 1',
+    name: 'NVIDIA DGX Spark AI Core 1',
     badge: 'AI COMPUTE',
-    desc: 'Primary edge accelerator delivering 275 TOPS INT8 AI compute with 64GB unified memory, hosting local Ollama LLMs and Qdrant semantic vector embeddings.',
-    specs: { 'Compute': '275 TOPS INT8', 'Memory': '64GB 256-bit LPDDR5', 'Power': '60W TDP', 'Cooling': 'EK Copper Block', 'Thermal': '42.4°C' },
+    desc: 'Primary AI node built on the NVIDIA GB10 Grace Blackwell Superchip with 128GB unified memory and 4TB NVMe, hosting local Ollama LLMs and Qdrant semantic vector embeddings.',
+    specs: { 'Chip': 'NVIDIA GB10 (20-core Arm)', 'Memory': '128GB unified LPDDR5x', 'Power': '240W supply / 140W SoC TDP', 'Cooling': 'EK Copper Block', 'Thermal': '42.4°C' },
   },
   dgx2: {
-    name: 'NVIDIA Jetson Orin AGX AI Core 2',
+    name: 'NVIDIA DGX Spark AI Core 2',
     badge: 'AI COMPUTE',
-    desc: 'Secondary parallel AI accelerator coupled over high-speed NVLink/10GbE fabric for distributed multi-agent LLM inference and GitLab code reviews.',
-    specs: { 'Compute': '275 TOPS INT8', 'Memory': '64GB 256-bit LPDDR5', 'Power': '60W TDP', 'Cooling': 'EK Copper Block', 'Thermal': '43.1°C' },
+    desc: 'Secondary parallel AI accelerator coupled over the ConnectX-7 QSFP / 10GbE fabric for distributed multi-agent LLM inference and GitLab code reviews.',
+    specs: { 'Chip': 'NVIDIA GB10 (20-core Arm)', 'Memory': '128GB unified LPDDR5x', 'Power': '240W supply / 140W SoC TDP', 'Cooling': 'EK Copper Block', 'Thermal': '43.1°C' },
   },
   battery1: {
     name: 'LiFePO4 Battery Pack 1 (48V 100Ah)',
@@ -81,22 +81,22 @@ const COMPONENT_DATA = {
     specs: { 'Output': '3,000VA (2.4kW)', 'DC Input': '48V (38-66V)', 'Efficiency': '95%', 'Transfer': '< 20ms', 'Mode': 'Off-Grid Inverting' },
   },
   mppt: {
-    name: 'Victron SmartSolar MPPT 150/35',
+    name: 'Victron SmartSolar MPPT 150/70',
     badge: 'SOLAR MPPT',
     desc: 'Ultra-fast Maximum Power Point Tracking (MPPT) solar charge controller converting high-voltage PV input to 48V battery bank.',
-    specs: { 'Max PV Voltage': '150V', 'Max Charge Current': '35A', 'Peak Efficiency': '98%', 'Comms': 'VE.Direct Serial', 'Power': '1,330W Harvest' },
+    specs: { 'Max PV Voltage': '150V', 'Max Charge Current': '70A', 'Peak Efficiency': '98%', 'Comms': 'VE.Direct Serial', 'Power': '1,330W Harvest' },
   },
   solar_panels: {
-    name: 'Bifacial Solar Photovoltaic Array (1.64 kWp)',
+    name: 'Solar Photovoltaic Array (1.64 kWp)',
     badge: 'SOLAR PV',
-    desc: '4x 410W high-efficiency monocrystalline bifacial solar panels producing up to 8.6 kWh daily energy yield in Southern European latitudes.',
-    specs: { 'Rating': '1,640W Peak', 'Cells': 'Monocrystalline N-Type', 'Bifacial Gain': '+15%', 'Daily Yield': '8.6 kWh / day', 'Area': '7.8 m²' },
+    desc: '4x 410W monocrystalline PERC solar panels yielding about 7.2 kWh per day on annual average in Southern European latitudes (5.2 peak sun hours, 85% system efficiency).',
+    specs: { 'Rating': '1,640W Peak', 'Cells': 'Monocrystalline PERC', 'Wiring': '2S2P (2x 820W strings)', 'Daily Yield': '7.2 kWh / day (avg)', 'Area': '7.8 m²' },
   },
   uav_relay: {
     name: 'Autonomous 5G UAV Mesh Relay (SA-PPO)',
     badge: '5G / SA-PPO',
     desc: 'Autonomous aerial base-station optimizing 3D positioning via Scene-Aware PPO (SA-PPO) and Sionna ray-tracing to provide dynamic URLLC & eMBB coverage for disadvantaged ground receivers.',
-    specs: { 'AI Policy': 'Scene-Aware PPO', 'Carrier': '3.5 GHz (100 MHz)', 'Latency': '< 1ms URLLC', 'SLA Consensus': 'PoS/dBFT 6/7 Sigs', 'Rx1 Gain': '+79.6% Capacity' },
+    specs: { 'AI Policy': 'Scene-Aware PPO', 'Carrier': '3.5 GHz (100 MHz)', 'Latency': '< 1ms URLLC', 'SLA Consensus': 'PoS/dBFT 5/7 Sigs', 'Rx1 Gain (paper)': '+79.6% Capacity' },
   },
   rf_heatmap: {
     name: 'Volumetric 3D SINR Heatmap Grid',
@@ -107,8 +107,8 @@ const COMPONENT_DATA = {
   rx1: {
     name: 'Ground Receiver 1 (Disadvantaged Urban Canyon)',
     badge: 'IoT / 5G UE',
-    desc: 'Severely shadowed user equipment located in an urban street canyon, achieving +79.6% capacity gain under SA-PPO positioning optimization.',
-    specs: { 'Location': 'Urban Canyon', 'Initial SINR': '-12.0 dB', 'Optimized SINR': '-9.7 dB', 'Capacity': '0.187 bps/Hz', 'Gain': '+79.6%' },
+    desc: 'Severely shadowed user equipment located in an urban street canyon, for which the published paper reports a +79.6% capacity gain under SA-PPO positioning optimization.',
+    specs: { 'Location': 'Urban Canyon', 'Initial SINR': '-12.0 dB', 'Optimized SINR': '-9.7 dB', 'Capacity': '0.187 bps/Hz', 'Gain (paper)': '+79.6%' },
   },
   rx2: {
     name: 'Ground Receiver 2 (Suburban Edge)',
@@ -283,38 +283,47 @@ function buildRackMountComponents() {
   computeGroup.add(pduGroup);
   registerInteractive(pduBody, 'pdu');
 
-  // 2U NVIDIA Jetson AGX / DGX Spark AI Compute Blade 1 (Slot 3U-4U)
-  const dgx1Group = new THREE.Group();
-  dgx1Group.position.set(0, baseY - 2.5 * uHeight, 0);
-  const dgx1Body = new THREE.Mesh(new THREE.BoxGeometry(compW, uHeight * 2 - 4, compD), chassisMat);
-  dgx1Group.add(dgx1Body);
+  // 2U AI Compute Blade (Slot 3U-4U): two side-by-side DGX Spark sleds,
+  // AI Core 1 (left) and AI Core 2 (right), each with its own heatsink and cold block.
+  const dgxGroup = new THREE.Group();
+  dgxGroup.position.set(0, baseY - 2.5 * uHeight, 0);
 
-  // Dual Gold Heatsinks & Coolant Blocks
-  [-80, 80].forEach((x) => {
+  const sledGap = 4;
+  const sledW = (compW - sledGap) / 2;
+  [
+    { key: 'dgx1', x: -(sledW + sledGap) / 2, heatsinkX: -80 },
+    { key: 'dgx2', x: (sledW + sledGap) / 2, heatsinkX: 80 },
+  ].forEach((sled) => {
+    const sledBody = new THREE.Mesh(new THREE.BoxGeometry(sledW, uHeight * 2 - 4, compD), chassisMat);
+    sledBody.position.x = sled.x;
+    dgxGroup.add(sledBody);
+
+    // Gold Heatsink & Coolant Block
     const heatsink = new THREE.Mesh(
       new THREE.BoxGeometry(90, 20, 120),
       getMaterial('goldHeatsink')
     );
-    heatsink.position.set(x, 10, 0);
-    dgx1Group.add(heatsink);
+    heatsink.position.set(sled.heatsinkX, 10, 0);
+    dgxGroup.add(heatsink);
 
     const block = new THREE.Mesh(
       new THREE.BoxGeometry(70, 8, 100),
       getMaterial('copperBlock')
     );
-    block.position.set(x, 22, 0);
-    dgx1Group.add(block);
+    block.position.set(sled.heatsinkX, 22, 0);
+    dgxGroup.add(block);
+
+    const statusLed = new THREE.Mesh(
+      new THREE.BoxGeometry(60, 8, 2),
+      getMaterial('ledGreen')
+    );
+    statusLed.position.set(sled.x, 0, compD / 2 + 1);
+    dgxGroup.add(statusLed);
+
+    registerInteractive(sledBody, sled.key);
   });
 
-  const statusLed1 = new THREE.Mesh(
-    new THREE.BoxGeometry(60, 8, 2),
-    getMaterial('ledGreen')
-  );
-  statusLed1.position.set(0, 0, compD / 2 + 1);
-  dgx1Group.add(statusLed1);
-
-  computeGroup.add(dgx1Group);
-  registerInteractive(dgx1Body, 'dgx1');
+  computeGroup.add(dgxGroup);
 
   // 1U AMD EPYC Host Server (Slot 5U)
   const srvGroup = new THREE.Group();
@@ -436,7 +445,7 @@ function buildPowerWall() {
   wallGroup.add(invBody);
   registerInteractive(invBody, 'inverter');
 
-  // Victron SmartSolar MPPT 150/35
+  // Victron SmartSolar MPPT 150/70
   const mpptBody = new THREE.Mesh(
     new THREE.BoxGeometry(50, 150, 100),
     getMaterial('victronBlue')
@@ -488,7 +497,7 @@ function buildSolarArray() {
       pGroup.add(cells);
 
       arrayGroup.add(pGroup);
-      registerInteractive(cells, 'solar');
+      registerInteractive(cells, 'solar_panels');
     }
   }
 
@@ -583,7 +592,7 @@ function buildMetaverseSystem() {
   uavGroup.add(mast);
 
   const radomeGeom = new THREE.SphereGeometry(8, 16, 16);
-  const radomeMat = getMaterial('ledSky');
+  const radomeMat = getMaterial('ledBlue');
   const radome = new THREE.Mesh(radomeGeom, radomeMat);
   radome.position.set(0, -45, 0);
   uavGroup.add(radome);
@@ -666,8 +675,14 @@ function buildMetaverseSystem() {
 }
 
 export function toggleDoor() {
+  return setDoorOpen(!doorOpen);
+}
+
+/** Drive the 3D door to an explicit state (no-op if it is already there). */
+export function setDoorOpen(open) {
   if (!doorPivot) return false;
-  doorOpen = !doorOpen;
+  if (open === doorOpen) return doorOpen;
+  doorOpen = open;
   const targetRot = doorOpen ? -Math.PI / 1.5 : 0;
 
   new TWEEN.Tween(doorPivot.rotation)
@@ -679,9 +694,10 @@ export function toggleDoor() {
 }
 
 export function setExplodedView(progress) {
+  // Offsets are relative: wallGroup/arrayGroup already carry the resting positions (x=430 / x=-640).
   const p = progress / 100.0;
-  if (powerGroup) powerGroup.position.x = 430 + p * 200;
-  if (solarGroup) solarGroup.position.x = -640 - p * 200;
+  if (powerGroup) powerGroup.position.x = p * 200;
+  if (solarGroup) solarGroup.position.x = -p * 200;
   if (spaceGroup) spaceGroup.position.y = p * 150;
   if (computeGroup) computeGroup.position.z = p * 180;
   if (metaverseGroup) metaverseGroup.position.y = p * 120;

@@ -1,25 +1,28 @@
-#!/usr/bin/env bash
+#!/bin/sh
 # ====================================================================
 # Sovereign Mini Datacenter — Automated Restic Backup Engine
+# POSIX sh: runs unmodified in the restic/restic (busybox) image.
 # ====================================================================
 
-set -euo pipefail
+set -eu
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 # Load .env if present
-if [[ -f "${ROOT_DIR}/.env" ]]; then
+if [ -f "${ROOT_DIR}/.env" ]; then
     # shellcheck disable=SC1091
-    source "${ROOT_DIR}/.env"
+    . "${ROOT_DIR}/.env"
 fi
 
-export RESTIC_REPOSITORY="${RESTIC_REPOSITORY:-/var/backups/sovereign}"
-export RESTIC_PASSWORD="${RESTIC_PASSWORD:-changeme_sovereign_backup_key}"
+log()  { printf '\n\033[1;32m[BACKUP] %s\033[0m\n' "$*"; }
+warn() { printf '\033[1;33m[WARN]   %s\033[0m\n' "$*"; }
+err()  { printf '\033[1;31m[ERROR]  %s\033[0m\n' "$*" >&2; exit 1; }
 
-log()  { echo -e "\n\033[1;32m[BACKUP] $*\033[0m"; }
-warn() { echo -e "\033[1;33m[WARN]   $*\033[0m"; }
-err()  { echo -e "\033[1;31m[ERROR]  $*\033[0m" >&2; exit 1; }
+export RESTIC_REPOSITORY="${RESTIC_REPOSITORY:-/var/backups/sovereign}"
+# No default: a publicly known password would make the encryption worthless.
+[ -n "${RESTIC_PASSWORD:-}" ] || err "RESTIC_PASSWORD is not set. Set it in software/.env or the environment."
+export RESTIC_PASSWORD
 
 # -- Ensure restic is installed ------------------------------------
 if ! command -v restic >/dev/null 2>&1; then
@@ -39,28 +42,25 @@ log "Starting volume backup snapshot..."
 
 TAG="sovereign-automated-$(date +%Y%m%d_%H%M%S)"
 
-# List of paths or volumes to back up.
+# Paths or volumes to back up; missing ones are skipped.
 # /data is where docker-compose.backup.yml mounts the read-only service volumes
 # when this script runs inside the sovereign_backup container.
-BACKUP_PATHS=(
-    "${ROOT_DIR}/docker-compose.yml"
-    "${ROOT_DIR}/.env"
-    "${ROOT_DIR}/prometheus.yml"
-    "${ROOT_DIR}/grafana"
-    "${ROOT_DIR}/mailcow"
-    "${ROOT_DIR}/vpn"
-    "/var/lib/docker/volumes"
-    "/data"
-)
-
-EXISTING_PATHS=()
-for path in "${BACKUP_PATHS[@]}"; do
-    if [[ -e "$path" ]]; then
-        EXISTING_PATHS+=("$path")
+set --
+for path in \
+    "${ROOT_DIR}/docker-compose.yml" \
+    "${ROOT_DIR}/.env" \
+    "${ROOT_DIR}/prometheus.yml" \
+    "${ROOT_DIR}/grafana" \
+    "${ROOT_DIR}/mailcow" \
+    "${ROOT_DIR}/vpn" \
+    "/var/lib/docker/volumes" \
+    "/data"; do
+    if [ -e "$path" ]; then
+        set -- "$@" "$path"
     fi
 done
 
-if [[ ${#EXISTING_PATHS[@]} -eq 0 ]]; then
+if [ "$#" -eq 0 ]; then
     err "No valid backup paths found!"
 fi
 
@@ -70,7 +70,7 @@ restic backup \
     --tag "$TAG" \
     --exclude "*/cache/*" \
     --exclude "*/tmp/*" \
-    "${EXISTING_PATHS[@]}"
+    "$@"
 
 # -- Retention Policy (7 daily, 4 weekly, 12 monthly, 1 yearly) ----
 log "Applying snapshot retention policy..."

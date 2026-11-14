@@ -1,14 +1,23 @@
 ---
-# Sovereign Mini Datacenter — Headscale Configuration
-server_url: https://${DOMAIN_VPN:-vpn.sovereign.local}
+# Sovereign Mini Datacenter - Headscale Configuration
+# Schema: headscale 0.23.x (image pinned in ../docker-compose.vpn.yml).
+# Mounted read-only at /etc/headscale/config.yaml.
+
+# EDIT ME: Headscale does not expand ${...} variables. Set this to the public
+# https URL clients use; the host must equal DOMAIN_VPN in software/.env.
+server_url: https://vpn.yourdomain.com
 listen_addr: 0.0.0.0:8080
 metrics_listen_addr: 0.0.0.0:9090
 grpc_listen_addr: 0.0.0.0:50443
 grpc_allow_insecure: false
 
-ip_prefixes:
-  - 100.64.0.0/10
-  - fd7a:115c:a1e0::/48
+noise:
+  private_key_path: /var/lib/headscale/noise_private.key
+
+prefixes:
+  v4: 100.64.0.0/10
+  v6: fd7a:115c:a1e0::/48
+  allocation: sequential
 
 derp:
   server:
@@ -17,6 +26,8 @@ derp:
     region_code: "sov"
     region_name: "Sovereign DERP"
     stun_listen_addr: "0.0.0.0:3478"
+    private_key_path: /var/lib/headscale/derp_server_private.key
+    automatically_add_embedded_derp_region: true
   urls:
     - https://controlplane.tailscale.com/derpmap/default
   auto_update_enabled: true
@@ -26,13 +37,15 @@ disable_check_updates: true
 ephemeral_node_inactivity_timeout: 30m
 
 database:
-  type: sqlite3
+  type: sqlite
   sqlite:
     path: /var/lib/headscale/db.sqlite
 
-dns_config:
-  nameservers:
-    - 1.1.1.1
-    - 9.9.9.9
+dns:
   magic_dns: true
+  # Must differ from the server_url domain.
   base_domain: sovereign.mesh
+  nameservers:
+    global:
+      - 1.1.1.1
+      - 9.9.9.9

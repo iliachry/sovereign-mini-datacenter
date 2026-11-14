@@ -82,12 +82,23 @@ class SionnaRayTracer:
             (-15.0, -15.0, 15.0, 15.0, 18.0),
         ]
 
-        # Default 3 ground receivers (Rx1: disadvantaged urban canyon, Rx2: suburban edge, Rx3: open line-of-sight)
+        # Default 3 ground receivers, all at street level OUTSIDE every building footprint:
+        #   Rx1: disadvantaged urban canyon (narrow alley between the SW block and the centre block)
+        #   Rx2: suburban edge (east of the SE block)
+        #   Rx3: open street between the two northern blocks
         self.receivers: dict[str, Receiver] = {
-            "Rx1": Receiver(rx_id="Rx1", position=(-45.0, -45.0, 1.5), is_disadvantaged=True),
-            "Rx2": Receiver(rx_id="Rx2", position=(45.0, -35.0, 1.5), is_disadvantaged=False),
+            "Rx1": Receiver(rx_id="Rx1", position=(-17.5, -17.5, 1.5), is_disadvantaged=True),
+            "Rx2": Receiver(rx_id="Rx2", position=(65.0, -35.0, 1.5), is_disadvantaged=False),
             "Rx3": Receiver(rx_id="Rx3", position=(10.0, 45.0, 1.5), is_disadvantaged=False),
         }
+
+    def is_inside_building(self, position: tuple[float, float, float]) -> bool:
+        """True if ``position`` lies within (or on the edge of) a building volume."""
+        x, y, z = position
+        return any(
+            bx_min <= x <= bx_max and by_min <= y <= by_max and z <= b_h
+            for bx_min, by_min, bx_max, by_max, b_h in self.buildings
+        )
 
     def _check_los_obstruction(self, tx: tuple[float, float, float], rx: tuple[float, float, float]) -> bool:
         """Determines if the direct Line-of-Sight path intersects any building geometry."""

@@ -1,5 +1,5 @@
 # ====================================================================
-# Prometheus Scrape Configuration � Sovereign Mini Datacenter
+# Prometheus Scrape Configuration - Sovereign Mini Datacenter
 # ====================================================================
 global:
   scrape_interval: 15s
@@ -25,40 +25,30 @@ scrape_configs:
     static_configs:
       - targets: ['cadvisor:8080']
 
+  # Traefik "metrics" entrypoint (see docker-compose.yml), internal only.
   - job_name: 'traefik'
     static_configs:
       - targets: ['traefik:8082']
 
-  - job_name: 'ollama'
-    static_configs:
-      - targets: ['ollama:11434']
-    metrics_path: '/metrics'
-
+  # Present only with the telemetry overlay (setup.sh --with-telemetry).
   - job_name: 'power_telemetry'
     static_configs:
       - targets: ['power-exporter:9101']
 
+  # Present only with the space overlay (setup.sh --with-space).
   - job_name: 'space_telemetry'
     static_configs:
       - targets: ['space-node:9102']
 
-  - job_name: 'esp32_bridge'
-    static_configs:
-      - targets: ['sovereign-telemetry-bridge.local:80']
-    metrics_path: '/metrics'
-    scrape_interval: 30s
-    relabel_configs:
-      - source_labels: [__address__]
-        target_label: instance
-        replacement: 'esp32-telemetry-bridge'
-
-  - job_name: 'lora_gateway'
-    static_configs:
-      - targets: ['meshtastic-gw:9103']
-    metrics_path: '/metrics'
-    scrape_interval: 60s
-    relabel_configs:
-      - source_labels: [__address__]
-        target_label: instance
-        replacement: 'lora-meshtastic-gateway'
+  # Example: ESP32 telemetry bridge. mDNS (*.local) names do not resolve inside
+  # the Prometheus container, so use the bridge's LAN IP. Uncomment and edit.
+  # - job_name: 'esp32_bridge'
+  #   static_configs:
+  #     - targets: ['<ESP32_BRIDGE_IP>:80']
+  #   metrics_path: '/metrics'
+  #   scrape_interval: 30s
+  #   relabel_configs:
+  #     - source_labels: [__address__]
+  #       target_label: instance
+  #       replacement: 'esp32-telemetry-bridge'
 

@@ -27,7 +27,7 @@ Unlike traditional cloud architectures that depend on centralized control planes
 │       NODE-ALPHA (Sovereign Core)            │              │        NODE-BETA (Edge AI Station)           │
 │ ┌──────────────────────────────────────────┐ │              │ ┌──────────────────────────────────────────┐ │
 │ │ Power Microgrid: 1.64kW PV + 10.24kWh    │ │              │ │ Power Microgrid: 820W PV + 5.12kWh       │ │
-│ │ Compute: 2x DGX / Jetson (550 TOPS INT8) │ │              │ │ Compute: 1x Jetson Orin AGX (275 TOPS)   │ │
+│ │ Compute: 2x NVIDIA DGX Spark (GB10)      │ │              │ │ Compute: 1x Jetson Orin AGX (275 TOPS)   │ │
 │ │ Storage: 8TB NVMe RAID-1 (ZFS + Seaweed) │ │              │ │ Storage: 4TB NVMe RAID-1                 │ │
 │ │ Local AI: Ollama + Qdrant RAG + Sentinel │ │              │ │ Local AI: Ollama + Local Agents          │ │
 │ └──────────────────────────────────────────┘ │              │ └──────────────────────────────────────────┘ │
@@ -200,7 +200,7 @@ stateDiagram-v2
     L4_BlackoutSafe --> L3_CriticalPreservation : SoC over 15% (Solar Recovery)
 ```
 
-* **Level 0 (Nominal, SoC > 50%)**: Full power. Dual DGX/Jetson accelerators active, full RAG indexing, continuous Git CI/CD builds, open peer-relay bandwidth.
+* **Level 0 (Nominal, SoC > 50%)**: Full power. Both DGX Spark compute nodes active, full RAG indexing, continuous Git CI/CD builds, open peer-relay bandwidth.
 * **Level 1 (Mild Throttling, SoC 30–50%)**: GPU power capped to 50W (Dynamic FP16/INT8 quantizations), background CI jobs paused, non-critical telemetry scraped at 60s intervals instead of 5s.
 * **Level 2 (Heavy Shedding, SoC 20–30%)**: Secondary compute nodes powered down via Smart PDU / Relay. Only master control plane active. Local AI restricted to high-priority queries only.
 * **Level 3 (Critical Preservation, SoC 10–20%)**: Primary compute put into deep sleep (`suspend-to-RAM`). ESP32 telemetry bridge and MikroTik switch remain on low-power 12V DC rail. LoRa emergency beacons transmitted every 10 minutes.
@@ -318,7 +318,7 @@ sequenceDiagram
     participant BMS as "🔋 LiFePO4 BMS"
     participant ESP as "🔌 ESP32 Micro-Controller"
     participant PDU as "⚡ DC-DC / AC PDU"
-    participant Compute as "🖥️ Main Compute (Jetson/x86)"
+    participant Compute as "🖥️ Main Compute (DGX Spark / x86 Host)"
     participant Mesh as "🌐 Sovereign Mesh Peers"
 
     Sun->>BMS: Solar irradiance restores voltage (above 48V)
@@ -340,8 +340,8 @@ sequenceDiagram
 
 | Node Archetype | Hardware Platform | Power Subsystem | Primary Capabilities | Typical Location |
 | :--- | :--- | :--- | :--- | :--- |
-| **Core Nexus** | 2x NVIDIA DGX / Dual AMD EPYC + 4x RTX 4090 | 10.24–20.48 kWh LiFePO4 + 2.4 kW Solar | Heavy LLM fine-tuning, Master Headscale control plane, S3 Master. | Fixed bunker, research lab, regional HQ |
-| **Edge Station** | 1x NVIDIA Jetson AGX Orin + 1x Supermicro Mini-ITX | 5.12 kWh LiFePO4 + 820W Solar | Local AI inference, GitLab CI/CD, Nextcloud file sync, Starlink uplink. | Remote outpost, mobile vehicle, container |
+| **Core Nexus** | 2x NVIDIA DGX Spark (reference build), or Dual AMD EPYC + 4x RTX 4090 | 10.24–20.48 kWh LiFePO4 + 2.4 kW Solar | Heavy LLM fine-tuning, Master Headscale control plane, S3 Master. | Fixed bunker, research lab, regional HQ |
+| **Edge Station** | 1x NVIDIA Jetson AGX Orin (lower-power alternative) + 1x Supermicro Mini-ITX | 5.12 kWh LiFePO4 + 820W Solar | Local AI inference, GitLab CI/CD, Nextcloud file sync, Starlink uplink. | Remote outpost, mobile vehicle, container |
 | **Off-Grid Island** | 2x Low-power ARM64 nodes + SX1262 LoRa + Iridium | 2.56 kWh LiFePO4 + 410W Solar | Mesh relay, LoRa packet gateway, environmental sensing, DTN pass station. | Mountain peak, island, deep wilderness |
 
 ---
@@ -368,6 +368,7 @@ Phase 4: Autonomous Swarm Multi-Agent Governance
   ├── Create P2P gossip broker for Sentinel agents
   ├── Connect CrowdSec mesh threat intelligence across all nodes
   └── Launch automated orbital DTN contact scheduling with automated ground station tracking
+```
 
 ---
 
@@ -402,9 +403,9 @@ graph TD
 
 ### Key Analytical Specifications
 1. **Electromagnetic Ray-Tracing**: 3GPP UMi model at 3.5 GHz ($23\text{ dBm}$ TX, $+8\text{ dBi}$ gain), up to 5 reflection orders, urban building LoS obstruction checking, and spatial Kriging interpolation.
-2. **Scene-Aware Reinforcement Learning (SA-PPO)**: 3-layer Actor-Critic network ([256, 128, 64]) with 20-dim state vector, delivering $+79.6\%$ capacity boost on disadvantaged receiver Rx1 compared to conventional model-driven policies (MD-PPO).
+2. **Scene-Aware Reinforcement Learning (SA-PPO)**: 3-layer Actor-Critic network ([256, 128, 64]) with 20-dim state vector, with the paper reporting a $+79.6\%$ capacity boost on disadvantaged receiver Rx1 (not reproduced by this repository's simplified simulator) compared to conventional model-driven policies (MD-PPO).
 3. **5G Network Slicing & SDN**: Mathematical bandwidth isolation $T_{\mathrm{tx}} = \frac{D \cdot 8}{B_{\mathrm{slice}}} \cdot 1000\text{ ms}$, ensuring $< 1\text{ ms}$ URLLC flight execution.
-4. **DePIN PoS/dBFT Consensus**: $\lceil 2N/3 \rceil + 1$ multi-signature validation, enforcing $-15\text{ dB}$ minimum SINR rejection thresholds.
+4. **DePIN PoS/dBFT Consensus**: $\lfloor 2N/3 \rfloor + 1$ multi-signature validation, enforcing $-15\text{ dB}$ minimum SINR rejection thresholds.
 5. **Algorithm 1 Multi-Phase Execution Pipeline**:
    - **Phase 1 (Parallel Collection)**: Concurrently gathers IoT telemetry and evaluates Sionna ray-tracing propagation.
    - **Phase 2 (Critical Path $<6\text{ ms}$)**: AI policy inference $\to$ URLLC dispatch $\to$ UAV actuator response.

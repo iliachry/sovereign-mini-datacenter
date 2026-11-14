@@ -35,8 +35,8 @@ class MCPResource:
 
 def read_telemetry_resource() -> str:
     """Returns a JSON string snapshot of real-time hardware telemetry."""
-    power = read_power()
-    thermal = read_thermal()
+    power = read_power(exporter_url=get_config().power_exporter_url, simulation=get_config().is_simulation())
+    thermal = read_thermal(exporter_url=get_config().power_exporter_url, simulation=get_config().is_simulation())
     storage = detect_storage()
     gpus = detect_gpus()
 
@@ -78,7 +78,7 @@ def read_manifest_resource() -> str:
         "role": cfg.node_role,
         "specifications": {
             "chassis": '9U 19" EIA-310-D Anodized Aluminum Enclosure',
-            "compute": "Dual NVIDIA Jetson Orin AGX 64GB (550 TOPS INT8 AI)",
+            "compute": "Dual NVIDIA DGX Spark (GB10 Superchip, 128GB unified memory each)",
             "host_cpu": "AMD EPYC 4004 (8C/16T, 64GB DDR5 ECC)",
             "storage": "8TB NVMe PCIe 4.0 (RAID-1 ZFS Mirror)",
             "energy_storage": "10.24 kWh LiFePO4 (2x 48V 100Ah Smart BMS)",
@@ -95,7 +95,7 @@ def read_market_resource() -> str:
     """Returns a JSON string of current solar-aware compute and relay pricing."""
     from sovereign_dc.economy.market import ComputeMarket, ServiceType
 
-    power = read_power()
+    power = read_power(exporter_url=get_config().power_exporter_url, simulation=get_config().is_simulation())
     market = ComputeMarket()
     mult, status = market.get_dynamic_multiplier(power.battery_soc, power.solar_watts)
     catalog = {

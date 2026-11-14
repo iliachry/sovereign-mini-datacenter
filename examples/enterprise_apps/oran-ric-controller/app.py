@@ -25,9 +25,7 @@ def main() -> None:
     slicing_mgr = NetworkSlicingManager()
     sla_validator = DePINSLAValidator()
 
-    logger.info(
-        "RIC Slices Active: URLLC (10 Mbps, <1ms), eMBB (127 Mbps, 15ms), mMTC (5 Mbps, 12k devs)"
-    )
+    logger.info("RIC Slices Active: URLLC (10 Mbps, <1ms), eMBB (127 Mbps, 15ms), mMTC (5 Mbps, 12k devs)")
 
     iteration = 0
     while lifecycle.is_running:
@@ -37,12 +35,12 @@ def main() -> None:
 
         iteration += 1
         telem = client.get_telemetry()
-        soc = telem.get("battery_soc", 100.0)
+        soc = float(telem.get("battery_soc") or 0.0)
 
         # Process traffic cycles across slices
         pkt_urllc = slicing_mgr.transmit_uav_control_command((5.0, 0.0, 0.0))
-        pkt_xr = slicing_mgr.transmit_xr_frame(180000)
-        pkt_iot = slicing_mgr.ingest_iot_sensor_batch(180, 64)
+        slicing_mgr.transmit_xr_frame(180000)
+        slicing_mgr.ingest_iot_sensor_batch(180, 64)
 
         # Emit telemetry to SMDC bus
         client.emit_telemetry(

@@ -12,9 +12,9 @@ variable "proxmox_api_token" {
 }
 
 variable "proxmox_insecure" {
-  description = "Allow self-signed certificates on Proxmox API"
+  description = "Skip TLS verification of the Proxmox API certificate. Only set true for a lab host that still uses the self-signed certificate."
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "target_node" {
@@ -27,4 +27,9 @@ variable "cluster_name" {
   description = "Cluster identifier"
   type        = string
   default     = "smdc-proxmox-dev"
+}
+
+variable "gpu_mapping" {
+  description = "Name of the Proxmox PCI resource mapping (Datacenter > Resource Mappings) that exposes the GPU to the worker VM. Required because API tokens cannot pass through a raw PCI id."
+  type        = string
 }

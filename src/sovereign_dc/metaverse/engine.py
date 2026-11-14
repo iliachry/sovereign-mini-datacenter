@@ -49,6 +49,11 @@ class SimulationCycleTrace:
 class MetaverseOrchestrator:
     """Orchestrates the 6-layer cyber-physical metaverse wireless management stack."""
 
+    # History caps: the dashboard keeps one orchestrator alive for the process lifetime,
+    # so per-cycle histories are bounded (totals are tracked in separate counters).
+    MAX_TRACES = 1000
+    MAX_TRAJECTORY_POINTS = 1000
+
     def __init__(
         self,
         initial_uav_pos: tuple[float, float, float] = (0.0, 0.0, 35.0),
@@ -61,11 +66,32 @@ class MetaverseOrchestrator:
         self.slicing = NetworkSlicingManager()
         self.depin_sla = DePINSLAValidator()
         self.traces: list[SimulationCycleTrace] = []
+        self.total_cycles_executed = 0
+        self.total_trajectory_points = 1
         self.is_emergency_stopped = False
+        # Simulated IoT sensors (one per receiver) with keys registered at the validator.
+        self._sensor_keys: dict[str, bytes] = {
+            f"sensor-{rx_id}": self.depin_sla.register_sensor(f"sensor-{rx_id}") for rx_id in self.ray_tracer.receivers
+        }
+
+    def _attest_sensor_readings(self, sinr_map: dict[str, float]) -> bool:
+        """Signs each receiver's SINR report sensor-side and verifies it at the validator."""
+        if not sinr_map:
+            return False
+        for rx_id, sinr_db in sinr_map.items():
+            sensor_id = f"sensor-{rx_id}"
+            sensor_key = self._sensor_keys.get(sensor_id)
+            if sensor_key is None:
+                return False
+            payload = f"{rx_id}:{sinr_db:.6f}".encode()
+            signature = self.depin_sla.sign_sensor_payload(sensor_key, sensor_id, payload)
+            if not self.depin_sla.verify_sensor_signature(sensor_id, payload, signature):
+                return False
+        return True
 
     def step(self, deterministic: bool = False) -> SimulationCycleTrace:
         """Executes a single multi-layer simulation cycle (Algorithm 1)."""
-        cycle_idx = len(self.traces) + 1
+        cycle_idx = self.total_cycles_executed + 1
         t_start = time.perf_counter()
 
         # =========================================================================
@@ -102,6 +128,9 @@ class MetaverseOrchestrator:
             new_z = max(20.0, min(60.0, self.uav_position[2] + act_vector[2]))
             self.uav_position = (new_x, new_y, new_z)
             self.trajectory_history.append(self.uav_position)
+            self.total_trajectory_points += 1
+            if len(self.trajectory_history) > self.MAX_TRAJECTORY_POINTS:
+                del self.trajectory_history[: -self.MAX_TRAJECTORY_POINTS]
 
         # Re-evaluate DT with new position
         new_prop = self.ray_tracer.evaluate_all_receivers(self.uav_position)
@@ -124,7 +153,7 @@ class MetaverseOrchestrator:
         sla_res = self.depin_sla.evaluate_uav_position_sla(
             uav_pos=self.uav_position,
             per_receiver_sinr=sinr_map,
-            sensor_signatures_valid=True,
+            sensor_signatures_valid=self._attest_sensor_readings(sinr_map),
         )
 
         # 2. Render XR frame & broadcast over eMBB slice
@@ -149,6 +178,9 @@ class MetaverseOrchestrator:
             xr_frame_ready=True,
         )
         self.traces.append(trace)
+        self.total_cycles_executed += 1
+        if len(self.traces) > self.MAX_TRACES:
+            del self.traces[: -self.MAX_TRACES]
         return trace
 
     def run_cycles(self, count: int = 10, deterministic: bool = False) -> list[SimulationCycleTrace]:
@@ -173,10 +205,10 @@ class MetaverseOrchestrator:
         latest_trace = self.traces[-1] if self.traces else None
         return {
             "uav_position": self.uav_position,
-            "trajectory_points": len(self.trajectory_history),
+            "trajectory_points": self.total_trajectory_points,
             "emergency_stopped": self.is_emergency_stopped,
             "last_cycle": latest_trace.to_dict() if latest_trace else None,
             "slices": self.slicing.get_summary(),
-            "depin_blocks_count": len(self.depin_sla.finalized_blocks),
-            "total_cycles_executed": len(self.traces),
+            "depin_blocks_count": self.depin_sla.total_finalized_blocks,
+            "total_cycles_executed": self.total_cycles_executed,
         }

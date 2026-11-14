@@ -293,7 +293,8 @@ class TestMCPTools(unittest.TestCase):
             "params": {"name": "unregistered_tool", "arguments": {}},
         }
         res = self.server.handle_request(req)
-        self.assertEqual(res["error"]["code"], -32601)
+        # MCP: unknown tool name is an invalid tools/call parameter.
+        self.assertEqual(res["error"]["code"], -32602)
 
     def test_call_tool_exception_handling(self) -> None:
         with patch.object(self.server.tools["get_telemetry"], "handler", side_effect=RuntimeError("Simulated Boom")):
@@ -437,7 +438,7 @@ class TestMCPPrompts(unittest.TestCase):
     def test_get_unknown_prompt(self) -> None:
         req = {"jsonrpc": "2.0", "id": 5, "method": "prompts/get", "params": {"name": "unknown_prompt"}}
         res = self.server.handle_request(req)
-        self.assertEqual(res["error"]["code"], -32601)
+        self.assertEqual(res["error"]["code"], -32602)
 
     def test_get_prompt_exception_handling(self) -> None:
         with patch.object(

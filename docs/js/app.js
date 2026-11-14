@@ -71,7 +71,6 @@ function setupUIListeners() {
       btn.classList.add('active');
       const preset = btn.dataset.preset;
       Scene.transitionToPreset(preset);
-      HUD.playClickSound(600, 0.04);
     });
   });
 
@@ -82,7 +81,7 @@ function setupUIListeners() {
       btn.classList.add('active');
       const layer = btn.dataset.layer;
       Models.setSubsystemVisibility(layer);
-      HUD.playClickSound(700, 0.04);
+      Space.setVisible(layer === 'all' || layer === 'space');
     });
   });
 
@@ -102,7 +101,7 @@ function setupUIListeners() {
     sunSlider.addEventListener('input', (e) => {
       const val = parseInt(e.target.value);
       const estWatts = Math.round(1640 * Math.sin((val * Math.PI) / 180));
-      document.getElementById('val-sun').textContent = `${val}° (${estWatts}W)`;
+      document.getElementById('val-sun').textContent = `${val}° (${estWatts.toLocaleString('en-US')}W)`;
       Scene.setSunElevation(val);
     });
   }
@@ -119,10 +118,6 @@ function setupUIListeners() {
 
   document.getElementById('btn-thermal')?.addEventListener('click', () => {
     HUD.toggleThermalHeatmap();
-  });
-
-  document.getElementById('btn-audio')?.addEventListener('click', () => {
-    HUD.toggleAudio();
   });
 
   document.getElementById('btn-tx-space')?.addEventListener('click', () => {

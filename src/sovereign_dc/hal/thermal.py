@@ -92,10 +92,14 @@ def read_thermal(
                             metrics[parts[0]] = float(parts[1])
                         except ValueError:
                             pass
+            if "sovereign_temp_coolant_celsius" not in metrics:
+                raise RuntimeError("exporter reports no thermal measurements")
+            coolant = metrics["sovereign_temp_coolant_celsius"]
             return ThermalReading(
-                coolant_celsius=metrics.get("sovereign_temp_coolant_celsius", 28.0),
-                rack_inlet_celsius=metrics.get("sovereign_temp_rack_inlet_celsius", 22.0),
-                rack_exhaust_celsius=metrics.get("sovereign_temp_rack_exhaust_celsius", 30.0),
+                coolant_celsius=coolant,
+                rack_inlet_celsius=metrics.get("sovereign_temp_rack_inlet_celsius", coolant),
+                rack_exhaust_celsius=metrics.get("sovereign_temp_rack_exhaust_celsius", coolant),
+                is_simulated=metrics.get("sovereign_telemetry_simulated", 0.0) > 0,
             )
     except Exception as e:
         if simulation:

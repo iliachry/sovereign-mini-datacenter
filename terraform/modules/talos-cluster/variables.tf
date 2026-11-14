@@ -22,31 +22,39 @@ variable "talos_version" {
 }
 
 variable "control_plane_nodes" {
-  description = "Map of control plane nodes with IP, hostname, and install disk"
+  description = <<-EOT
+    Map of control plane nodes.
+      ip           - address Terraform reaches the node on; it must already answer there in
+                     maintenance mode (e.g. via a DHCP reservation) when the config is applied.
+      hostname     - node hostname.
+      install_disk - disk Talos is installed to.
+      interface    - kernel name of the NIC to configure statically with ip/network_prefix_length
+                     and a default route via var.gateway (list the real names with
+                     `talosctl -n <ip> get links --insecure`). Leave unset to keep DHCP.
+  EOT
   type = map(object({
     ip           = string
     hostname     = string
     install_disk = string
-    interface    = optional(string, "10gbe0")
+    interface    = optional(string)
   }))
   default = {
     "cp-01" = {
       ip           = "10.0.0.10"
       hostname     = "smdc-cp-01"
       install_disk = "/dev/nvme0n1"
-      interface    = "10gbe0"
     }
   }
 }
 
 variable "worker_nodes" {
-  description = "Map of worker nodes with IP, hostname, install disk, and GPU capability"
+  description = "Map of worker nodes. Same fields as control_plane_nodes plus has_gpu, which labels the node and (only when NVIDIA drivers are supplied through gpu_installer_image or gpu_extension_images) loads the NVIDIA kernel modules."
   type = map(object({
     ip           = string
     hostname     = string
     install_disk = string
     has_gpu      = optional(bool, false)
-    interface    = optional(string, "10gbe0")
+    interface    = optional(string)
   }))
   default = {
     "worker-gpu-01" = {
@@ -54,7 +62,6 @@ variable "worker_nodes" {
       hostname     = "smdc-worker-gpu-01"
       install_disk = "/dev/nvme0n1"
       has_gpu      = true
-      interface    = "10gbe0"
     }
   }
 }
@@ -66,9 +73,32 @@ variable "enable_luks_encryption" {
 }
 
 variable "gateway" {
-  description = "Default network gateway"
+  description = "Default IPv4 gateway. Used for the default route of every node that sets `interface` (static addressing)."
   type        = string
   default     = "10.0.0.1"
+}
+
+variable "network_prefix_length" {
+  description = "Prefix length of the node subnet (e.g. 24 for 10.0.0.0/24). Combined with each node's ip for static addressing when `interface` is set."
+  type        = number
+  default     = 24
+
+  validation {
+    condition     = var.network_prefix_length >= 1 && var.network_prefix_length <= 32
+    error_message = "network_prefix_length must be between 1 and 32."
+  }
+}
+
+variable "gpu_installer_image" {
+  description = "Talos installer image that already contains the NVIDIA system extensions for GPU workers, generated with Talos Image Factory (https://factory.talos.dev) for exactly var.talos_version, e.g. factory.talos.dev/installer/<schematic-id>:<talos-version>. This is the supported way to ship extensions. Null leaves the stock installer in place (no NVIDIA drivers)."
+  type        = string
+  default     = null
+}
+
+variable "gpu_extension_images" {
+  description = "Full, digest- or tag-pinned system extension image references written to machine.install.extensions on GPU workers (legacy mechanism, deprecated by Talos in favour of gpu_installer_image). Extension tags are NOT the Talos version: copy the exact references for your Talos release from Talos Image Factory (https://factory.talos.dev) or the siderolabs/extensions release notes. Default: none."
+  type        = list(string)
+  default     = []
 }
 
 variable "nameservers" {

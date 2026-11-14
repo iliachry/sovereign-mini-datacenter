@@ -9,6 +9,10 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shlex
+import shutil
+import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -42,38 +46,109 @@ class EnterpriseRegistry:
         self.registry_file = registry_file or (Path.home() / ".smdc" / "enterprise_registry.json")
         self._apps: dict[str, AppManifest] = {}
         self._app_paths: dict[str, Path] = {}
+        # Registry entries that could not be parsed; written back verbatim on save so one
+        # bad entry never causes data loss for itself or its neighbours.
+        self._unparsed_entries: list[Any] = []
+        # Set when the registry file is unreadable AND could not be backed up: saving is
+        # then refused so the only copy of the operator's data is never overwritten.
+        self._save_blocked = False
         self.load_registry()
 
+    def _backup_unreadable_registry(self) -> Path | None:
+        """Copies an unparseable registry file aside. Returns the backup path, or None on failure."""
+        backup = self.registry_file.with_name(f"{self.registry_file.name}.corrupt-{int(time.time())}")
+        counter = 0
+        while backup.exists():
+            counter += 1
+            backup = self.registry_file.with_name(f"{self.registry_file.name}.corrupt-{int(time.time())}-{counter}")
+        try:
+            shutil.copy2(self.registry_file, backup)
+            return backup
+        except OSError as e:
+            logger.error("Could not back up unreadable registry %s: %s", self.registry_file, e)
+            return None
+
     def load_registry(self) -> None:
-        """Load registered apps from registry JSON cache if present."""
-        if self.registry_file.exists():
+        """Load registered apps from registry JSON cache if present.
+
+        Entries are parsed independently: a corrupt entry is skipped (and preserved for the
+        next save) without affecting the others. A file that cannot be parsed at all is
+        copied to ``<name>.corrupt-<timestamp>`` before any later save may replace it.
+        """
+        if not self.registry_file.exists():
+            return
+        try:
+            with open(self.registry_file, encoding="utf-8") as f:
+                data = json.load(f)
+            if not isinstance(data, dict) or not isinstance(data.get("apps", []), list):
+                raise ValueError("registry root must be an object with an 'apps' list")
+        except Exception as e:
+            backup = self._backup_unreadable_registry()
+            self._save_blocked = backup is None
+            logger.error(
+                "Registry cache %s is unreadable (%s); %s",
+                self.registry_file,
+                e,
+                f"original preserved at {backup}" if backup else "saving is disabled to protect it",
+            )
+            return
+
+        for index, app_data in enumerate(data.get("apps", [])):
             try:
-                with open(self.registry_file, encoding="utf-8") as f:
-                    data = json.load(f)
-                    for app_data in data.get("apps", []):
-                        manifest = AppManifest.from_dict(app_data)
-                        self._apps[manifest.app_id] = manifest
-                        if "manifest_path" in app_data and os.path.exists(app_data["manifest_path"]):
-                            self._app_paths[manifest.app_id] = Path(app_data["manifest_path"])
-                logger.debug("Loaded %d apps from registry cache %s", len(self._apps), self.registry_file)
+                if not isinstance(app_data, dict):
+                    raise ValueError("entry is not an object")
+                manifest = AppManifest.from_dict(app_data)
+                if not isinstance(manifest.app_id, str) or not manifest.app_id:
+                    raise ValueError("entry has no app_id")
+                self._apps[manifest.app_id] = manifest
+                manifest_path = app_data.get("manifest_path")
+                if isinstance(manifest_path, str) and os.path.exists(manifest_path):
+                    self._app_paths[manifest.app_id] = Path(manifest_path)
             except Exception as e:
-                logger.warning("Failed to load registry cache %s: %s", self.registry_file, e)
+                self._unparsed_entries.append(app_data)
+                logger.warning(
+                    "Skipping corrupt entry #%d in registry cache %s: %s (entry preserved)",
+                    index,
+                    self.registry_file,
+                    e,
+                )
+        logger.debug("Loaded %d apps from registry cache %s", len(self._apps), self.registry_file)
 
     def save_registry(self) -> None:
-        """Persist registered apps to registry JSON file."""
+        """Persist registered apps to registry JSON file (atomic replace)."""
+        if self._save_blocked:
+            logger.error(
+                "Not saving registry: %s failed to parse and could not be backed up; "
+                "repair or move the file, then reload",
+                self.registry_file,
+            )
+            return
+        tmp_name: str | None = None
         try:
             self.registry_file.parent.mkdir(parents=True, exist_ok=True)
-            apps_payload = []
+            apps_payload: list[Any] = []
             for app_id, manifest in self._apps.items():
                 app_dict = manifest.to_dict()
                 if app_id in self._app_paths:
                     app_dict["manifest_path"] = str(self._app_paths[app_id])
                 apps_payload.append(app_dict)
-            with open(self.registry_file, "w", encoding="utf-8") as f:
+            apps_payload.extend(self._unparsed_entries)
+            fd, tmp_name = tempfile.mkstemp(
+                prefix=f".{self.registry_file.name}.", suffix=".tmp", dir=self.registry_file.parent
+            )
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump({"version": "1.0.0", "apps": apps_payload}, f, indent=2)
+            os.replace(tmp_name, self.registry_file)
+            tmp_name = None
             logger.debug("Saved %d apps to %s", len(self._apps), self.registry_file)
         except Exception as e:
             logger.error("Failed to save registry cache %s: %s", self.registry_file, e)
+        finally:
+            if tmp_name is not None:
+                try:
+                    os.unlink(tmp_name)
+                except OSError:
+                    pass
 
     def discover_apps(self, search_dirs: list[Path] | None = None) -> list[AppManifest]:
         """Scan directories for `smdc-app.yaml` / `smdc-app.json` manifests.
@@ -285,6 +360,102 @@ class EnterpriseRegistry:
             health_check=health,
         )
 
+    @staticmethod
+    def render_manifest_yaml(manifest: AppManifest) -> str:
+        """Serializes a manifest as an ``smdc-app.yaml`` document using a real YAML emitter."""
+        header = "# Sovereign Mini Datacenter (SMDC) — Enterprise App Manifest\n"
+        payload = manifest.to_dict()
+        try:
+            import yaml
+        except ImportError:
+            # JSON is a YAML subset, so this stays a loadable smdc-app.yaml.
+            return header + json.dumps(payload, indent=2) + "\n"
+        return header + yaml.safe_dump(payload, sort_keys=False, default_flow_style=False, allow_unicode=True)
+
+    @staticmethod
+    def _render_sample_app(manifest: AppManifest) -> str:
+        """Renders the sample ``app.py``. Manifest strings are embedded only as ``repr()`` literals."""
+        return f'''"""Sample Enterprise Workload for Sovereign Mini Datacenter."""
+
+from __future__ import annotations
+
+import logging
+import time
+
+from sovereign_dc.enterprise.sdk import AppLifecycleHandler, SMDCClient
+
+APP_ID = {str(manifest.app_id)!r}
+APP_NAME = {str(manifest.name)!r}
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logger = logging.getLogger(APP_ID)
+
+
+def main() -> None:
+    logger.info("Starting %s (%s)...", APP_NAME, APP_ID)
+    client = SMDCClient()
+    lifecycle = AppLifecycleHandler(APP_ID, client)
+
+    logger.info("Reading SMDC power telemetry...")
+    telemetry = client.get_telemetry()
+    logger.info(
+        "Current Solar: %.1f W | Battery SoC: %.1f%% (source: %s)",
+        telemetry.get("solar_watts", 0.0),
+        telemetry.get("battery_soc", 0.0),
+        telemetry.get("source", "unknown"),
+    )
+
+    try:
+        while lifecycle.is_running:
+            # is_paused turns True when the EnterpriseManager sharing this process's event
+            # bus pauses this app (operator request or load shedding).
+            if lifecycle.is_paused:
+                logger.warning("Workload paused by the SMDC enterprise manager. Idling...")
+                time.sleep(5)
+                continue
+
+            logger.info("Executing enterprise workload iteration...")
+            # Perform custom business logic here (IoT aggregation, AI inference, etc.)
+            client.emit_telemetry(APP_ID, {{"status": "ok", "processed_records": 10}})
+            time.sleep(10)
+    except KeyboardInterrupt:
+        logger.info("Gracefully shutting down %s...", APP_ID)
+    finally:
+        lifecycle.stop()
+
+
+if __name__ == "__main__":
+    main()
+'''
+
+    @staticmethod
+    def _render_dockerfile(manifest: AppManifest) -> str:
+        """Renders the Dockerfile; the entrypoint is emitted in JSON exec form only."""
+        try:
+            argv = shlex.split(str(manifest.entrypoint))
+        except ValueError:
+            argv = str(manifest.entrypoint).split()
+        if not argv:
+            argv = ["python3", "app.py"]
+        ports: list[int] = []
+        for port in manifest.network.ports:
+            try:
+                port_num = int(port)
+            except (TypeError, ValueError):
+                continue
+            if 1 <= port_num <= 65535:
+                ports.append(port_num)
+        expose = " ".join(str(p) for p in ports) if ports else "8080"
+        return (
+            "FROM python:3.11-slim\n"
+            "WORKDIR /app\n"
+            "COPY smdc-app.yaml smdc-app.json app.py /app/\n"
+            "RUN pip install --no-cache-dir sovereign-dc || true\n"
+            f"EXPOSE {expose}\n"
+            f"ENTRYPOINT {json.dumps(argv[:1])}\n"
+            f"CMD {json.dumps(argv[1:])}\n"
+        )
+
     @classmethod
     def create_project_scaffold(
         cls, target_dir: Path | str, manifest: AppManifest, create_sample_code: bool = True
@@ -299,113 +470,28 @@ class EnterpriseRegistry:
         # Write manifest JSON for deterministic compatibility
         manifest_json_file.write_text(manifest.to_json(indent=2), encoding="utf-8")
 
-        # Write YAML representation
-        yaml_content = f"""# Sovereign Mini Datacenter (SMDC) — Enterprise App Manifest
-name: "{manifest.name}"
-app_id: "{manifest.app_id}"
-version: "{manifest.version}"
-description: "{manifest.description}"
-author: "{manifest.author}"
-category: "{manifest.category.value}"
-runtime: "{manifest.runtime.value}"
-entrypoint: "{manifest.entrypoint}"
-
-resources:
-  cpu_cores: {manifest.resources.cpu_cores}
-  ram_mb: {manifest.resources.ram_mb}
-  gpu_vram_mb: {manifest.resources.gpu_vram_mb}
-  storage_mb: {manifest.resources.storage_mb}
-  gpu_required: {str(manifest.resources.gpu_required).lower()}
-  max_power_w: {manifest.resources.max_power_w}
-
-power:
-  tier: "{manifest.power.tier.value}"
-  min_battery_soc: {manifest.power.min_battery_soc}
-  max_ambient_temp_c: {manifest.power.max_ambient_temp_c}
-  allow_solar_burst: {str(manifest.power.allow_solar_burst).lower()}
-  min_solar_watts: {manifest.power.min_solar_watts}
-
-network:
-  ports: {manifest.network.ports}
-  expose_wireguard: {str(manifest.network.expose_wireguard).lower()}
-  space_dtn_enabled: {str(manifest.network.space_dtn_enabled).lower()}
-  lora_heartbeat: {str(manifest.network.lora_heartbeat).lower()}
-
-storage:
-  persistent_volume: "{manifest.storage.persistent_volume}"
-  mount_point: "{manifest.storage.mount_point}"
-  backup_enabled: {str(manifest.storage.backup_enabled).lower()}
-
-health_check:
-  type: "{manifest.health_check.type}"
-  endpoint: "{manifest.health_check.endpoint}"
-  port: {manifest.health_check.port if manifest.health_check.port is not None else "null"}
-  interval_sec: {manifest.health_check.interval_sec}
-  timeout_sec: {manifest.health_check.timeout_sec}
-"""
-        manifest_file.write_text(yaml_content.strip() + "\n", encoding="utf-8")
+        # Write YAML representation. Values are serialized by a YAML emitter (never string
+        # interpolation), so quotes, colons or newlines in a name cannot corrupt the manifest.
+        manifest_file.write_text(cls.render_manifest_yaml(manifest), encoding="utf-8")
 
         if create_sample_code:
             sample_py = dest / "app.py"
-            sample_code = f'''"""Sample Enterprise Workload for Sovereign Mini Datacenter."""
-import os
-import sys
-import time
-import logging
-from sovereign_dc.enterprise.sdk import SMDCClient, AppLifecycleHandler
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-logger = logging.getLogger("{manifest.app_id}")
-
-def main():
-    logger.info("Starting {manifest.name} ({manifest.app_id})...")
-    client = SMDCClient()
-    lifecycle = AppLifecycleHandler("{manifest.app_id}", client)
-
-    logger.info("Connecting to SMDC Event Bus and Power Telemetry...")
-    telemetry = client.get_telemetry()
-    logger.info("Current Solar: %.1f W | Battery SoC: %.1f%%", telemetry.get("solar_watts", 0.0), telemetry.get("battery_soc", 100.0))
-
-    try:
-        while lifecycle.is_running:
-            # Check if load shedding is requested
-            if lifecycle.is_paused:
-                logger.warning("Workload paused due to SMDC low-battery load shedding. Idling...")
-                time.sleep(5)
-                continue
-
-            logger.info("Executing enterprise workload iteration...")
-            # Perform custom business logic here (IoT aggregation, AI inference, etc.)
-            client.emit_telemetry("{manifest.app_id}", {{"status": "ok", "processed_records": 10}})
-            time.sleep(10)
-    except KeyboardInterrupt:
-        logger.info("Gracefully shutting down {manifest.app_id}...")
-    finally:
-        lifecycle.stop()
-
-if __name__ == "__main__":
-    main()
-'''
-            sample_py.write_text(sample_code, encoding="utf-8")
+            sample_py.write_text(cls._render_sample_app(manifest), encoding="utf-8")
 
             # Create Dockerfile
             dockerfile = dest / "Dockerfile"
-            docker_content = f"""FROM python:3.11-slim
-WORKDIR /app
-COPY smdc-app.yaml smdc-app.json app.py /app/
-RUN pip install --no-cache-dir sovereign-dc || true
-EXPOSE {" ".join(str(p) for p in manifest.network.ports) if manifest.network.ports else "8080"}
-ENTRYPOINT ["{manifest.entrypoint.split()[0]}"]
-CMD {json.dumps(manifest.entrypoint.split()[1:])}
-"""
-            dockerfile.write_text(docker_content, encoding="utf-8")
+            dockerfile.write_text(cls._render_dockerfile(manifest), encoding="utf-8")
 
             # Create README.md
             readme = dest / "README.md"
-            readme_content = f"""# {manifest.name}
+            # Collapse whitespace/newlines and drop backticks so the values stay inside their
+            # heading / inline-code span / shell line.
+            safe_name = " ".join(str(manifest.name).split()) or "Enterprise App"
+            safe_id = shlex.quote(str(manifest.app_id).replace("`", ""))
+            readme_content = f"""# {safe_name}
 
 > Enterprise Onboarding Package for **Sovereign Mini Datacenter (SMDC)**
-> **App ID**: `{manifest.app_id}` | **Category**: `{manifest.category.value}` | **Power Tier**: `{manifest.power.tier.value}`
+> **App ID**: `{safe_id}` | **Category**: `{manifest.category.value}` | **Power Tier**: `{manifest.power.tier.value}`
 
 ## Quickstart
 
@@ -417,10 +503,10 @@ smdc app validate .
 smdc app register .
 
 # 3. Start application runtime
-smdc app start {manifest.app_id}
+smdc app start {safe_id}
 
 # 4. Check application telemetry and power budget
-smdc app status {manifest.app_id}
+smdc app status {safe_id}
 ```
 """
             readme.write_text(readme_content, encoding="utf-8")

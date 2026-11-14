@@ -19,19 +19,24 @@ This module provides **AES-256 encrypted, deduplicated, and automated snapshots*
 
 ### Run an Immediate Backup Snapshot
 ```bash
-sudo bash software/backup/backup.sh
+sudo sh software/backup/backup.sh
 ```
+`RESTIC_PASSWORD` must be set in `software/.env` (or the environment); the scripts
+have no default password and refuse to run without one.
 
 ### Schedule Daily Automation via Cron
 Add to root crontab (`sudo crontab -e`):
 ```cron
-0 3 * * * /bin/bash /path/to/sovereign-mini-datacenter/software/backup/backup.sh >> /var/log/sovereign-backup.log 2>&1
+0 3 * * * /bin/sh /path/to/sovereign-mini-datacenter/software/backup/backup.sh >> /var/log/sovereign-backup.log 2>&1
 ```
 
 ### Run as a Containerized Daemon
 `docker-compose.backup.yml` ships a `sovereign_backup` container that executes `backup.sh`
 on a loop (default every 24 h, tunable via `BACKUP_INTERVAL_SECONDS` in `.env`) against
-read-only mounts of every core-stack volume:
+read-only mounts of the core-stack data volumes. The local repository is kept in
+the `backup_storage` volume mounted at `/var/backups/sovereign`; if you change
+`RESTIC_REPOSITORY`, use a remote backend (`s3:`, `sftp:`, `rest:`), because any other
+local path inside the container is not persistent:
 ```bash
 ./software/setup.sh --with-backup
 # or standalone:

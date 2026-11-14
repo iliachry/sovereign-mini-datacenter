@@ -1,3 +1,9 @@
+# Power & thermal telemetry exporter overlay.
+#
+# Relative paths below are resolved against the Compose project directory,
+# which is `software/` when this file is merged with the core stack
+# (`./setup.sh --with-telemetry`). To run it standalone, pin the project directory:
+#   docker compose --project-directory software -f software/telemetry/docker-compose.telemetry.yml up -d
 networks:
   sovereign_net:
     name: software_sovereign_net
@@ -12,13 +18,13 @@ services:
       - EXPORTER_PORT=9101
       - SIMULATE_POWER_DATA=${SIMULATE_POWER_DATA:-true}
     volumes:
-      - ./power_exporter.py:/app/power_exporter.py:ro
+      - ./telemetry/power_exporter.py:/app/power_exporter.py:ro
     networks:
       - sovereign_net
     ports:
       - "9101:9101"
     healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://localhost:9101/health || exit 1"]
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:9101/health || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 3

@@ -19,52 +19,91 @@ QDRANT_URL = os.getenv("QDRANT_BASE_URL", "http://qdrant:6333")
 DEFAULT_EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "nomic-embed-text")
 ECO_EMBEDDING_MODEL = os.getenv("ECO_EMBEDDING_MODEL", "all-minilm")
 COLLECTION_NAME = "sovereign_knowledge"
+# Vector size of the Qdrant collection. Every embedding written must have this size.
+EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "768"))
+# Shared Sentinel mode file. It must live on a volume shared with sentinel_copilot.
+MODE_FILE = os.getenv("SOVEREIGN_MODE_FILE", "/tmp/sovereign_mode")
+# Sentinel modes in which batch vectorisation is deferred to conserve power.
+POWER_SAVING_MODES = frozenset({"ECO_PRESERVATION", "CRITICAL_SHEDDING"})
+POLL_INTERVAL_SECONDS = 30
 WATCH_DIR = os.getenv("DOCS_WATCH_DIR", "/data/documents")
 
 
-def get_current_model() -> str:
-    """Reads the current Sentinel mode and returns the appropriate embedding model."""
+def get_current_mode() -> str:
+    """Reads the current Sentinel mode from the shared mode file ("NORMAL" if absent)."""
+    mode_file = os.getenv("SOVEREIGN_MODE_FILE", MODE_FILE)
     try:
-        if os.path.exists("/tmp/sovereign_mode"):
-            with open("/tmp/sovereign_mode") as f:
-                mode = f.read().strip()
-            if mode == "ECO_PRESERVATION":
-                return ECO_EMBEDDING_MODEL
+        if os.path.exists(mode_file):
+            with open(mode_file, encoding="utf-8") as f:
+                return f.read().strip() or "NORMAL"
     except Exception as e:
-        logging.warning(f"Failed to read sovereign mode: {e}")
+        logging.warning("Failed to read sovereign mode: %s", e)
+    return "NORMAL"
+
+
+def get_current_model() -> str:
+    """Returns the embedding model used for indexing.
+
+    The model is deliberately NOT switched with the Sentinel mode: the Qdrant collection
+    has a fixed vector size (``EMBEDDING_DIM``) and the former ECO model (``all-minilm``,
+    384-dim) cannot be written into a 768-dim collection. Power is saved by deferring
+    indexing in ECO mode instead (see ``run_worker``). ``ECO_EMBEDDING_MODEL`` is kept
+    only for backward compatibility of the module interface.
+    """
     return DEFAULT_EMBEDDING_MODEL
 
 
-def ensure_qdrant_collection():
-    """Creates the Qdrant collection if it does not exist."""
+def ensure_qdrant_collection() -> bool:
+    """Creates the Qdrant collection if it does not exist. Returns True when it is ready."""
     url = f"{QDRANT_URL}/collections/{COLLECTION_NAME}"
     try:
         req = urllib.request.Request(url, headers={"Content-Type": "application/json"})
         with urllib.request.urlopen(req, timeout=3) as resp:
             if resp.status == 200:
-                logging.info(f"Qdrant collection '{COLLECTION_NAME}' ready.")
-                return
+                logging.info("Qdrant collection '%s' ready.", COLLECTION_NAME)
+                return True
+            logging.error("Unexpected Qdrant status %s for collection '%s'.", resp.status, COLLECTION_NAME)
+            return False
     except urllib.error.HTTPError as e:
-        if e.code == 404:
-            payload = json.dumps({"vectors": {"size": 768, "distance": "Cosine"}}).encode("utf-8")
-            req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="PUT")
-            with urllib.request.urlopen(req, timeout=5) as resp:
-                logging.info(f"Created Qdrant collection '{COLLECTION_NAME}'.")
-        else:
-            logging.error(f"Error checking Qdrant: {e}")
+        if e.code != 404:
+            logging.error("Error checking Qdrant: %s", e)
+            return False
     except Exception as e:
-        logging.warning(f"Qdrant not reachable yet: {e}")
+        logging.warning("Qdrant not reachable yet: %s", e)
+        return False
+
+    try:
+        payload = json.dumps({"vectors": {"size": EMBEDDING_DIM, "distance": "Cosine"}}).encode("utf-8")
+        req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="PUT")
+        with urllib.request.urlopen(req, timeout=5):
+            logging.info("Created Qdrant collection '%s'.", COLLECTION_NAME)
+        return True
+    except Exception as e:
+        logging.error("Failed to create Qdrant collection '%s': %s", COLLECTION_NAME, e)
+        return False
 
 
 def get_embedding(text: str) -> list[float]:
-    """Generates embedding vector via local Ollama API."""
+    """Generates embedding vector via local Ollama API.
+
+    Raises ValueError if the response carries no embedding or one of the wrong size;
+    a placeholder vector is never substituted.
+    """
     url = f"{OLLAMA_URL}/api/embeddings"
     current_model = get_current_model()
     payload = json.dumps({"model": current_model, "prompt": text}).encode("utf-8")
     req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=10) as resp:
         data = json.loads(resp.read().decode("utf-8"))
-        return data.get("embedding", [0.0] * 768)
+    embedding = data.get("embedding")
+    if not isinstance(embedding, list) or not embedding:
+        raise ValueError(f"Embedding model '{current_model}' returned no embedding")
+    if len(embedding) != EMBEDDING_DIM:
+        raise ValueError(
+            f"Embedding model '{current_model}' returned {len(embedding)} dimensions; "
+            f"collection '{COLLECTION_NAME}' requires {EMBEDDING_DIM}"
+        )
+    return [float(v) for v in embedding]
 
 
 def chunk_text(text: str, chunk_size: int = 500, overlap: int = 50) -> list[str]:
@@ -79,8 +118,11 @@ def chunk_text(text: str, chunk_size: int = 500, overlap: int = 50) -> list[str]
     return chunks
 
 
-def index_file(filepath: str) -> None:
-    """Chunks and embeds a document, then stores vectors in Qdrant."""
+def index_file(filepath: str) -> bool:
+    """Chunks and embeds a document, then stores vectors in Qdrant.
+
+    Returns True only if every chunk was embedded and stored (or the file is empty).
+    """
     try:
         with open(filepath, encoding="utf-8", errors="ignore") as f:
             content = f.read()
@@ -110,39 +152,64 @@ def index_file(filepath: str) -> None:
             payload = json.dumps({"points": points}).encode("utf-8")
             req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="PUT")
             with urllib.request.urlopen(req, timeout=10):
-                logging.info(f"Indexed {len(points)} chunks from '{os.path.basename(filepath)}'.")
+                logging.info("Indexed %d chunks from '%s'.", len(points), os.path.basename(filepath))
+        return True
     except Exception as e:
-        logging.error(f"Failed to index {filepath}: {e}")
+        logging.error("Failed to index %s: %s", filepath, e)
+        return False
 
 
-def run_worker():
+def scan_and_index(indexed_files: set[tuple[str, float]]) -> tuple[int, int]:
+    """Indexes new/modified documents under WATCH_DIR. Returns (succeeded, failed).
+
+    A file is recorded in ``indexed_files`` only after it was indexed successfully, so
+    failures are retried on the next scan.
+    """
+    succeeded = 0
+    failed = 0
+    for root, _, files in os.walk(WATCH_DIR):
+        for f in files:
+            if f.endswith((".md", ".txt", ".csv", ".json", ".py", ".sh")):
+                p = os.path.join(root, f)
+                key = (p, os.path.getmtime(p))
+                if key in indexed_files:
+                    continue
+                logging.info("New or modified document detected: %s", f)
+                if index_file(p):
+                    indexed_files.add(key)
+                    succeeded += 1
+                else:
+                    failed += 1
+    return succeeded, failed
+
+
+def run_worker() -> None:
     logging.info("Starting Autonomous Knowledge Indexer Worker...")
-    ensure_qdrant_collection()
+    collection_ready = ensure_qdrant_collection()
     os.makedirs(WATCH_DIR, exist_ok=True)
 
-    indexed_files = set()
-    last_mode = get_current_model()
+    indexed_files: set[tuple[str, float]] = set()
+    last_mode = get_current_mode()
 
     while True:
         try:
-            current_mode = get_current_model()
+            current_mode = get_current_mode()
             if current_mode != last_mode:
-                logging.info(f"🔄 Swapping AI Model due to Sentinel mode change: {last_mode} -> {current_mode}")
+                logging.info("🔄 Sentinel mode change: %s -> %s", last_mode, current_mode)
                 last_mode = current_mode
 
-            for root, _, files in os.walk(WATCH_DIR):
-                for f in files:
-                    if f.endswith((".md", ".txt", ".csv", ".json", ".py", ".sh")):
-                        p = os.path.join(root, f)
-                        mtime = os.path.getmtime(p)
-                        key = (p, mtime)
-                        if key not in indexed_files:
-                            logging.info(f"New or modified document detected: {f}")
-                            index_file(p)
-                            indexed_files.add(key)
+            if current_mode in POWER_SAVING_MODES:
+                logging.info("Sentinel mode %s: deferring batch vectorisation to conserve power.", current_mode)
+            else:
+                if not collection_ready:
+                    collection_ready = ensure_qdrant_collection()
+                _, failed = scan_and_index(indexed_files)
+                if failed:
+                    # The collection may have been missing or dropped: re-verify before retrying.
+                    collection_ready = False
         except Exception as e:
-            logging.error(f"Indexer loop error: {e}")
-        time.sleep(30)
+            logging.error("Indexer loop error: %s", e)
+        time.sleep(POLL_INTERVAL_SECONDS)
 
 
 # Backward compatibility alias

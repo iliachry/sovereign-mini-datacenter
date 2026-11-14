@@ -19,10 +19,17 @@ if ! metrics=$(curl -s --connect-timeout 5 "$METRICS_URL"); then
     exit 0
 fi
 
-soc=$(echo "$metrics" | grep "^sovereign_battery_soc_percent " | awk '{print $2}')
-coolant_temp=$(echo "$metrics" | grep "^sovereign_temp_coolant_celsius " | awk '{print $2}')
+# `|| true`: a missing metric must fall through to the defaults below, not
+# abort the script (grep exits 1 on no match under `set -euo pipefail`).
+soc=$(echo "$metrics" | grep "^sovereign_battery_soc_percent " | awk '{print $2}' || true)
+coolant_temp=$(echo "$metrics" | grep "^sovereign_temp_coolant_celsius " | awk '{print $2}' || true)
 
-[[ -n "$soc" ]] || soc=100.0
+# Never substitute a healthy value for a missing measurement: with no battery
+# reading (exporter has no source), make no shedding decision at all.
+if [[ -z "$soc" ]]; then
+    warn "Exporter reports no battery SoC (telemetry source down); no load-shedding decision made."
+    exit 0
+fi
 [[ -n "$coolant_temp" ]] || coolant_temp=30.0
 
 log "Telemetry status: Battery SoC = ${soc}%, Coolant Temp = ${coolant_temp}°C"

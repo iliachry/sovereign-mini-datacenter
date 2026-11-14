@@ -30,7 +30,7 @@ EOF
 check_container() {
     if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
         echo "Error: Headscale container '${CONTAINER_NAME}' is not running." >&2
-        echo "Start it first with: docker compose -f software/vpn/docker-compose.vpn.yml up -d" >&2
+        echo "Start it first with: docker compose --project-directory software -f software/vpn/docker-compose.vpn.yml up -d" >&2
         exit 1
     fi
 }

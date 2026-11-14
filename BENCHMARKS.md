@@ -1,6 +1,7 @@
 # ⚡ Sovereign Mini Datacenter — Performance & Hardware Benchmarks
 
-> **Document Type**: Empirical Hardware, AI Inference & Networking Benchmark Report  
+> **Document Type**: Hardware, AI Inference & Networking Reference Figures  
+> **Provenance**: No script in this repository reproduces the hardware figures in Sections 2 to 6 (LLM throughput, Qdrant latency, load-shedding response, link timings). Treat them as reference values for the target hardware, not as output of the commands in Section 7. `smdc benchmark` runs a synthetic CPU workload and a local DTN spool test only.  
 > **Target Audience**: System Engineers, Hardware Architects, Enterprise Evaluators & Investors  
 > **Author & Lead Architect**: [Ilias Chrysovergis](https://iliachry.gr) · [Metatopia Studio](https://metatopia.gr) · License: MIT · © 2026
 
@@ -13,9 +14,9 @@ All benchmarks were conducted on the reference **Sovereign Mini Datacenter 9U No
 ```mermaid
 flowchart LR
     subgraph Rig["🖥️ Reference SMDC Benchmark Rig"]
-        C["⚡ Compute: 2× NVIDIA DGX Spark<br/>(128GB Unified LPDDR5X, 550 TOPS INT8)"]
+        C["⚡ Compute: 2× NVIDIA DGX Spark<br/>(GB10 Superchip, 128GB Unified LPDDR5x, 4TB NVMe each)"]
         S["💾 Storage: 2× 4TB Samsung 990 PRO NVMe<br/>(PCIe 4.0 x4, LUKS2 AES-XTS-256)"]
-        P["🔋 Power: 10.24 kWh LiFePO4 48V Bank<br/>+ 1,640W Bifacial Solar PV Array"]
+        P["🔋 Power: 10.24 kWh LiFePO4 48V Bank<br/>+ 1,640W Monocrystalline PERC Solar PV Array"]
         T["❄️ Thermal: Dual 360mm Radiators<br/>+ Alphacool D5 Pump (Liquid Loop)"]
     end
 ```
@@ -45,7 +46,7 @@ xychart-beta
 | **`bge-m3` (Embedding)** | 560M | FP16 | **1,420 chunks/s** | **12 ms** | 1.1 GB | 18.0 W |
 
 > [!NOTE]
-> All LLM tests were executed locally on the device with zero cloud connectivity. Token generation efficiency averaged **1.06 W per token/sec**, outperforming cloud GPU remote latency by eliminating wide-area network round-trip overhead.
+> All LLM tests were executed locally on the device with zero cloud connectivity. Token generation efficiency across the four LLM rows was **0.96 W per token/sec** (183.2 W total ÷ 189.9 tokens/s total), outperforming cloud GPU remote latency by eliminating wide-area network round-trip overhead.
 
 ---
 
@@ -117,14 +118,14 @@ xychart-beta
 | **Spool Ingestion Throughput** | **4,200 bundles/sec** | SQLite NVMe write with WAL mode |
 | **Spool Query & Priority Sort (10k items)** | **2.8 ms** | Indexed priority ordering ($P_3 \to P_0$) |
 | **Simulated Pass Bundle Transfer Rate** | **14.2 MB / 8-min pass** | S-Band 2.4 GHz ground link model |
-| **LoRa Meshtastic Emergency Forwarding** | **180 ms** | AES-256-GCM packet to BPv7 bundle |
+| **LoRa Meshtastic Emergency Forwarding** | **180 ms** | LoRa text packet to BPv7 bundle |
 
 ---
 
 ## 6. Benchmark Suite 5: Solar MPPT & Thermal Liquid Cooling
 
 ### Solar Energy Conversion Efficiency
-- **Victron SmartSolar MPPT 150/35**:
+- **Victron SmartSolar MPPT 150/70**:
   - Peak Efficiency: **98.4%** at 48V nominal battery charging.
   - Tracking Efficiency: **99.8%** dynamic MPPT algorithm response under fast cloud cover transitions.
   - Daily Solar Yield (Athens / Southern Europe, 1.64 kW array): **8.62 kWh / day** (Summer peak) / **3.84 kWh / day** (Winter average).
@@ -145,9 +146,13 @@ xychart-beta
 
 ## 7. How to Reproduce Benchmarks Locally
 
-Engineers can execute the automated benchmark suite using the repository toolchain:
+The repository toolchain exercises the software paths below. These commands validate behaviour in simulation; they do not regenerate the hardware figures above:
 
 ```powershell
+# Measure real LLM token throughput on this machine against a running Ollama server
+# (reads Ollama's own eval_count / eval_duration counters; add --export out.json to save)
+uv run smdc benchmark --ai --live --model qwen2.5-coder:7b
+
 # Run the test and validation benchmark suite
 uv run pytest tests/ -v
 

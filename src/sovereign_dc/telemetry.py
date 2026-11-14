@@ -2,23 +2,77 @@
 Sovereign Mini Datacenter - Power, Solar & Thermal Prometheus Exporter
 """
 
+import json
 import logging
 import math
 import os
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logger = logging.getLogger("Telemetry.Exporter")
 
-PORT = int(os.getenv("EXPORTER_PORT", "9101"))
-SIMULATION = os.getenv("SIMULATE_POWER_DATA", "true").lower() in ("true", "1", "yes")
+_TRUTHY = ("true", "1", "yes")
+_FAULT_KEYS = ("soc", "temp")
+
+
+def _env_port(default: int = 9101) -> int:
+    """Parses EXPORTER_PORT, falling back to the default on a malformed value."""
+    raw = os.getenv("EXPORTER_PORT", str(default))
+    try:
+        return int(raw)
+    except ValueError:
+        logger.warning("Ignoring malformed EXPORTER_PORT=%r; using %d", raw, default)
+        return default
+
+
+def fault_injection_enabled() -> bool:
+    """Fault injection is a test facility and stays off unless explicitly enabled."""
+    return os.getenv("ENABLE_FAULT_INJECTION", "false").lower() in _TRUTHY
+
+
+PORT = _env_port()
+SIMULATION = os.getenv("SIMULATE_POWER_DATA", "true").lower() in _TRUTHY
 
 start_time = time.time()
 fault_overrides: dict[str, float] = {}
+_warned_no_hardware = False
 
 
-def get_telemetry_metrics():
-    """Collects hardware telemetry or generates realistic physics-based simulation data."""
+def parse_fault_overrides(data: object) -> dict[str, float]:
+    """Validates a fault-injection payload: only finite numeric ``soc`` / ``temp`` are accepted."""
+    if not isinstance(data, dict):
+        raise ValueError("fault payload must be a JSON object")
+    parsed: dict[str, float] = {}
+    for key, value in data.items():
+        if key not in _FAULT_KEYS:
+            raise ValueError(f"unsupported fault key: {key!r}")
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+            raise ValueError(f"fault value for {key!r} must be a finite number")
+        parsed[key] = float(value)
+    return parsed
+
+
+def _source_status_lines(simulated: bool, source_up: bool) -> list[str]:
+    return [
+        "# HELP sovereign_telemetry_simulated 1 if the values below are simulated, 0 if measured",
+        "# TYPE sovereign_telemetry_simulated gauge",
+        f"sovereign_telemetry_simulated {1 if simulated else 0}",
+        "",
+        "# HELP sovereign_telemetry_source_up 1 if a telemetry source is providing data, 0 otherwise",
+        "# TYPE sovereign_telemetry_source_up gauge",
+        f"sovereign_telemetry_source_up {1 if source_up else 0}",
+        "",
+    ]
+
+
+def get_telemetry_metrics() -> str:
+    """Returns Prometheus exposition text: simulated physics data, or no measurements at all.
+
+    No hardware reader (VE.Direct / RS485) is implemented in this exporter. With simulation
+    disabled it therefore reports ``sovereign_telemetry_source_up 0`` and omits every
+    measurement series rather than publishing constants that look like live readings.
+    """
+    global _warned_no_hardware
     t = time.time() - start_time
 
     if SIMULATION:
@@ -40,18 +94,15 @@ def get_telemetry_metrics():
         daily_yield_kwh = max(1.2, 8.4 * daylight)
         load_shedding = 1.0 if soc_percent < 20.0 else 0.0
     else:
-        solar_watts = 0.0
-        base_load_watts = 300.0
-        soc_percent = 85.0
-        battery_voltage = 53.2
-        battery_current = -5.6
-        rack_inlet_celsius = 22.0
-        rack_exhaust_celsius = 29.0
-        coolant_temp_celsius = 32.0
-        daily_yield_kwh = 4.5
-        load_shedding = 0.0
+        if not _warned_no_hardware:
+            logger.error(
+                "Hardware telemetry requested but no hardware reader is implemented; "
+                "exporting sovereign_telemetry_source_up=0 and no measurements."
+            )
+            _warned_no_hardware = True
+        return "\n".join(_source_status_lines(simulated=False, source_up=False)) + "\n"
 
-    # Apply fault overrides
+    # Apply fault overrides (simulation only; see fault_injection_enabled)
     if "soc" in fault_overrides:
         soc_percent = float(fault_overrides["soc"])
         load_shedding = 1.0 if soc_percent < 20.0 else 0.0
@@ -60,7 +111,7 @@ def get_telemetry_metrics():
         rack_inlet_celsius = coolant_temp_celsius - 8.0
         rack_exhaust_celsius = coolant_temp_celsius + 5.0
 
-    lines = [
+    lines = _source_status_lines(simulated=True, source_up=True) + [
         "# HELP sovereign_battery_soc_percent Battery Bank State of Charge (0-100%)",
         "# TYPE sovereign_battery_soc_percent gauge",
         f"sovereign_battery_soc_percent {soc_percent:.2f}",
@@ -106,7 +157,7 @@ def get_telemetry_metrics():
 
 
 class MetricsHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
+    def do_GET(self) -> None:
         if self.path == "/metrics" or self.path == "/":
             payload = get_telemetry_metrics().encode("utf-8")
             self.send_response(200)
@@ -123,48 +174,56 @@ class MetricsHandler(BaseHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
 
-    def do_POST(self):
-        if self.path == "/fault":
-            content_length = int(self.headers.get("Content-Length", 0))
-            post_data = self.rfile.read(content_length)
-            try:
-                import json
+    def _send_json(self, status: int, body: dict[str, object]) -> None:
+        payload = json.dumps(body).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
 
-                data = json.loads(post_data.decode("utf-8"))
-                fault_overrides.update(data)
-                logging.warning(f"Applied fault overrides: {data}")
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(json.dumps({"status": "ok", "overrides": fault_overrides}).encode("utf-8"))
-            except Exception as e:
-                self.send_response(400)
-                self.end_headers()
-                self.wfile.write(f"Error parsing fault JSON: {e}".encode())
-        elif self.path == "/fault/clear":
-            fault_overrides.clear()
-            logging.info("Cleared fault overrides")
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(b'{"status": "cleared"}')
-        else:
+    def do_POST(self) -> None:
+        if self.path not in ("/fault", "/fault/clear"):
             self.send_response(404)
             self.end_headers()
+            return
+        if not fault_injection_enabled():
+            self._send_json(403, {"status": "error", "error": "fault injection disabled (ENABLE_FAULT_INJECTION)"})
+            return
+        if self.path == "/fault/clear":
+            fault_overrides.clear()
+            logger.info("Cleared fault overrides")
+            self._send_json(200, {"status": "cleared"})
+            return
+        try:
+            content_length = int(self.headers.get("Content-Length", 0))
+            if content_length < 0 or content_length > 4096:
+                raise ValueError("invalid Content-Length")
+            overrides = parse_fault_overrides(json.loads(self.rfile.read(content_length).decode("utf-8")))
+        except ValueError as e:
+            self._send_json(400, {"status": "error", "error": str(e)})
+            return
+        fault_overrides.update(overrides)
+        logger.warning("Applied fault overrides: %s", overrides)
+        self._send_json(200, {"status": "ok", "overrides": dict(fault_overrides)})
 
-    def log_message(self, format, *args):
-        pass
+    def log_message(self, format: str, *args: object) -> None:
+        """Suppress per-request access logs."""
 
 
-def run(port=PORT, simulation=SIMULATION):
+def run(port: int | None = None, simulation: bool | None = None) -> None:
     global PORT, SIMULATION
-    PORT = port
-    SIMULATION = simulation
+    if not logging.getLogger().handlers:
+        logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+    PORT = PORT if port is None else port
+    SIMULATION = SIMULATION if simulation is None else simulation
     server = HTTPServer(("0.0.0.0", PORT), MetricsHandler)
-    logging.info(f"Sovereign Power & Thermal Exporter listening on :http://0.0.0.0:{PORT}/metrics (Sim={SIMULATION})")
+    logger.info("Sovereign Power & Thermal Exporter listening on http://0.0.0.0:%d/metrics (Sim=%s)", PORT, SIMULATION)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        logging.info("Shutting down exporter.")
+        logger.info("Shutting down exporter.")
+    finally:
         server.server_close()
 
 

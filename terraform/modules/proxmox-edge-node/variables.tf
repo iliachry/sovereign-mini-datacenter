@@ -65,7 +65,19 @@ variable "enable_pci_gpu_passthrough" {
 }
 
 variable "pci_gpu_device" {
-  description = "PCI device ID on Proxmox host (e.g. 0000:01:00.0)"
+  description = "Raw PCI device ID on the Proxmox host (e.g. 0000:01:00.0). Used only when gpu_mapping is null. Proxmox only lets root@pam with username/password authentication attach a raw PCI id; it is rejected for API tokens."
   type        = string
   default     = "0000:01:00.0"
+}
+
+variable "gpu_mapping" {
+  description = "Name of a Proxmox cluster resource mapping (Datacenter > Resource Mappings > PCI Devices) for the GPU. When set it is used instead of pci_gpu_device and works with API-token authentication."
+  type        = string
+  default     = null
+}
+
+variable "qemu_guest_agent_enabled" {
+  description = "Enable the QEMU guest agent channel. Leave false for a stock Talos ISO, which ships no guest agent (the provider would otherwise wait for an agent that never answers). Set true only for Talos images built with the siderolabs/qemu-guest-agent extension."
+  type        = bool
+  default     = false
 }

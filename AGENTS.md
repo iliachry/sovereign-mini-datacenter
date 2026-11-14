@@ -11,9 +11,9 @@
 **Sovereign Mini Datacenter** is an open-source, self-powered, solar-backed, liquid-cooled micro-datacenter stack designed for **complete data and computational sovereignty**.
 
 ### Key Architectural Pillars
-1. **100% Off-Grid Independence**: Operates without relying on centralized cloud providers (AWS, GCP, Azure, Cloudflare) or public utility grids.
-2. **Local AI & Multi-Agent Copilots**: On-premise LLM inference (Ollama) + semantic vector search (Qdrant) running on NVIDIA Jetson Orin AGX / DGX accelerators.
-3. **Multi-Spectral Failover & Space DTN**: Resilient communication tiered from 10GbE fiber mesh $\to$ Starlink/5G $\to$ Sub-GHz LoRa Meshtastic $\to$ RFC 9171 Space Delay-Tolerant Networking (BPv7) with SGP4 orbital tracking.
+1. **Cloud Independence & Off-Grid Capability**: Operates without relying on centralized cloud providers (AWS, GCP, Azure, Cloudflare). Solar and battery carry the load as far as the array is sized for it: the reference 4-panel build covers roughly 65% of the daily draw at a 12 h/day GPU duty cycle, so full off-grid operation needs a larger array or a lighter duty cycle.
+2. **Local AI & Multi-Agent Copilots**: On-premise LLM inference (Ollama) + semantic vector search (Qdrant) running on 2× NVIDIA DGX Spark in the reference build (NVIDIA Jetson AGX Orin is supported as a lower-power alternative).
+3. **Multi-Spectral Failover & Space DTN**: Resilient communication tiered from 10GbE fiber mesh $\to$ Starlink/5G $\to$ Sub-GHz LoRa Meshtastic $\to$ RFC 9171 Space Delay-Tolerant Networking (BPv7) with a simplified circular-orbit pass predictor.
 4. **Hardware-Enforced Load Shedding**: Real-time solar and battery State-of-Charge (SoC) telemetry automatically throttles heavy GPU batch workloads during low power states.
 5. **Post-Quantum Cryptography & Zero-Trust**: Quantum-safe key encapsulation (NIST FIPS 203 ML-KEM) and lattice signatures (NIST FIPS 204 ML-DSA) securing mesh peering and space bundles.
 
@@ -27,7 +27,7 @@ sovereign-mini-datacenter/
 │   └── sovereign_dc/            # Core Python library & CLI package (`smdc`)
 │       ├── __init__.py          # Version definition & package exports
 │       ├── __main__.py          # `python -m sovereign_dc` entry point
-│       ├── cli.py               # Unified click/rich CLI interface
+│       ├── cli.py               # Unified argparse CLI interface
 │       ├── config.py            # Layered configuration management (Defaults -> YAML -> Env)
 │       ├── events.py            # Thread-safe in-process publish/subscribe event bus
 │       ├── log.py               # Structured JSON & colored console formatters
@@ -46,7 +46,7 @@ sovereign-mini-datacenter/
 │       │   ├── schema.py             # smdc-app.yaml manifest dataclass & schema validation
 │       │   ├── registry.py           # Multi-path app discovery, registration & scaffolding
 │       │   ├── sdk.py                # Zero-dependency SMDCClient & AppLifecycleHandler SDK
-│       │   └── manager.py            # Process supervision, load-shedding hooks & PQC packaging
+│       │   └── manager.py            # App state tracking (no process supervision), load-shedding hooks & PQC packaging
 │       ├── hal/                 # Hardware Abstraction Layer
 │       │   ├── gpu.py                # NVIDIA Jetson / Tegra / Desktop GPU telemetry
 │       │   ├── power.py              # Victron MPPT & SmartShunt BMS readers
@@ -63,7 +63,7 @@ sovereign-mini-datacenter/
 │       │   ├── consensus.py          # Raft distributed consensus state machine
 │       │   ├── chaos.py              # Split-brain, link loss & packet loss chaos simulator
 │       │   └── lora/
-│       │       └── meshtastic_gateway.py # Sub-GHz LoRa packet gateway (AES-256-GCM)
+│       │       └── meshtastic_gateway.py # Sub-GHz LoRa to DTN gateway (no radio driver yet)
 │       ├── metaverse/           # 5G RAN & UAV Metaverse Simulation Stack (IEEE IoT Mag 2026)
 │       │   ├── ray_tracer.py         # 3GPP UMi & Sionna 3D multipath ray-tracer (3.5 GHz)
 │       │   ├── agent.py              # Scene-Aware PPO (SA-PPO) & Model-Driven PPO (MD-PPO)
@@ -76,11 +76,11 @@ sovereign-mini-datacenter/
 │       ├── space/               # Space communications & satellite tracking
 │       │   ├── space_exporter.py     # Prometheus exporter for orbital/link metrics
 │       │   ├── dtn/                  # RFC 9171 Delay-Tolerant Networking (BPv7)
-│       │   │   ├── bundle.py         # Bundle creation, CBOR/JSON serialization, TTL
+│       │   │   ├── bundle.py         # Bundle creation, JSON serialization, TTL
 │       │   │   └── router.py         # Persistent NVMe store-and-forward spool
-│       │   ├── orbital/              # Satellite orbital mechanics (SGP4)
+│       │   ├── orbital/              # Satellite orbital mechanics (simplified circular orbits)
 │       │   │   ├── propagator.py     # AOS/LOS contact pass calculator
-│       │   │   └── tle_updater.py    # Two-Line Element (TLE) ephemeris fetcher
+│       │   │   └── tle_updater.py    # Static satellite catalog (no network TLE fetch)
 │       │   └── transceiver/          # RF Link budget & ground station models
 │       │       └── simulated_link.py # FSPL, Doppler shift, SNR, azimuth/elevation
 │       └── web/                 # Operations Web Dashboard & REST API
@@ -93,7 +93,7 @@ sovereign-mini-datacenter/
 │       ├── confidential-vault/  # L0 Critical NIST FIPS 203/204 zero-trust secrets vault
 │       └── oran-ric-controller/ # L0 Critical O-RAN Near-RT RIC xApp 5G slicing & UAV controller
 ├── software/                    # Production deployment & service definitions
-│   ├── docker-compose.yml       # Primary 11-service production stack
+│   ├── docker-compose.yml       # Primary 12-service production stack
 │   ├── Dockerfile.smdc          # Multi-architecture container blueprint (amd64, arm64)
 │   ├── setup.sh                 # Modular deployment CLI script
 │   ├── env.example              # Environment variables template
@@ -123,7 +123,7 @@ sovereign-mini-datacenter/
 │       ├── baremetal-talos/     # Production bare-metal 3-node Talos cluster
 │       └── proxmox-dev/         # Virtualized Proxmox VE dev/testbed environment
 ├── firmware/                    # Embedded hardware micro-controller code
-│   ├── esp32_telemetry_bridge.ino # Arduino C++ firmware (I2C OLED, VE.Direct serial)
+│   ├── esp32_telemetry_bridge.ino # Arduino C++ firmware (VE.Direct serial, DS18B20, HTTP /metrics)
 │   └── esphome_smdc_bridge.yaml   # ESPHome firmware with MQTT/Prometheus metrics
 ├── hardware/                    # Physical engineering blueprints & schematics
 │   ├── COMPONENTS.md            # Complete Bill of Materials (BOM) with pricing & specs
@@ -135,14 +135,14 @@ sovereign-mini-datacenter/
 │   └── MANUFACTURING_GUIDE.md   # Laser cut DXF export, CNC sheet metal bending specs
 ├── docs/                        # Interactive Three.js WebGL Digital Twin & GitHub Pages
 │   └── index.html               # 3D WebGL CAD viewer + interactive sizing & TCO calculator
-├── tests/                       # Complete automated Pytest suite (368+ tests, 91.2%+ coverage)
+├── tests/                       # Complete automated Pytest suite (681 tests, 89.8% coverage)
 ├── ARCHITECTURE.md              # Multi-node autonomous network architecture specification
 ├── ENTERPRISE_ONBOARDING.md     # Enterprise manifest spec, power tiers & developer guide
 ├── COMMERCIALIZATION.md         # Investment thesis, TAM/SAM/SOM & 3-year TCO payback model
 ├── BENCHMARKS.md                # Quantified LLM, vector search, load shedding & space metrics
 ├── COMPLIANCE.md                # SOC 2, ISO 27001, NIST Zero Trust & PQC cryptographic attestation
 ├── pyproject.toml               # Python package metadata, dependencies & tool configs
-└── uv.lock                      # Deterministic uv dependency lockfile
+└── uv.lock                      # Deterministic uv dependency lockfile (tracked)
 ```
 
 ---
@@ -154,7 +154,7 @@ sovereign-mini-datacenter/
 - **In-Process Event Bus (`events.py`)**: Thread-safe publish/subscribe event dispatcher (`SovereignEventBus`) with wildcard event routing (`load_shedding.*`, `mesh.*`, `space.*`, `economy.*`, `metaverse.*`) and ring-buffered audit logs.
 
 ### B. Hardware Abstraction Layer (HAL) (`src/sovereign_dc/hal/`)
-- **GPU (`gpu.py`)**: Automatic discovery of NVIDIA Tegra (Jetson Orin) via sysfs `/devices/platform/` or desktop GPUs via `pynvml`, parsing power draw, temperature, and utilization.
+- **GPU (`gpu.py`)**: Automatic discovery of NVIDIA Tegra (Jetson Orin) and desktop GPUs via `nvidia-smi`, parsing power draw, temperature, and utilization.
 - **Power (`power.py`)**: Interfaces Victron SmartSolar MPPT controllers and SmartShunt battery monitors via VE.Direct text streams.
 - **Storage (`storage.py`)**: Evaluates NVMe drive wear-out percentage, temperatures, and filesystem I/O metrics.
 - **Thermal (`thermal.py`)**: Reads 1-Wire DS18B20 Dallas sensors across `/sys/bus/w1/devices/` for liquid cooling flow monitoring.
@@ -165,8 +165,10 @@ sovereign-mini-datacenter/
 
 ### D. Operations Dashboard, Live Digital Shadow & REST API (`src/sovereign_dc/web/dashboard.py`)
 - Built-in zero-dependency HTTP server delivering a responsive, dark-mode glassmorphic single-page operations console (`smdc dashboard`).
-- **Live Digital Shadow SSE Stream (`/api/telemetry/stream`)**: Continuous Server-Sent Events stream delivering live telemetry snapshots (fan RPM, coolant temperature, solar harvest, battery SoC) directly to 3D WebGL Digital Twins.
-- **Hardware & Metaverse Control APIs**: Remote control endpoints (`/api/control/rack-door`, `/api/control/pdu-outlet`, `/api/control/dtn-transmit`, `/api/metaverse/optimize`, `/api/metaverse/emergency-stop`) enabling physical solenoid door unlock, RFC 9171 bundle spooling, and SA-PPO UAV teleoperation from the 3D twin.
+- **Live Digital Shadow SSE Stream (`/api/telemetry/stream`)**: Continuous Server-Sent Events stream (one snapshot every 2 s until the client disconnects) delivering telemetry snapshots (fan RPM, coolant temperature, solar harvest, battery SoC) directly to 3D WebGL Digital Twins.
+- **Hardware & Metaverse Control APIs**: Remote control endpoints (`/api/control/rack-door`, `/api/control/pdu-outlet`, `/api/control/dtn-transmit`, `/api/metaverse/optimize`, `/api/metaverse/emergency-stop`, `/api/metaverse/resume`) enabling physical solenoid door unlock, RFC 9171 bundle spooling, and SA-PPO UAV teleoperation from the 3D twin.
+- **Control-Plane Access Rules**: The dashboard binds `127.0.0.1` by default (`--host` / `SMDC_DASHBOARD_HOST` to expose it). With `SMDC_DASHBOARD_TOKEN` set, every POST requires `Authorization: Bearer <token>`; without it, POSTs are accepted only from a loopback peer with a loopback `Origin` (so the token is mandatory behind any reverse proxy, which itself connects from loopback). The 3D twin passes the token via `?token=`. The E-stop endpoint is idempotent and `/api/metaverse/resume` is the only way to resume. `/api/enterprise/telemetry` accepts out-of-process workload metrics.
+- **Telemetry Provenance**: Payloads carry `power.is_simulated` / `thermal.is_simulated`; outside simulation mode a missing telemetry source yields HTTP 503 rather than invented readings. The exporter publishes `sovereign_telemetry_simulated` and `sovereign_telemetry_source_up`; its `/fault` injection endpoints are disabled unless `ENABLE_FAULT_INJECTION=true`.
 - Provides real-time status REST APIs (`/api/status`, `/api/metaverse/status`, `/api/metaverse/slices`, `/health`) tracking battery State-of-Charge, solar harvest, thermal loops, Space DTN spools, economy wallets, 5G slices, and mesh peers.
 
 ### E. Mesh Chaos Engineering Simulator (`src/sovereign_dc/mesh/chaos.py`)
@@ -176,17 +178,17 @@ sovereign-mini-datacenter/
 - **Sentinel Copilot (`sentinel_copilot.py`)**: Scrapes physical telemetry (VE.Direct serial, RS485 Modbus, 1-Wire DS18B20) and enforces dynamic load shedding ($L_0 \to L_4$).
 - **Knowledge Indexer (`knowledge_indexer.py`)**: Chunks documents into semantic windows, generating embeddings via local Ollama models (`nomic-embed-text` / `bge-m3`) stored in Qdrant collections.
 - **GitLab Code Reviewer (`gitlab_reviewer.py`)**: Evaluates git diffs and patches locally using Ollama (`codellama` / `qwen2.5-coder` / `deepseek-coder`).
-- **Technician Notifier (`technician_notifier.py`)**: Dispatches urgent hardware repair instructions over LoRa, Matrix, and SMTP.
+- **Technician Notifier (`technician_notifier.py`)**: Dispatches urgent hardware repair instructions to a local file log and the Space DTN spool; the MQTT and LoRa channels are placeholders that report failure until a transport is implemented.
 
 ### G. Space Delay-Tolerant Networking (DTN / BPv7) (`src/sovereign_dc/space/`)
-- **RFC 9171 BPv7 Bundles (`dtn/bundle.py`)**: Creates and verifies BPv7 bundles with CRC-32 integrity and optional PQC signatures.
+- **RFC 9171 BPv7 Bundles (`dtn/bundle.py`)**: Creates and verifies BPv7 bundles with SHA-256 integrity and optional PQC signatures.
 - **Store-and-Forward Router (`dtn/router.py`)**: Persistent NVMe spool for bundles awaiting satellite contact windows.
-- **SGP4 Orbital Propagator (`orbital/propagator.py`)**: Computes AOS/LOS satellite contact passes, azimuth, elevation, and Doppler shifts.
+- **Orbital Pass Predictor (`orbital/propagator.py`)**: Simplified circular-orbit propagator (not SGP4) that computes AOS/LOS satellite contact passes, azimuth, elevation, and Doppler shifts.
 - **RF Link Budget Simulator (`transceiver/simulated_link.py`)**: Free-Space Path Loss (FSPL) calculations across UHF, S-band, and X-band.
 
 ### H. Autonomous Monetary & Compute Economy Layer (`src/sovereign_dc/economy/`)
 - **Node Wallet (`wallet.py`)**: Post-Quantum (ML-DSA-87) and Ed25519 keypair identity, deterministic address derivation (`sov_...` / `sov_pqc_...`), and payload signing.
-- **Immutable Ledger & State Channels (`ledger.py`)**: Append-only transaction ledger with replay protection and bidirectional off-chain micropayment state channels.
+- **Immutable Ledger & State Channels (`ledger.py`)**: Append-only transaction ledger with replay protection and bidirectional off-chain micropayment state channels. Settlement keys are part of the signed transaction so a receipt cannot be paid twice across reconciled ledgers; a per-row chain digest plus an HMAC head anchor under the node identity key make deletion and reordering evident (`smdc economy audit [--anchor]`).
 - **Dynamic Solar-Aware Pricing Engine (`market.py`)**: Real-time pricing oracle adjusting service rates based on solar harvest ($>1000\text{ W} \to 50\%$ discount) and battery reserves ($<25\% \to 3.0\times$ surge pricing).
 - **Delay-Tolerant Settlement (`settlement.py`)**: Cryptographic Proof-of-Compute and Proof-of-Relay verification reconciled across terrestrial mesh or RFC 9171 satellite contact passes.
 
@@ -200,15 +202,15 @@ sovereign-mini-datacenter/
 - **Declarative Manifest Specification (`schema.py`)**: Type-safe `smdc-app.yaml` manifest supporting multi-tier power shedding ($L_0 \to L_4$), memory/vRAM quotas, network policies, and health probes.
 - **Enterprise Registry & Discovery (`registry.py`)**: Automated discovery across `/etc/smdc/apps`, `~/.smdc/apps`, and workspace paths with turnkey project scaffolding (`smdc app init`).
 - **Zero-Dependency Enterprise SDK (`sdk.py`)**: Minimal footprint `SMDCClient` and `AppLifecycleHandler` providing direct event bus binding, hardware telemetry streams, dynamic pricing queries, and Space DTN spooling.
-- **Supervision & Load Shedding Manager (`manager.py`)**: Dynamic process management auto-pausing deferrable background apps ($L_2 \to L_4$) on low battery / thermal events and resuming on solar recovery, plus NIST FIPS 204 ML-DSA-87 cryptographic bundle packaging (`.smdc-app` + `.sig`).
+- **Load Shedding State Manager (`manager.py`)**: In-memory app state tracking (it does not launch or supervise OS processes; resource figures are estimates from the manifest) auto-pausing deferrable background apps ($L_2 \to L_4$) on low battery / thermal events and resuming on solar recovery, plus NIST FIPS 204 ML-DSA-87 cryptographic bundle packaging (`.smdc-app` + `.sig`).
 
 ### K. 5G RAN & UAV Metaverse Simulation Stack (`src/sovereign_dc/metaverse/`)
 - **Physics-Based Electromagnetic Ray-Tracer (`ray_tracer.py`)**: 3GPP UMi & Sionna 3D multipath ray-tracer at 3.5 GHz with up to 5 reflection orders, urban building LoS obstruction checking, Kriging spatial interpolation, and per-receiver SINR calculation.
 - **Scene-Aware Deep Reinforcement Learning Agent (`agent.py`)**: 3-layer Actor-Critic neural networks with 20-dim state vector, discrete 6-directional action space ($\pm X, \pm Y, \pm Z$), sum-SINR reward formulation with disadvantaged receiver weighting, and Model-Driven PPO (MD-PPO) baseline comparison.
 - **5G Network Slicing & SDN Controller (`slicing.py`)**: Mathematical bandwidth isolation ($T_{\mathrm{tx}} = (D \cdot 8)/B_{\mathrm{slice}} \cdot 1000\text{ ms}$) managing URLLC ($< 1\text{ ms}$), eMBB ($127\text{ Mbps}$), and mMTC ($12\text{k devs/km}^2$) slices.
-- **DePIN Decentralized SLA & Blockchain Consensus (`depin_sla.py`)**: Multi-validator PoS/dBFT consensus requiring $\lceil 2N/3 \rceil + 1$ multi-signatures, enforcing minimum SINR rejection thresholds ($-15\text{ dB}$) and automated repositioning triggers.
+- **DePIN Decentralized SLA & Blockchain Consensus (`depin_sla.py`)**: Multi-validator PoS/dBFT consensus requiring $\lfloor 2N/3 \rfloor + 1$ multi-signatures, enforcing minimum SINR rejection thresholds ($-15\text{ dB}$) and automated repositioning triggers.
 - **Multi-Layer Orchestrator (`engine.py`)**: Implements Algorithm 1 (3-phase execution: parallel IoT/ray-tracing collection $\to$ critical path decision $<6\text{ ms} \to$ asynchronous DePIN block finalization).
-- **Comparative RL Benchmark Suite (`benchmark.py`)**: Parametric sweeps evaluating $+79.6\%$ capacity gains for disadvantaged receiver Rx1, execution latencies, and Shannon spectral efficiencies.
+- **Comparative RL Benchmark Suite (`benchmark.py`)**: Parametric SA-PPO vs MD-PPO sweeps over per-receiver capacity, measured decision/ray-tracing latencies, and Shannon spectral efficiencies. The paper's $+79.6\%$ Rx1 gain is not reproduced by this simplified simulator; results vary with the seed.
 
 ### L. Terraform & OpenTofu Infrastructure-as-Code (`terraform/`)
 - **Zero-Cloud Declarative IaC**: Compatible with OpenTofu ($\ge 1.7$) and Terraform ($\ge 1.6$), managing bare-metal and virtualized on-premise infrastructure without public cloud lock-in.
@@ -280,7 +282,7 @@ uv run pytest tests/ --cov=src/sovereign_dc --cov-fail-under=85
 .\.venv\Scripts\python -m sovereign_dc status
 .\.venv\Scripts\python -m sovereign_dc dashboard --port 8080
 .\.venv\Scripts\python -m sovereign_dc app list
-.\.venv\Scripts\python -m sovereign_dc app init --name "IoT Edge" --app-id iot-edge --category iot ./iot-edge
+.\.venv\Scripts\python -m sovereign_dc app init "IoT Edge" --app-id iot-edge --category iot --target-dir ./iot-edge
 .\.venv\Scripts\python -m sovereign_dc app validate ./iot-edge
 .\.venv\Scripts\python -m sovereign_dc app register ./iot-edge
 .\.venv\Scripts\python -m sovereign_dc app start iot-edge
@@ -288,6 +290,8 @@ uv run pytest tests/ --cov=src/sovereign_dc --cov-fail-under=85
 .\.venv\Scripts\python -m sovereign_dc app package ./iot-edge --output iot-edge-1.0.0.smdc-app
 .\.venv\Scripts\python -m sovereign_dc economy wallet
 .\.venv\Scripts\python -m sovereign_dc economy market --soc 85 --solar 1200
+.\.venv\Scripts\python -m sovereign_dc economy audit --anchor
+.\.venv\Scripts\python -m sovereign_dc benchmark --ai --live
 .\.venv\Scripts\python -m sovereign_dc mesh chaos --help
 .\.venv\Scripts\python -m sovereign_dc security pqc --help
 .\.venv\Scripts\python -m sovereign_dc benchmark --all
@@ -310,7 +314,7 @@ uv run pytest tests/ --cov=src/sovereign_dc --cov-fail-under=85
 ## 6. Checklist Before Completing Any Agent Task
 
 1. [ ] **Pass All Quality Gates Locally**: Run `scripts/quality_gate.ps1` or `scripts/quality_gate.sh` (Ruff lint/format, Mypy typing, Pytest $\ge 85\%$ coverage).
-2. [ ] **Pass All Unit Tests**: Verify all 302+ unit tests in `tests/` pass with zero failures.
+2. [ ] **Pass All Unit Tests**: Verify all 681 unit tests in `tests/` pass with zero failures.
 3. [ ] **Preserve Existing Interfaces**: Ensure CLI arguments, Prometheus metric names, and DTN bundle schemas remain backward-compatible.
 4. [ ] **Verify Markdown/Mermaid & Math**: Ensure any new or modified `.md` files strictly comply with GitHub Mermaid and LaTeX math rendering rules.
 5. [ ] **Synchronize Documentation**: Update `AGENTS.md` and `README.md` with any newly added modules, subcommands, or architectural changes.

@@ -13,7 +13,9 @@ services:
     volumes:
       - ./agents:/app:ro
       - ${NEXTCLOUD_DATA_PATH:-nextcloud_data}:/data/documents:ro
+      - sovereign_mode:/run/sovereign:ro
     environment:
+      - SOVEREIGN_MODE_FILE=/run/sovereign/mode
       - OLLAMA_BASE_URL=http://ollama:11434
       - QDRANT_BASE_URL=http://qdrant:6333
       - EMBEDDING_MODEL=nomic-embed-text
@@ -45,7 +47,10 @@ services:
     working_dir: /app
     volumes:
       - ./agents:/app:ro
+      # Shared with knowledge-indexer so the sentinel's power mode actually reaches it.
+      - sovereign_mode:/run/sovereign
     environment:
+      - SOVEREIGN_MODE_FILE=/run/sovereign/mode
       - PROMETHEUS_URL=http://prometheus:9090
       - POWER_EXPORTER_URL=http://power-exporter:9101/metrics
     networks:
@@ -59,3 +64,4 @@ networks:
 volumes:
   nextcloud_data:
     name: software_nextcloud_data
+  sovereign_mode:

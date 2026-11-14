@@ -3,6 +3,21 @@
 > Reference model: `cad/rack_enclosure.scad`  
 > Standard: EIA-310-D 19" Rack (IEC 60297)
 
+### Key dimensions (parameters of `rack_enclosure.scad`)
+
+| Dimension | Value | Source |
+|:--|:--|:--|
+| Equipment front-panel width | 482.6mm (19.000") | EIA-310-D |
+| Mounting-hole spacing, centre-to-centre (horizontal) | 465.1mm (18.312") | EIA-310-D |
+| Clear opening between rails | 450.85mm (17.750") minimum | EIA-310-D |
+| Rack unit | 44.45mm (1.750") | EIA-310-D |
+| Hole centres above each U boundary | 6.35 / 22.225 / 38.1mm (spacings 15.875, 15.875, 12.7mm) | EIA-310-D |
+| Usable interior height | 400.05mm (9U) | model |
+| External size (W × D × H) | 540 × 550 × 404.05mm | model |
+| Sheet thickness | 2.0mm | model |
+
+The model is a simplified envelope (shell with open front, four rails, rear radiator openings, side vent slots). Bend flanges, corner extrusions and fasteners are not modelled.
+
 ---
 
 ## 1. Materials Specification
@@ -21,18 +36,25 @@
 
 ### Step 1 — DXF Export from OpenSCAD
 
+The top-level object of `rack_enclosure.scad` is 3D, and OpenSCAD can only write DXF from a 2D object. Select a flat 2D profile with the `part` parameter for each DXF, and export the default 3D assembly as STL:
+
 ```bash
-openscad -o rack_enclosure.dxf --export-format dxf cad/rack_enclosure.scad
+# 2D profiles for CNC / laser cutting
+openscad -D 'part="rear_panel"' -o rear_panel.dxf cad/rack_enclosure.scad
+openscad -D 'part="side_panel"' -o side_panel.dxf cad/rack_enclosure.scad
+openscad -D 'part="rail"'       -o rail.dxf       cad/rack_enclosure.scad
+
+# 3D assembly for visualization and tolerance checking
 openscad -o rack_enclosure.stl cad/rack_enclosure.scad
 ```
 
-Export DXF projection views per panel for CNC/laser cutting. Export STL for 3D visualization and tolerance checking.
+The DXF profiles contain the panel outline and its cutouts only. Add the bend flanges of Step 3 in your CAM / sheet-metal tool before cutting. The top and bottom panels are plain 540 × 550mm rectangles and have no dedicated profile.
 
 ### Step 2 — Laser Cutting / CNC Punching
 
 - Cut 2.0mm aluminum side (×2), top (×1), bottom (×1) panels from DXF.
-- Cut **rear cutouts:** 2× 360mm × 360mm radiator fan openings (see `rear_cutouts()` module).
-- Cut **side vent mesh** patterns per `vent_mesh()` module (8×N grid, 8mm × 30mm slots).
+- Cut the rear panel (×1) with its **radiator openings:** 2× 360mm × 120mm (W × H), stacked with a 40mm web and centred on the panel (`rad_opening_*` parameters, `rear_openings_2d()` module). Each opening exposes the 3 × 120mm fan area of one 360mm radiator, whose body is roughly 120mm × 400mm overall. Verify the opening and the fan-screw pattern against the datasheet of the radiator you actually fit before cutting.
+- Cut **side vent slots** on both side panels per the `vent_slots_2d()` module (8 × 9 grid of 8mm × 30mm slots).
 - Tolerance: ±0.2mm for panel dimensions; ±0.1mm for rail hole pitch.
 
 ### Step 3 — CNC Bending
@@ -44,9 +66,9 @@ Export DXF projection views per panel for CNC/laser cutting. Export STL for 3D v
 
 ### Step 4 — Rail Preparation
 
-- Tap all M6 holes at 15.875mm pitch (EIA-310-D) along full rail length.
-- Hole diameter: 7.5mm pre-tap, M6 thread, 10mm engagement depth minimum.
-- Rails spaced at **482.6mm center-to-center** (19.0" standard).
+- Drill the EIA-310-D universal hole pattern along the full rail length: three holes per rack unit, centred 6.35mm, 22.225mm and 38.1mm above each U boundary (spacings 15.875mm, 15.875mm, 12.7mm — the pitch is **not** uniform). 9U = 27 holes per rail (`part="rail"` DXF).
+- Hole diameter: **5.0mm tap drill**, then tap M6 × 1.0. In 2.0mm steel a tapped thread engages only about two turns; if that is not enough for your load, use rivet nuts or switch to 9.5mm square holes with M6 cage nuts.
+- Mount the left and right rails so that the **mounting holes are 465.1mm centre-to-centre** and the clear opening between the rails is at least **450mm** (EIA-310-D: 450.85mm). The 482.6mm (19.0") figure is the width of the equipment front panel, not the rail spacing.
 
 ### Step 5 — Assembly & Fastening
 
@@ -58,8 +80,9 @@ Export DXF projection views per panel for CNC/laser cutting. Export STL for 3D v
 
 ### Step 6 — Quality Checks
 
-- [ ] Verify rail span = **482.6mm ± 0.5mm** (critical for equipment fitment)
-- [ ] Check rack unit holes align to **44.45mm pitch** (1U = 1.75")
+- [ ] Verify mounting-hole spacing = **465.1mm ± 0.5mm** centre-to-centre, left rail to right rail (critical for equipment fitment)
+- [ ] Verify the clear opening between rails is **≥ 450mm** and that a 482.6mm (19") panel seats flat on both rails
+- [ ] Check the hole pattern repeats every **44.45mm** (1U = 1.75") with holes at 6.35 / 22.225 / 38.1mm inside each U
 - [ ] Confirm all panel edges are deburred and anodized
 - [ ] Pressure-test coolant pass-through grommets with soapy water
 - [ ] Test-fit one 1U blanking panel and one test 1U device

@@ -20,6 +20,19 @@ if [[ $EUID -ne 0 ]]; then
    exit 1
 fi
 
+# The unit runs /usr/local/bin/smdc from /opt/sovereign-mini-datacenter;
+# enabling it without them only produces a unit that never starts.
+SMDC_BIN="/usr/local/bin/smdc"
+SMDC_HOME="/opt/sovereign-mini-datacenter"
+if [[ ! -x "$SMDC_BIN" ]]; then
+    echo -e "❌ ${SMDC_BIN} not found or not executable. Install the smdc CLI there first." >&2
+    exit 1
+fi
+if [[ ! -d "$SMDC_HOME" ]]; then
+    echo -e "❌ ${SMDC_HOME} not found. Clone or copy the repository there first." >&2
+    exit 1
+fi
+
 echo -e "📦 Installing systemd service to ${SERVICE_DST}..."
 cp "$SERVICE_SRC" "$SERVICE_DST"
 chmod 644 "$SERVICE_DST"

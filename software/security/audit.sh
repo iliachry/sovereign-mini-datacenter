@@ -158,19 +158,39 @@ if command -v docker >/dev/null 2>&1; then
             check_item "Unprivileged Container Isolation" "PASS"
         fi
 
-        # Containers running as root user with the Docker socket mounted (critical)
-        sock_mounted=""
+        # Containers that can reach the Docker socket (critical). The socket is
+        # reachable when it, or any host directory containing it, is bind-mounted.
+        # A read-only (:ro) mount does NOT limit what can be done through the
+        # socket: the Docker API stays fully usable, which is root on the host.
+        # Traefik (socket), cAdvisor (/ and /var/run) and node-exporter (/) need
+        # these mounts by design; they are reported as a warning, others fail.
+        sock_expected=""
+        sock_unexpected=""
         while IFS= read -r name; do
-            [[ -z "$name" || "$name" == "sovereign_traefik" ]] && continue
-            mounts=$(docker inspect --format '{{range .Mounts}}{{.Source}} {{end}}' "$name" 2>/dev/null || true)
-            if [[ "$mounts" == *"/var/run/docker.sock"* ]]; then
-                sock_mounted="${sock_mounted} ${name}"
-            fi
+            [[ -z "$name" ]] && continue
+            mounts=$(docker inspect --format '{{range .Mounts}}{{println .Source}}{{end}}' "$name" 2>/dev/null || true)
+            exposed=false
+            while IFS= read -r src; do
+                [[ -z "$src" ]] && continue
+                [[ "$src" != "/" ]] && src="${src%/}"
+                case "$src" in
+                    /|/var|/run|/var/run|/run/docker.sock|/var/run/docker.sock) exposed=true ;;
+                esac
+            done <<< "$mounts"
+            [[ "$exposed" == "true" ]] || continue
+            case "$name" in
+                sovereign_traefik|sovereign_cadvisor|sovereign_node_exporter)
+                    sock_expected="${sock_expected} ${name}" ;;
+                *)
+                    sock_unexpected="${sock_unexpected} ${name}" ;;
+            esac
         done <<< "$containers"
-        if [[ -n "$sock_mounted" ]]; then
-            check_item "Docker Socket Exposure to Containers" "FAIL" "(mounted in:${sock_mounted})"
+        if [[ -n "$sock_unexpected" ]]; then
+            check_item "Docker Socket Exposure to Containers" "FAIL" "(reachable from:${sock_unexpected}${sock_expected})"
+        elif [[ -n "$sock_expected" ]]; then
+            check_item "Docker Socket Exposure to Containers" "WARN" "(reachable from:${sock_expected} - required by design; :ro does not restrict Docker API access)"
         else
-            check_item "Docker Socket Exposure to Containers" "PASS" "(only Traefik, read-only)"
+            check_item "Docker Socket Exposure to Containers" "PASS" "(not mounted in any running container)"
         fi
     else
         check_item "Containers Running" "WARN" "(Stack is stopped)"
@@ -181,17 +201,50 @@ fi
 
 # ---------------------------------------------------------------------
 echo -e "\n${BOLD}[3] Firewall & Zero-Trust Mesh Exposure:${RESET}"
+# A firewall only counts when a ruleset is actually loaded and enforcing;
+# an installed binary alone proves nothing. Reading rules needs root.
 if command -v ufw >/dev/null 2>&1; then
     ufw_status=$(ufw status 2>/dev/null || true)
-    if echo "$ufw_status" | grep -iq "Status: active"; then
+    if grep -iq "Status: active" <<< "$ufw_status"; then
         check_item "UFW Host Firewall" "PASS" "(Active)"
-    else
+    elif grep -iq "Status: inactive" <<< "$ufw_status"; then
         check_item "UFW Host Firewall" "WARN" "(Inactive)"
+    else
+        check_item "UFW Host Firewall" "WARN" "(status unreadable - re-run as root)"
     fi
-elif command -v nft >/dev/null 2>&1 || command -v iptables >/dev/null 2>&1; then
-    check_item "Host Firewall Detection" "PASS" "(iptables / nftables available)"
+elif command -v nft >/dev/null 2>&1; then
+    if nft_rules=$(nft list ruleset 2>/dev/null); then
+        if grep -Eq 'hook input .*policy drop' <<< "$nft_rules"; then
+            check_item "Host Firewall (nftables)" "PASS" "(input chain with default-drop policy)"
+        elif grep -q 'hook input' <<< "$nft_rules"; then
+            check_item "Host Firewall (nftables)" "WARN" "(input chain present but default policy is accept - review rules)"
+        else
+            check_item "Host Firewall (nftables)" "WARN" "(no input filter chain loaded)"
+        fi
+    else
+        check_item "Host Firewall (nftables)" "WARN" "(ruleset unreadable - re-run as root)"
+    fi
+elif command -v iptables >/dev/null 2>&1; then
+    if ipt_rules=$(iptables -S INPUT 2>/dev/null); then
+        if grep -q '^-P INPUT DROP' <<< "$ipt_rules"; then
+            check_item "Host Firewall (iptables)" "PASS" "(INPUT default policy DROP)"
+        elif grep -q '^-A INPUT' <<< "$ipt_rules"; then
+            check_item "Host Firewall (iptables)" "WARN" "(INPUT rules present but default policy is ACCEPT - review rules)"
+        else
+            check_item "Host Firewall (iptables)" "WARN" "(no INPUT rules loaded)"
+        fi
+    else
+        check_item "Host Firewall (iptables)" "WARN" "(ruleset unreadable - re-run as root)"
+    fi
 elif command -v pfctl >/dev/null 2>&1; then
-    check_item "Host Firewall Detection" "PASS" "(BSD pf available)"
+    pf_info=$(pfctl -s info 2>/dev/null || true)
+    if grep -q "Status: Enabled" <<< "$pf_info"; then
+        check_item "Host Firewall (pf)" "PASS" "(Enabled)"
+    elif grep -q "Status: Disabled" <<< "$pf_info"; then
+        check_item "Host Firewall (pf)" "WARN" "(Disabled)"
+    else
+        check_item "Host Firewall (pf)" "WARN" "(status unreadable - re-run as root)"
+    fi
 else
     check_item "Host Firewall Detection" "WARN" "(No firewall tooling detected)"
 fi
@@ -226,7 +279,8 @@ if [[ -n "$env_file" ]]; then
     fi
 
     # Default / placeholder secrets left in production .env (critical)
-    placeholders=$(grep -Eic '^[A-Z0-9_]+=.*(change_?me|changeme|replace_?me|your_.*_here)' "$env_file" || true)
+    # Covers every placeholder style used in software/env.example.
+    placeholders=$(grep -Eic '^[A-Z0-9_]+=.*(change_?me|replace_?(me|this)|your_|your@|yourdomain|yourmailprovider)' "$env_file" || true)
     if [[ "$placeholders" -gt 0 ]]; then
         check_item "Default Placeholder Secrets in .env" "FAIL" "($placeholders unchanged placeholder value(s))"
     else

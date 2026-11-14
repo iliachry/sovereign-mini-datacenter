@@ -2,6 +2,8 @@
 Description=Sovereign Mini Datacenter Autonomous Bootstrap Provisioner & Watchdog
 After=network.target docker.service
 Wants=docker.service
+ConditionPathExists=/usr/local/bin/smdc
+ConditionPathExists=/opt/sovereign-mini-datacenter
 
 [Service]
 Type=simple

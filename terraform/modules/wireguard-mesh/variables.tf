@@ -1,5 +1,5 @@
 variable "mesh_subnet" {
-  description = "Overlay mesh network CIDR"
+  description = "Overlay mesh network CIDR. Every node's mesh_ip must fall inside it (enforced by a precondition)."
   type        = string
   default     = "10.42.0.0/16"
 }
@@ -11,11 +11,19 @@ variable "listen_port" {
 }
 
 variable "nodes" {
-  description = "Map of mesh node definitions"
+  description = <<-EOT
+    Map of mesh node definitions.
+      mesh_ip     - overlay address of the node in CIDR form (e.g. 10.42.0.1/32); must be inside mesh_subnet.
+      endpoint    - public "host:port" other peers dial; omit for nodes behind NAT.
+      allowed_ips - EXTRA CIDRs routed to this node by its peers (e.g. a LAN behind it).
+                    The node's own mesh address (/32) is always included automatically.
+                    WireGuard maps a prefix to exactly one peer, so these CIDRs must not
+                    overlap between nodes; never list the whole mesh_subnet here.
+  EOT
   type = map(object({
     mesh_ip              = string
     endpoint             = optional(string)
-    allowed_ips          = optional(list(string), ["10.42.0.0/16"])
+    allowed_ips          = optional(list(string), [])
     persistent_keepalive = optional(number, 25)
   }))
   default = {

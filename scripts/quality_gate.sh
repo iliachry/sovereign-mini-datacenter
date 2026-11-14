@@ -31,9 +31,7 @@ echo "✅ All unit tests passed with required coverage."
 # Gate 5: Docker Compose Stack Integrity
 echo -e "\n[Gate 5/5] Validating Docker Compose Multi-Stack..."
 if command -v docker >/dev/null 2>&1; then
-    (cd software && cp -n env.example .env 2>/dev/null || true)
-    docker compose -f software/docker-compose.yml config --quiet
-    echo "✅ Docker Compose configurations valid."
+    bash "$(dirname "${BASH_SOURCE[0]}")/validate_compose.sh"
 else
     echo "⚠️ Docker not detected in local environment; skipping live compose check."
 fi

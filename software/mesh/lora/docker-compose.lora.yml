@@ -1,3 +1,5 @@
+# LoRa / Meshtastic gateway (standalone; not part of setup.sh).
+#   docker compose -f software/mesh/lora/docker-compose.lora.yml up -d
 services:
   lora-gateway:
     image: python:3.11-alpine
@@ -5,7 +7,10 @@ services:
     restart: unless-stopped
     working_dir: /app
     volumes:
-      - .:/app
+      - .:/app:ro
+    # meshtastic_gateway.py does not open the serial port yet (it only logs a
+    # heartbeat), but the container will not start unless this device exists
+    # on the host. Remove the mapping to run without a radio attached.
     devices:
       - "/dev/ttyUSB0:/dev/ttyUSB0"
     environment:

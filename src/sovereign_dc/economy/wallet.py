@@ -10,8 +10,10 @@ from __future__ import annotations
 import base64
 import enum
 import hashlib
+import hmac
 import json
 import os
+import re
 import secrets
 from typing import Any
 
@@ -24,6 +26,9 @@ from sovereign_dc.log import get_logger
 from sovereign_dc.security.pqc import PQCAlgorithm, PQCSigner
 
 logger = get_logger("sovereign_dc.economy.wallet")
+
+# Canonical sovereign address: "sov_" / "sov_pqc_" prefix + 20-byte SHA-256 truncation in lowercase hex.
+ADDRESS_PATTERN = re.compile(r"sov_(?:pqc_)?[0-9a-f]{40}")
 
 
 class AddressType(enum.StrEnum):
@@ -74,6 +79,33 @@ class NodeWallet:
         raw_hash = hashlib.sha256(self.keypair.public_key_bytes).digest()[:20]
         prefix = "sov_pqc_" if self.keypair.algorithm == AddressType.ML_DSA_87 else "sov_"
         return f"{prefix}{raw_hash.hex()}"
+
+    @staticmethod
+    def is_valid_address(address: object) -> bool:
+        """Returns True if ``address`` is a well-formed sovereign wallet address."""
+        return isinstance(address, str) and ADDRESS_PATTERN.fullmatch(address) is not None
+
+    @staticmethod
+    def address_from_public_key(public_key_hex: str, algorithm: AddressType | str = AddressType.ED25519) -> str:
+        """Derives the wallet address that a hex-encoded public key controls.
+
+        Raises ValueError if the key is not valid hex or the algorithm is unknown.
+        """
+        algo = AddressType(algorithm)
+        raw_hash = hashlib.sha256(bytes.fromhex(public_key_hex)).digest()[:20]
+        prefix = "sov_pqc_" if algo == AddressType.ML_DSA_87 else "sov_"
+        return f"{prefix}{raw_hash.hex()}"
+
+    @staticmethod
+    def public_key_matches_address(
+        public_key_hex: str, address: str, algorithm: AddressType | str = AddressType.ED25519
+    ) -> bool:
+        """Returns True if ``public_key_hex`` derives exactly ``address`` under ``algorithm``."""
+        try:
+            derived = NodeWallet.address_from_public_key(public_key_hex, algorithm)
+        except (ValueError, TypeError):
+            return False
+        return hmac.compare_digest(derived, str(address))
 
     @classmethod
     def create(
@@ -197,12 +229,19 @@ class NodeWallet:
             data["encrypted"] = False
             data["private_key_enc"] = base64.b64encode(self.keypair.private_key_bytes).decode("ascii")
 
-        with open(abs_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
+        # Create (or truncate) the key file owner-only from the first byte: the mode is applied
+        # at open() and re-asserted with fchmod() so a pre-existing file loses any wider mode
+        # *before* key material is written. A failure to restrict the mode is fatal.
+        fd = os.open(abs_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         try:
-            os.chmod(abs_path, 0o600)
-        except OSError:
-            pass
+            if hasattr(os, "fchmod"):  # absent on Windows before Python 3.13; ACLs apply there
+                os.fchmod(fd, 0o600)
+            f = os.fdopen(fd, "w", encoding="utf-8")
+        except BaseException:
+            os.close(fd)
+            raise
+        with f:
+            json.dump(data, f, indent=2)
         logger.info("Saved wallet %s to %s", self.address, abs_path)
 
     @classmethod
@@ -233,9 +272,33 @@ class NodeWallet:
 
         pub_bytes = bytes.fromhex(data["public_key"])
         algo = AddressType(data["algorithm"])
+
+        # The stored public key and address are attacker-editable plaintext: bind both to the
+        # private key so a tampered keystore cannot make the node advertise a foreign address.
+        derived_pub = cls._public_key_from_private(algo, priv_bytes)
+        if not hmac.compare_digest(derived_pub, pub_bytes):
+            raise ValueError("Wallet file is inconsistent: stored public key does not match the private key.")
         keypair = WalletKeypair(
             algorithm=algo,
             public_key_bytes=pub_bytes,
             private_key_bytes=priv_bytes,
         )
-        return cls(node_id=data["node_id"], keypair=keypair)
+        wallet = cls(node_id=data["node_id"], keypair=keypair)
+        stored_address = data.get("address")
+        if stored_address is not None and stored_address != wallet.address:
+            raise ValueError("Wallet file is inconsistent: stored address does not match the keypair.")
+        return wallet
+
+    @staticmethod
+    def _public_key_from_private(algorithm: AddressType, private_key_bytes: bytes) -> bytes:
+        """Recomputes the public key that belongs to ``private_key_bytes``."""
+        try:
+            if algorithm == AddressType.ED25519:
+                sk = ed25519.Ed25519PrivateKey.from_private_bytes(private_key_bytes)
+                return sk.public_key().public_bytes(
+                    encoding=serialization.Encoding.Raw,
+                    format=serialization.PublicFormat.Raw,
+                )
+            return PQCSigner(algorithm=PQCAlgorithm.ML_DSA_87).public_key_from_private(private_key_bytes)
+        except Exception as err:
+            raise ValueError("Wallet file contains an unusable private key.") from err

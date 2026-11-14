@@ -7,7 +7,7 @@
 Developed by **[Metatopia Studio](https://metatopia.gr)** · Author & Lead Architect: **[Ilias Chrysovergis](https://iliachry.gr)** · License: MIT · © 2026
 
 [![CI & Quality Gates](https://github.com/iliachry/sovereign-mini-datacenter/actions/workflows/ci.yml/badge.svg)](https://github.com/iliachry/sovereign-mini-datacenter/actions/workflows/ci.yml)
-[![Quality Gate](https://img.shields.io/badge/Quality%20Gate-Strict%20Enforcement%20(91.2%25%20Cov)-10b981?style=flat&logo=githubactions)](https://github.com/iliachry/sovereign-mini-datacenter/actions/workflows/ci.yml)
+[![Quality Gate](https://img.shields.io/badge/Quality%20Gate-Strict%20Enforcement%20(89.8%25%20Cov)-10b981?style=flat&logo=githubactions)](https://github.com/iliachry/sovereign-mini-datacenter/actions/workflows/ci.yml)
 [![Enterprise Onboarding](https://img.shields.io/badge/Enterprise-Workload%20Coupling%20Framework-8b5cf6?style=flat)](ENTERPRISE_ONBOARDING.md)
 [![Commercialization](https://img.shields.io/badge/Commercialization-Investment%20Thesis-f59e0b?style=flat)](COMMERCIALIZATION.md)
 [![Benchmarks](https://img.shields.io/badge/Benchmarks-Empirical%20AI%20%26%20Power-06b6d4?style=flat)](BENCHMARKS.md)
@@ -24,9 +24,9 @@ Developed by **[Metatopia Studio](https://metatopia.gr)** · Author & Lead Archi
 | Resource | Scope & Key Takeaways | Link |
 | :--- | :--- | :---: |
 | **🏢 Enterprise Onboarding & SDK** | Vendor-neutral manifest (`smdc-app.yaml`), zero-dependency SDK, power tiers ($L_0 \to L_4$), and PQC packaging | [**`ENTERPRISE_ONBOARDING.md`**](ENTERPRISE_ONBOARDING.md) |
-| **📈 Commercial Strategy & TCO Model** | Market Sizing (\$60.4B TAM), Unit Economics, 5-Year Financials, **5.1 Mo Payback & 73.6% TCO Savings** vs. AWS | [**`COMMERCIALIZATION.md`**](COMMERCIALIZATION.md) |
+| **📈 Commercial Strategy & TCO Model** | Market Sizing (\$60.4B TAM), Unit Economics, 5-Year Financials, **4.5 Mo Payback & 72.4% TCO Savings** vs. AWS | [**`COMMERCIALIZATION.md`**](COMMERCIALIZATION.md) |
 | **🏗️ Terraform & OpenTofu IaC** | Bare-metal Talos Linux, Proxmox VE GPU passthrough, WireGuard mesh, and automated Helm bootstrapping | [**`terraform/README.md`**](terraform/README.md) |
-| **⚡ Empirical Performance Benchmarks** | Quantified local LLM token throughput (82.4 t/s), Qdrant retrieval latency (< 5 ms), load shedding (< 110 ms) | [**`BENCHMARKS.md`**](BENCHMARKS.md) |
+| **⚡ Performance Reference Figures** | Reference figures for local LLM token throughput, Qdrant retrieval latency and load-shedding response (not reproducible from this repository; see the provenance note) | [**`BENCHMARKS.md`**](BENCHMARKS.md) |
 | **🛡️ Enterprise Compliance & PQC Security** | SOC 2 Type II, ISO 27001, NIST 800-207 Zero Trust, Post-Quantum Cryptography (ML-KEM/Kyber-1024), TPM 2.0 | [**`COMPLIANCE.md`**](COMPLIANCE.md) |
 | **🌐 Interactive Digital Twin & ROI Simulator** | 3D WebGL CAD visualizer, live subsystem explorer, and **interactive investor TCO calculator** | [**Live 3D WebGL Viewer**](https://iliachry.gr/sovereign-mini-datacenter/) |
 | **🏛️ Autonomous Sovereign Mesh Architecture** | 7-Layer protocol stacks, multi-spectral communication fabric, delay-tolerant space networking (RFC 9171) | [**`ARCHITECTURE.md`**](ARCHITECTURE.md) |
@@ -56,16 +56,16 @@ graph TD
         DTNRouter["RFC 9171 BPv7 DTN Router<br/>(Store-and-Forward NVMe Spool)"]:::space
     end
 
-    subgraph EnergyLayer["☀️ Off-Grid Power & Environmental Fabric"]
-        Solar["1,640W Bifacial Solar PV"]:::power
-        MPPT["Victron SmartSolar MPPT 150/35"]:::power
+    subgraph EnergyLayer["☀️ Solar + Battery Power & Environmental Fabric"]
+        Solar["1,640W Monocrystalline PERC Solar PV"]:::power
+        MPPT["Victron SmartSolar MPPT 150/70"]:::power
         Battery["10.24 kWh LiFePO4 Smart BMS"]:::power
         Cooling["Dual 360mm Closed Liquid Loop<br/>(1-Wire DS18B20 Probes)"]:::power
     end
 
     subgraph ComputeStack["⚡ Sovereign Edge Compute & AI Cluster"]
-        Jetson1["Primary: Jetson AGX Orin 64GB<br/>(Ollama LLM Engine • 275 TOPS)"]:::compute
-        Jetson2["Secondary: Jetson AGX Orin 64GB<br/>(Qdrant Semantic Vector Search)"]:::compute
+        Spark1["Primary: NVIDIA DGX Spark 128GB<br/>(Ollama LLM Engine • GB10 Superchip)"]:::compute
+        Spark2["Secondary: NVIDIA DGX Spark 128GB<br/>(Qdrant Semantic Vector Search)"]:::compute
         Sentinel["Sentinel Copilot Agent<br/>(Telemetry & Dynamic Load Shedding)"]:::secure
         Economy["Autonomous Compute Economy<br/>(State Channels • Solar Price Oracle)"]:::secure
     end
@@ -83,24 +83,24 @@ graph TD
     end
 
     Solar --> MPPT --> Battery
-    Battery --> Jetson1
-    Battery --> Jetson2
+    Battery --> Spark1
+    Battery --> Spark2
     Cooling -.->|"Thermal Telemetry"| Sentinel
     MPPT -.->|"VE.Direct Telemetry"| Sentinel
-    Sentinel -->|"L0-L4 Load Shedding"| Jetson1
+    Sentinel -->|"L0-L4 Load Shedding"| Spark1
     Sentinel -->|"Price Adjustments"| Economy
 
-    Jetson1 <-->|"NVLink / 10GbE"| Jetson2
-    Jetson1 -->|"BPSec Signed Bundles"| DTNRouter
-    DTNRouter <-->|"AOS/LOS SGP4 Contact"| Sat1
+    Spark1 <-->|"ConnectX-7 QSFP / 10GbE"| Spark2
+    Spark1 -->|"BPSec Signed Bundles"| DTNRouter
+    DTNRouter <-->|"AOS/LOS Contact Window"| Sat1
     DTNRouter <-->|"Sub-GHz LoRa Relays"| Sat2
 
     PQC --> WireGuard
-    WireGuard <--> Jetson1
+    WireGuard <--> Spark1
     LoRaMesh <--> Sentinel
 
     WebTwin <-->|"Live SSE & Control REST"| OpsConsole
-    MCP <-->|"JSON-RPC 2.0 stdio"| Jetson1
+    MCP <-->|"JSON-RPC 2.0 stdio"| Spark1
 ```
 
 ---
@@ -127,8 +127,8 @@ sovereign-mini-datacenter/
 │       ├── mcp/                 # Native Model Context Protocol Server (2024-11-05 JSON-RPC 2.0)
 │       ├── mesh/                # Multi-node WireGuard, LoRa & Chaos engineering simulator
 │       ├── security/            # NIST FIPS 203/204 Post-Quantum Cryptography (ML-KEM, ML-DSA)
-│       ├── space/               # Space DTN routing (RFC 9171) & SGP4 orbital propagator
-│       ├── telemetry/           # Power, BMS & thermal telemetry collector
+│       ├── space/               # Space DTN routing (RFC 9171) & simplified orbital pass predictor
+│       ├── telemetry.py         # Power & thermal Prometheus exporter (simulation)
 │       └── web/                 # Real-time Web Operations Dashboard & REST API
 ├── examples/                    # Turnkey Enterprise Reference Applications
 │   └── enterprise_apps/         # Starter templates for rapid edge onboarding
@@ -137,7 +137,7 @@ sovereign-mini-datacenter/
 │       ├── spatial-digital-twin/# L1 Standard Three.js WebGL spatial simulation
 │       └── confidential-vault/  # L0 Critical NIST FIPS 203/204 zero-trust secrets vault
 ├── software/
-│   ├── docker-compose.yml       # Sovereign Core 11-service production stack
+│   ├── docker-compose.yml       # Sovereign Core 12-service production stack
 │   ├── Dockerfile.smdc          # Multi-arch container image (linux/amd64, linux/arm64)
 │   ├── setup.sh                 # Modular deployment CLI (--all, --with-vpn, etc.)
 │   ├── env.example              # Environment configuration template
@@ -155,7 +155,7 @@ sovereign-mini-datacenter/
 │   └── helm/
 │       └── sovereign-stack/     # Production Helm chart (K3s/Talos AI & Telemetry cluster)
 ├── firmware/
-│   ├── esp32_telemetry_bridge.ino # Arduino C++ ESP32 firmware with I2C OLED display
+│   ├── esp32_telemetry_bridge.ino # Arduino C++ ESP32 firmware (VE.Direct, DS18B20, HTTP /metrics)
 │   └── esphome_smdc_bridge.yaml   # ESPHome firmware with MQTT discovery & metrics
 ├── hardware/
 │   ├── COMPONENTS.md            # Full Bill of Materials with pricing & electrical specs
@@ -166,7 +166,7 @@ sovereign-mini-datacenter/
 │   ├── MANUFACTURING_GUIDE.md   # Laser cut, CNC bend, and assembly instructions
 │   └── render.jpg               # Photorealistic 3D product render
 ├── docs/                        # Interactive Three.js WebGL Digital Twin (ES Modules) & GitHub Pages
-├── tests/                       # 354+ Automated unit & integration tests (90.5%+ coverage)
+├── tests/                       # 681 automated unit & integration tests (89.8% coverage)
 └── .github/
     └── workflows/
         ├── ci.yml               # Complete CI pipeline + Pytest + GitHub Pages deploy
@@ -213,12 +213,12 @@ smdc mesh chaos --help
 # Autonomous AI Agent operations
 smdc agent status                                    # Inspect running agent daemons & Ollama status
 smdc agent ask "How do I throttle background jobs?" # Ask Sentinel Copilot directly
-smdc agent review --diff patch.diff                  # AI code review on local git diff
-smdc agent index --path /data/docs                   # Trigger semantic RAG vector indexing
+smdc agent review patch.diff                         # AI code review on local git diff
+smdc agent index /data/docs                          # Trigger semantic RAG vector indexing
 
 # Enterprise Workload Onboarding & Lifecycle Management
 smdc app list                                        # List all registered enterprise apps & runtime state
-smdc app init --name "IoT Edge" --app-id iot-edge --category iot ./iot-edge # Scaffold new app repo
+smdc app init "IoT Edge" --app-id iot-edge --category iot --target-dir ./iot-edge # Scaffold new app repo
 smdc app validate ./iot-edge                         # Validate smdc-app.yaml schema and resource quotas
 smdc app register ./iot-edge                         # Register app on local sovereign node
 smdc app start iot-edge                              # Launch enterprise workload process
@@ -255,10 +255,10 @@ smdc deploy --all
 * **Datacenter Sentinel Copilot:** AI assistant that schedules heavy GPU training workloads during peak solar hours and throttles jobs during battery preservation mode.
 
 ### 2. 🔌 ESP32 Microcontroller Hardware Bridge (`firmware/`)
-* C++ Arduino and ESPHome firmware reading physical **Victron VE.Direct** serial streams, **LiFePO4 RS485 Modbus** BMS registers, and **DS18B20 1-Wire** coolant temperature probes, broadcasting via HTTP `/metrics` and MQTT.
+* C++ Arduino and ESPHome firmware reading physical **Victron VE.Direct** serial streams (checksum-validated) and **DS18B20 1-Wire** coolant temperature probes, broadcasting via HTTP `/metrics` (and MQTT in the ESPHome flavour). RS485 Modbus BMS reading is not implemented.
 
 ### 3. 🛡️ Security Hardening & Zero-Trust Sentinel (`software/security/`)
-* **CrowdSec Intrusion Prevention:** Automated threat bouncer integration with Traefik to block brute-force scanners and malicious IP ranges.
+* **CrowdSec Intrusion Detection:** CrowdSec reads the Traefik access log and raises decisions for brute-force scanners and malicious IP ranges. No bouncer is wired yet, so it detects but does not block.
 * **`smdc audit` Scanner:** Evaluates host kernel sysctl parameters, Docker socket isolation, TLS configurations, and firewall rules.
 
 ### 4. 🧮 Interactive 3D Sizing & Cost Configurator
@@ -281,9 +281,9 @@ smdc deploy --all
 
 ### 8. 📡 5G RAN & UAV Metaverse Simulation Stack (`src/sovereign_dc/metaverse/`)
 * **Physics-Based Electromagnetic Ray-Tracing:** 3GPP UMi & Sionna 3D multipath propagation at 3.5 GHz ($23\text{ dBm}$ TX, $+8\text{ dBi}$ gain) with up to 5th-order reflections and Kriging spatial interpolation.
-* **Scene-Aware Reinforcement Learning (SA-PPO):** 3-layer Actor-Critic neural agent optimizing 3D UAV positioning ($\pm X, \pm Y, \pm Z$) with $+79.6\%$ capacity boost on disadvantaged urban receivers.
+* **Scene-Aware Reinforcement Learning (SA-PPO):** 3-layer Actor-Critic neural agent optimizing 3D UAV positioning ($\pm X, \pm Y, \pm Z$) (the published paper reports a $+79.6\%$ capacity boost on the disadvantaged receiver; this repository's simplified simulator does not reproduce that figure and its SA-PPO vs MD-PPO result varies with the random seed).
 * **5G Network Slicing & SDN:** Mathematical bandwidth isolation ($T_{\mathrm{tx}} = (D \cdot 8)/B_{\mathrm{slice}} \cdot 1000\text{ ms}$) managing URLLC ($<1\text{ ms}$), eMBB ($127\text{ Mbps}$), and mMTC ($12\text{k devs/km}^2$).
-* **DePIN Blockchain SLA & Consensus:** Multi-validator PoS/dBFT consensus requiring $\lceil 2N/3 \rceil + 1$ multi-signatures with $-15\text{ dB}$ minimum SINR rejection thresholds and $<6\text{ ms}$ critical-path deadlines.
+* **DePIN Blockchain SLA & Consensus:** Multi-validator PoS/dBFT consensus requiring $\lfloor 2N/3 \rfloor + 1$ multi-signatures with $-15\text{ dB}$ minimum SINR rejection thresholds and $<6\text{ ms}$ critical-path deadlines.
 
 ---
 
@@ -396,6 +396,12 @@ smdc demo --steps 5               # Cross-platform CLI
 # Run empirical performance benchmarks (AI, Space DTN & unified memory)
 smdc benchmark --all --export benchmark_results.json
 
+# Measure real LLM token throughput against a running Ollama server
+smdc benchmark --ai --live --model qwen2.5-coder:7b
+
+# Verify the compute ledger chain and anchor its head with the node identity key
+smdc economy audit --anchor
+
 # Run 5G Metaverse simulation cycles & DePIN SLA validation
 smdc sim run --cycles 5
 smdc sim slices
@@ -475,7 +481,7 @@ See [`terraform/README.md`](terraform/README.md) for full module documentation a
 ---
 
 ## 🛡️ Quality Gates & Automated Tests
-The project enforces strict automated Quality Gates covering Ruff linting, Ruff formatting, Mypy static typing, Docker Compose multi-stack integrity, and Pytest coverage with 368+ automated tests ($\ge 85\%$ strict threshold, achieving **91.2%+** coverage):
+The project enforces strict automated Quality Gates covering Ruff linting, Ruff formatting, Mypy static typing, Docker Compose multi-stack integrity, and Pytest coverage with 681 automated tests ($\ge 85\%$ strict threshold, achieving **89.8%** coverage):
 
 ```bash
 # Run all quality gates locally
@@ -493,9 +499,9 @@ uv run pytest tests/ --cov=src/sovereign_dc --cov-fail-under=85
 
 ## 🔋 Hardware & Physical Enclosure
 
-- **Compute:** 2× NVIDIA DGX Spark (550 TOPS aggregate AI compute, 128GB unified memory)
+- **Compute:** 2× NVIDIA DGX Spark (NVIDIA GB10 Grace Blackwell Superchip, 128GB unified LPDDR5x memory and 4TB NVMe each; 240W power supply per unit)
 - **Storage:** 2× Samsung 990 PRO 4TB NVMe (8TB total NVMe storage)
-- **Power:** 10.24 kWh LiFePO4 battery bank + 1,640W solar PV array
+- **Power:** 10.24 kWh LiFePO4 battery bank + 1,640W monocrystalline PERC solar PV array. At the reference duty cycle (both nodes under load 12 h/day) the array yields about 7.2 kWh/day against an 11.2 kWh/day draw, roughly 65% solar coverage; the remainder comes from grid or generator, or from a larger array (see the sizing calculator)
 - **Cooling:** Dual 360mm radiator loop with Alphacool D5 pump
 - **Chassis:** Custom 9U 19" aluminum rack enclosure (EIA-310-D compliant)
 

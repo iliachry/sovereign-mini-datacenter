@@ -50,7 +50,8 @@ class SpaceChannelSimulator(BaseTransceiver):
 
     def get_active_link_metrics(self, satellite: SatelliteOrbit) -> dict[str, Any]:
         """Calculates real-time RF link budget, SNR, elevation, and contact status."""
-        sat_lat, sat_lon, sat_alt = satellite.get_position_at(time.time())
+        now = time.time()
+        sat_lat, sat_lon, sat_alt = satellite.get_position_at(now)
         az, el, rng = self.ground_station.calculate_look_angles(sat_lat, sat_lon, sat_alt)
 
         fspl_db = self.calculate_free_space_path_loss(rng)
@@ -60,8 +61,9 @@ class SpaceChannelSimulator(BaseTransceiver):
 
         is_in_contact = el >= 10.0
 
-        # Approximate Doppler shift
-        range_rate_kms = math.cos(math.radians(el)) * 7.5 * (1.0 if az < 180 else -1.0)
+        # Doppler shift from the true range rate (d(slant range)/dt), obtained by
+        # central finite difference of the slant range over +/- 0.5 s.
+        range_rate_kms = self.calculate_range_rate_kms(satellite, now)
         doppler_hz = self.ground_station.calculate_doppler_shift(self.carrier_freq_mhz * 1e6, range_rate_kms)
 
         return {
@@ -76,6 +78,14 @@ class SpaceChannelSimulator(BaseTransceiver):
             "doppler_shift_hz": round(doppler_hz, 1) if is_in_contact else 0.0,
             "link_margin_db": round(max(0.0, snr_db - 6.0), 1) if is_in_contact else 0.0,
         }
+
+    def calculate_range_rate_kms(self, satellite: SatelliteOrbit, timestamp: float, half_step_s: float = 0.5) -> float:
+        """Slant-range rate in km/s (positive = receding) via central finite difference."""
+        ranges: list[float] = []
+        for t in (timestamp - half_step_s, timestamp + half_step_s):
+            lat, lon, alt = satellite.get_position_at(t)
+            ranges.append(self.ground_station.calculate_look_angles(lat, lon, alt)[2])
+        return (ranges[1] - ranges[0]) / (2.0 * half_step_s)
 
     def transmit_bundle(self, bundle: Bundle) -> bool:
         """Simulates transmitting a bundle across the space RF link."""

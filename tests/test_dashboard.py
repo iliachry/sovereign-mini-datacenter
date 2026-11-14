@@ -42,6 +42,9 @@ class TestDashboardHandler:
         handler = DashboardHandler.__new__(DashboardHandler)
         handler.path = path
         handler.headers = {}
+        handler.client_address = ("127.0.0.1", 0)
+        handler.sse_max_events = 1
+        handler.sse_interval_seconds = 0.0
         handler.rfile = io.BytesIO()
         handler.wfile = io.BytesIO()
         handler.send_response = MagicMock()

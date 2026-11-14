@@ -8,6 +8,7 @@ import logging
 import os
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from typing import Any
 
 from sovereign_dc.space.dtn.router import DTNRouter
 from sovereign_dc.space.orbital.propagator import GroundStation
@@ -26,6 +27,16 @@ ground_station = GroundStation(GROUND_NAME, GROUND_LAT, GROUND_LON)
 satellites = get_active_satellites()
 simulator = SpaceChannelSimulator(ground_station)
 router = DTNRouter(db_path=os.getenv("DTN_DB_PATH", "/tmp/dtn_spool.db"))
+
+
+NO_PASS_IN_WINDOW = -1
+
+
+def seconds_until_next_pass(passes: list[dict[str, Any]], now: float) -> int:
+    """Seconds until the next AOS: 0 while a pass is in progress, -1 if none is predicted."""
+    if not passes:
+        return NO_PASS_IN_WINDOW
+    return max(0, int(passes[0]["aos_time"] - now))
 
 
 def get_space_telemetry_metrics() -> str:
@@ -52,9 +63,7 @@ def get_space_telemetry_metrics() -> str:
 
     # 2. Predict next pass for primary relay
     passes = ground_station.predict_passes(satellites[0], duration_hours=6.0, min_elevation_deg=10.0)
-    next_pass_seconds = 0
-    if passes:
-        next_pass_seconds = max(0, int(passes[0]["aos_time"] - now))
+    next_pass_seconds = seconds_until_next_pass(passes, now)
 
     # 3. Get DTN spool queue metrics
     spool_stats = router.get_queue_stats()
@@ -88,7 +97,8 @@ def get_space_telemetry_metrics() -> str:
         "# TYPE sovereign_space_doppler_shift_hz gauge",
         f"sovereign_space_doppler_shift_hz {active_doppler:.1f}",
         "",
-        "# HELP sovereign_space_next_pass_seconds Countdown in seconds until next satellite contact pass (AOS)",
+        "# HELP sovereign_space_next_pass_seconds Countdown in seconds until next satellite contact pass (AOS); "
+        "0 = pass in progress, -1 = no pass predicted within the 6 h window",
         "# TYPE sovereign_space_next_pass_seconds gauge",
         f"sovereign_space_next_pass_seconds {next_pass_seconds}",
         "",
@@ -105,7 +115,7 @@ def get_space_telemetry_metrics() -> str:
 
 
 class SpaceMetricsHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
+    def do_GET(self) -> None:
         if self.path == "/metrics" or self.path == "/":
             payload = get_space_telemetry_metrics().encode("utf-8")
             self.send_response(200)
@@ -122,13 +132,13 @@ class SpaceMetricsHandler(BaseHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
 
-    def log_message(self, format, *args):
+    def log_message(self, format: str, *args: Any) -> None:
         pass
 
 
-def run():
+def run() -> None:
     server = HTTPServer(("0.0.0.0", PORT), SpaceMetricsHandler)
-    logging.info(f"Sovereign Space Communications Exporter listening on :http://0.0.0.0:{PORT}/metrics")
+    logging.info("Sovereign Space Communications Exporter listening on http://0.0.0.0:%s/metrics", PORT)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

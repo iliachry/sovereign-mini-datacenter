@@ -1,26 +1,30 @@
-version: v1alpha1
-debug: false
-persist: true
+# Talos Linux machine-config PATCH for the Sovereign Mini Datacenter control plane.
+#
+# This is NOT a complete machine config: it carries no cluster secrets, CA or
+# join token. `talosctl gen config` generates those; this file is merged on
+# top of the generated control-plane config as a strategic-merge patch:
+#
+#   talosctl gen config sovereign-cluster https://10.0.0.10:6443 \
+#     --config-patch-control-plane @talos-config.yaml
+#
+# Every value marked EXAMPLE must be adapted to your hardware first.
 machine:
-  type: controlplane
-  token: sovereign-bootstrap-token
-  ca:
-    crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCg==
+  install:
+    disk: /dev/nvme0n1 # EXAMPLE - list the real disks: talosctl -n <node-ip> get disks --insecure
   network:
     interfaces:
-      - interface: eth0
-        dhcp: true
-      - interface: 10gbe0
+      # EXAMPLE NIC name - list the real names: talosctl -n <node-ip> get links --insecure
+      - interface: enp1s0
+        dhcp: false
         addresses:
-          - 10.0.0.10/24
+          - 10.0.0.10/24 # EXAMPLE - must match the endpoint passed to `gen config`
         routes:
           - network: 0.0.0.0/0
-            gateway: 10.0.0.1
-  kernel:
-    modules:
-      - name: nvidia
-      - name: nvidia_uvm
-      - name: nvidia_modeset
+            gateway: 10.0.0.1 # EXAMPLE
+  # LUKS2 encryption keyed to the node's hardware UUID. This protects a disk
+  # that is removed from the machine; it does not protect against theft of the
+  # whole node (which unlocks itself at boot). Use a TPM- or KMS-sealed key
+  # for that threat model.
   systemDiskEncryption:
     state:
       provider: luks2
@@ -37,8 +41,6 @@ machine:
     net.ipv4.tcp_syncookies: "1"
     kernel.randomize_va_space: "2"
 cluster:
-  controlPlane:
-    endpoint: https://10.0.0.10:6443
   network:
     cni:
       name: flannel

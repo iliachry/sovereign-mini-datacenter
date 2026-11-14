@@ -2,17 +2,33 @@
 
 Reproduces and benchmarks empirical performance metrics from IEEE IoT Magazine:
 1. SA-PPO (Scene-Aware PPO) vs. MD-PPO (Model-Driven PPO baseline with Rician fading).
-2. Per-receiver SINR & Shannon capacity comparison (+79.6% gain on disadvantaged Rx1).
-3. 6-layer decision-to-action latency profile (< 1ms URLLC, sub-10ms AI, 12ms DT, 3-6s blockchain finality).
+2. Per-receiver SINR & Shannon capacity comparison (the paper reports +79.6% on the
+   disadvantaged Rx1; this lightweight pure-Python reproduction reports whatever it measures).
+3. 6-layer decision-to-action latency profile. Decision and ray-tracing latencies are
+   wall-clock measurements of this implementation; URLLC latency and blockchain finality
+   come from the analytical slicing / DePIN models (see ``BenchmarkReport.latency_sources``).
+   The paper's published figures are kept separately in ``PAPER_REFERENCE_LATENCIES``.
 """
 
 from __future__ import annotations
 
 import statistics
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 
 from sovereign_dc.metaverse.agent import ACTIONS_3D, ModelDrivenPPO, SceneAwarePPO
+from sovereign_dc.metaverse.depin_sla import DePINSLAValidator
 from sovereign_dc.metaverse.ray_tracer import SionnaRayTracer
+from sovereign_dc.metaverse.slicing import NetworkSlicingManager
+
+# Latency figures published in the reference paper. These are NOT measured by this
+# code; they are exposed only for side-by-side comparison with the measured values.
+PAPER_REFERENCE_LATENCIES: dict[str, float] = {
+    "decision_latency_ms": 4.8,
+    "urllc_latency_ms": 0.8,
+    "ray_tracing_latency_ms": 12.1,
+    "blockchain_finality_sec": 3.5,
+}
 
 
 @dataclass
@@ -41,13 +57,15 @@ class BenchmarkReport:
     steps_per_episode: int
     total_timesteps: int
     receiver_metrics: dict[str, ReceiverBenchmarkMetric]
-    avg_decision_latency_ms: float
-    avg_urllc_latency_ms: float
-    avg_ray_tracing_latency_ms: float
-    avg_blockchain_finality_sec: float
+    avg_decision_latency_ms: float  # measured: state encoding + policy inference (wall clock)
+    avg_urllc_latency_ms: float  # modelled: analytical URLLC slice latency for a UAV command
+    avg_ray_tracing_latency_ms: float  # measured: one evaluate_all_receivers() call (wall clock)
+    avg_blockchain_finality_sec: float  # modelled constant from DePINSLAValidator (no real chain)
     sa_ppo_total_sum_capacity: float
     md_ppo_total_sum_capacity: float
     overall_capacity_gain_pct: float
+    latency_sources: dict[str, str] = field(default_factory=dict)
+    paper_reference_latencies: dict[str, float] = field(default_factory=dict)
 
 
 class MetaverseBenchmark:
@@ -58,7 +76,14 @@ class MetaverseBenchmark:
 
     def run_comparison(self, episodes: int = 20, steps_per_episode: int = 25) -> BenchmarkReport:
         """Executes head-to-head training comparison between SA-PPO and MD-PPO."""
+        if episodes < 1 or steps_per_episode < 1:
+            raise ValueError(f"episodes and steps_per_episode must both be >= 1 (got {episodes}, {steps_per_episode})")
+
         ray_tracer = SionnaRayTracer()
+        slicing = NetworkSlicingManager()
+        ray_tracing_samples_ms: list[float] = []
+        decision_samples_ms: list[float] = []
+        urllc_samples_ms: list[float] = []
         sa_agent = SceneAwarePPO(seed=self.seed)
         md_agent = ModelDrivenPPO(seed=self.seed + 100)
 
@@ -71,10 +96,16 @@ class MetaverseBenchmark:
         for _ in range(episodes):
             uav_pos = (0.0, 0.0, 35.0)
             for _ in range(steps_per_episode):
+                t_rt = time.perf_counter()
                 prop = ray_tracer.evaluate_all_receivers(uav_pos)
+                t_decision = time.perf_counter()
                 state = sa_agent.encode_state(uav_pos, prop)
                 act_idx = sa_agent.select_action(state)
+                t_done = time.perf_counter()
+                ray_tracing_samples_ms.append((t_decision - t_rt) * 1000.0)
+                decision_samples_ms.append((t_done - t_decision) * 1000.0)
                 vec = ACTIONS_3D[act_idx]
+                urllc_samples_ms.append(slicing.transmit_uav_control_command(vec).latency_ms)
                 uav_pos = (
                     max(-70.0, min(70.0, uav_pos[0] + vec[0])),
                     max(-70.0, min(70.0, uav_pos[1] + vec[1])),
@@ -138,7 +169,7 @@ class MetaverseBenchmark:
             md_std_c = statistics.stdev(md_c) if len(md_c) > 1 else 0.01
 
             # Gains
-            sinr_gain_pct = ((sa_mean_s - md_mean_s) / abs(md_mean_s)) * 100.0
+            sinr_gain_pct = ((sa_mean_s - md_mean_s) / max(abs(md_mean_s), 1e-6)) * 100.0
             cap_gain_pct = ((sa_mean_c - md_mean_c) / max(md_mean_c, 1e-6)) * 100.0
 
             rx_metrics[rx_id] = ReceiverBenchmarkMetric(
@@ -165,11 +196,18 @@ class MetaverseBenchmark:
             steps_per_episode=steps_per_episode,
             total_timesteps=episodes * steps_per_episode,
             receiver_metrics=rx_metrics,
-            avg_decision_latency_ms=4.8,
-            avg_urllc_latency_ms=0.8,
-            avg_ray_tracing_latency_ms=12.1,
-            avg_blockchain_finality_sec=3.5,
+            avg_decision_latency_ms=round(statistics.mean(decision_samples_ms), 4),
+            avg_urllc_latency_ms=round(statistics.mean(urllc_samples_ms), 4),
+            avg_ray_tracing_latency_ms=round(statistics.mean(ray_tracing_samples_ms), 4),
+            avg_blockchain_finality_sec=DePINSLAValidator.SIMULATED_FINALITY_SEC,
             sa_ppo_total_sum_capacity=round(sa_total_cap, 4),
             md_ppo_total_sum_capacity=round(md_total_cap, 4),
             overall_capacity_gain_pct=round(overall_gain, 1),
+            latency_sources={
+                "avg_decision_latency_ms": "measured (wall clock, this pure-Python implementation)",
+                "avg_ray_tracing_latency_ms": "measured (wall clock, this pure-Python implementation)",
+                "avg_urllc_latency_ms": "modelled (analytical slice latency, not a radio measurement)",
+                "avg_blockchain_finality_sec": "modelled constant (no real blockchain)",
+            },
+            paper_reference_latencies=dict(PAPER_REFERENCE_LATENCIES),
         )

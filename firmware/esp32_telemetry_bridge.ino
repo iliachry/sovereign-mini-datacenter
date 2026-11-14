@@ -1,99 +1,332 @@
 /*
  * Sovereign Mini Datacenter - ESP32 Hardware Telemetry & Micro-Grid Bridge
- * 
- * Interfaces:
- *  - UART1 (Pins 16/17): Victron VE.Direct ASCII Protocol (MPPT 150/70 & SmartShunt)
- *  - UART2 (Pins 21/22 + MAX485): RS485 Modbus RTU (LiFePO4 48V 100Ah BMS)
- *  - GPIO 4 (1-Wire): Dual Dallas DS18B20 Temperature Probes (Coolant Loop)
- *  - I2C (Pins 21/22 or 22/23): SSD1306 0.96" OLED Status Screen
- *  - WebServer (:80/metrics): Native Prometheus Exporter
- *  - MQTT: Home Assistant Auto-Discovery
+ * (Arduino flavour)
+ *
+ * What this sketch implements:
+ *  - UART1 (GPIO 16 RX / GPIO 17 TX): ONE Victron VE.Direct device, text protocol,
+ *    19200 baud 8N1, with per-frame checksum validation.
+ *      * A SmartShunt / BMV battery monitor reports V, I and SOC (no PPV).
+ *      * A SmartSolar / BlueSolar MPPT reports V, I and PPV. An MPPT never
+ *        sends SOC, so the SoC metric stays absent when an MPPT is connected.
+ *    Reading both devices needs a second UART, which this sketch does not have.
+ *  - GPIO 4 (1-Wire): two Dallas DS18B20 temperature probes (coolant loop),
+ *    converted in the background (non-blocking).
+ *  - WebServer :80  /metrics (Prometheus text format) and /health
+ *  - USB serial (115200 baud): periodic status log
+ *
+ * NOT implemented in this flavour: RS485 / Modbus BMS link, MQTT, SSD1306 OLED.
+ * Use firmware/esphome_smdc_bridge.yaml if you need MQTT, the Home Assistant
+ * API or the OLED status display.
+ *
+ * A metric is only exported after it has been measured: nothing is reported
+ * until a checksum-valid VE.Direct frame (or a successful DS18B20 conversion)
+ * has set it, and a value is withdrawn again once it is older than the
+ * staleness limit below.
+ *
+ * Wi-Fi credentials: copy secrets.h.example to secrets.h (git-ignored) next to
+ * this sketch and fill it in. Without secrets.h the sketch still compiles, but
+ * with placeholder credentials that cannot join any network.
  */
 
 #include <WiFi.h>
 #include <WebServer.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
-#include <Wire.h>
+#include <math.h>
+#include <stdlib.h>
+#include <string.h>
 
-const char* ssid = "SOVEREIGN_WIFI";
-const char* password = "SOVEREIGN_PASSWORD";
+#if __has_include("secrets.h")
+#include "secrets.h"
+#else
+// Placeholders only - create secrets.h from secrets.h.example.
+#define WIFI_SSID "REPLACE_WITH_WIFI_SSID"
+#define WIFI_PASSWORD "REPLACE_WITH_WIFI_PASSWORD"
+#endif
 
 // Hardware Pins
 #define ONE_WIRE_BUS 4
 #define RX_VE_DIRECT 16
 #define TX_VE_DIRECT 17
-#define RS485_RX 21
-#define RS485_TX 22
 #define STATUS_LED_PIN 2
+
+// Timing
+#define VE_STALE_MS 10000UL        // VE.Direct sends a frame every second
+#define TEMP_STALE_MS 15000UL
+#define TEMP_PERIOD_MS 2000UL      // one DS18B20 conversion cycle
+#define TEMP_CONVERSION_MS 800UL   // 12-bit conversion takes up to 750 ms
+#define STATUS_LOG_MS 3000UL
 
 OneWire oneWire(ONE_WIRE_BUS);
 DallasTemperature sensors(&oneWire);
 HardwareSerial veSerial(1);
 WebServer server(80);
 
-// Global Telemetry State
-float batteryVoltage = 52.8;
-float batteryCurrent = -4.2;
-float batterySoC = 88.5;
-float solarPowerWatts = 1240.0;
-float coolantIntakeTempC = 28.5;
-float coolantExhaustTempC = 34.2;
-unsigned long lastDisplayUpdate = 0;
-int displayPage = 0;
+// ── Telemetry state ──────────────────────────────────────────────────────────
+// Index of every reading. The first VE_FIELD_COUNT entries come from VE.Direct.
+#define R_BATTERY_VOLTAGE 0
+#define R_BATTERY_CURRENT 1
+#define R_SOLAR_POWER 2
+#define R_BATTERY_SOC 3
+#define VE_FIELD_COUNT 4
+#define R_COOLANT_INTAKE 4
+#define R_COOLANT_EXHAUST 5
+#define READING_COUNT 6
 
-void parseVEDirectLine(String line) {
-  int tabIdx = line.indexOf('\t');
-  if (tabIdx > 0) {
-    String key = line.substring(0, tabIdx);
-    String val = line.substring(tabIdx + 1);
-    val.trim();
-    if (key == "V") batteryVoltage = val.toFloat() / 1000.0;
-    else if (key == "I") batteryCurrent = val.toFloat() / 1000.0;
-    else if (key == "PPV") solarPowerWatts = val.toFloat();
-    else if (key == "SOC") batterySoC = val.toFloat() / 10.0;
+float readingValue[READING_COUNT] = {NAN, NAN, NAN, NAN, NAN, NAN};
+unsigned long readingStamp[READING_COUNT] = {0, 0, 0, 0, 0, 0};
+bool readingSet[READING_COUNT] = {false, false, false, false, false, false};
+
+// ── VE.Direct text-protocol frame parser ─────────────────────────────────────
+// A frame is a block of "\r\n<Label>\t<Value>" fields that ends with the field
+// "Checksum\t<byte>". The modulo-256 sum of every byte of the block, including
+// that final checksum byte, is 0 for an intact frame. HEX-protocol messages
+// (":....\n") may be interleaved and are not part of the checksum.
+#define VE_IDLE 0
+#define VE_RECORD_BEGIN 1
+#define VE_RECORD_NAME 2
+#define VE_RECORD_VALUE 3
+#define VE_CHECKSUM 4
+#define VE_RECORD_HEX 5
+
+uint8_t veState = VE_IDLE;
+uint8_t veChecksum = 0;
+char veName[12];
+char veValue[36];
+uint8_t veNameLen = 0;
+uint8_t veValueLen = 0;
+
+// Fields of the frame being received; committed only if its checksum is valid.
+float veStagedValue[VE_FIELD_COUNT];
+bool veStagedSet[VE_FIELD_COUNT] = {false, false, false, false};
+
+bool veFrameSeen = false;
+unsigned long veLastFrameMs = 0;
+unsigned long veFramesValid = 0;
+unsigned long veChecksumErrors = 0;
+
+// ── DS18B20 background conversion ────────────────────────────────────────────
+bool tempConversionPending = false;
+unsigned long tempRequestMs = 0;
+
+unsigned long lastStatusLog = 0;
+
+void veClearStaged() {
+  for (int i = 0; i < VE_FIELD_COUNT; i++) {
+    veStagedSet[i] = false;
   }
 }
 
+void veStageField() {
+  int idx = -1;
+  float scale = 1.0f;
+  if (strcmp(veName, "V") == 0) {
+    idx = R_BATTERY_VOLTAGE;
+    scale = 0.001f;  // mV -> V
+  } else if (strcmp(veName, "I") == 0) {
+    idx = R_BATTERY_CURRENT;
+    scale = 0.001f;  // mA -> A
+  } else if (strcmp(veName, "PPV") == 0) {
+    idx = R_SOLAR_POWER;  // W
+  } else if (strcmp(veName, "SOC") == 0) {
+    idx = R_BATTERY_SOC;
+    scale = 0.1f;  // per mille -> %
+  }
+  if (idx < 0) {
+    return;
+  }
+  // Devices send "---" while a value is unavailable; accept integers only.
+  char *end = NULL;
+  long raw = strtol(veValue, &end, 10);
+  if (end == veValue || *end != '\0') {
+    return;
+  }
+  veStagedValue[idx] = (float)raw * scale;
+  veStagedSet[idx] = true;
+}
+
+void veCommitFrame() {
+  unsigned long now = millis();
+  for (int i = 0; i < VE_FIELD_COUNT; i++) {
+    if (veStagedSet[i]) {
+      readingValue[i] = veStagedValue[i];
+      readingStamp[i] = now;
+      readingSet[i] = true;
+    }
+  }
+  veFrameSeen = true;
+  veLastFrameMs = now;
+  veFramesValid++;
+}
+
+// Feed one received byte into the frame parser. Never blocks.
+void veHandleByte(uint8_t b) {
+  if (b == ':' && veState != VE_CHECKSUM && veState != VE_RECORD_HEX) {
+    veState = VE_RECORD_HEX;
+  }
+  if (veState != VE_RECORD_HEX) {
+    veChecksum = (uint8_t)(veChecksum + b);
+  }
+
+  switch (veState) {
+    case VE_IDLE:
+      // Wait for the line feed that starts the next field.
+      if (b == '\n') {
+        veState = VE_RECORD_BEGIN;
+      }
+      break;
+
+    case VE_RECORD_BEGIN:
+      veNameLen = 0;
+      veName[veNameLen++] = (char)b;
+      veState = VE_RECORD_NAME;
+      break;
+
+    case VE_RECORD_NAME:
+      if (b == '\t') {
+        veName[veNameLen] = '\0';
+        if (strcmp(veName, "Checksum") == 0) {
+          veState = VE_CHECKSUM;
+        } else {
+          veValueLen = 0;
+          veState = VE_RECORD_VALUE;
+        }
+      } else if (veNameLen < sizeof(veName) - 1) {
+        veName[veNameLen++] = (char)b;
+      }
+      break;
+
+    case VE_RECORD_VALUE:
+      if (b == '\n') {
+        veValue[veValueLen] = '\0';
+        veStageField();
+        veState = VE_RECORD_BEGIN;
+      } else if (b != '\r' && veValueLen < sizeof(veValue) - 1) {
+        veValue[veValueLen++] = (char)b;
+      }
+      break;
+
+    case VE_CHECKSUM:
+      // b is the checksum byte and has already been added to the sum.
+      if (veChecksum == 0) {
+        veCommitFrame();
+      } else {
+        veChecksumErrors++;
+      }
+      veClearStaged();
+      veChecksum = 0;
+      veState = VE_IDLE;
+      break;
+
+    case VE_RECORD_HEX:
+      // Skip the HEX message; the interrupted text frame is discarded.
+      if (b == '\n') {
+        veClearStaged();
+        veChecksum = 0;
+        veState = VE_IDLE;
+      }
+      break;
+
+    default:
+      veState = VE_IDLE;
+      break;
+  }
+}
+
+void storeTemperature(int idx, float celsius) {
+  // DEVICE_DISCONNECTED_C (-127) means "no probe answered" - not a temperature.
+  if (celsius == DEVICE_DISCONNECTED_C) {
+    return;
+  }
+  readingValue[idx] = celsius;
+  readingStamp[idx] = millis();
+  readingSet[idx] = true;
+}
+
+// Start a conversion, then collect it later; never waits for the sensor.
+void serviceTemperatures() {
+  unsigned long now = millis();
+  if (tempConversionPending) {
+    if (now - tempRequestMs >= TEMP_CONVERSION_MS) {
+      // Index order follows the 1-Wire address enumeration, not the physical
+      // position: check which probe is index 0 before trusting the labels.
+      storeTemperature(R_COOLANT_INTAKE, sensors.getTempCByIndex(0));
+      storeTemperature(R_COOLANT_EXHAUST, sensors.getTempCByIndex(1));
+      tempConversionPending = false;
+    }
+  } else if (now - tempRequestMs >= TEMP_PERIOD_MS) {
+    sensors.requestTemperatures();  // returns immediately (setWaitForConversion(false))
+    tempRequestMs = now;
+    tempConversionPending = true;
+  }
+}
+
+bool readingFresh(int idx, unsigned long maxAgeMs) {
+  return readingSet[idx] && (millis() - readingStamp[idx] <= maxAgeMs);
+}
+
+void appendGauge(String &out, const char *name, const char *help, int idx, unsigned long maxAgeMs, unsigned int decimals) {
+  if (!readingFresh(idx, maxAgeMs)) {
+    return;  // never measured, or stale: export nothing rather than a guess
+  }
+  out += "# HELP ";
+  out += name;
+  out += " ";
+  out += help;
+  out += "\n# TYPE ";
+  out += name;
+  out += " gauge\n";
+  out += name;
+  out += " ";
+  out += String(readingValue[idx], decimals);
+  out += "\n\n";
+}
+
 void handleMetrics() {
-  sensors.requestTemperatures();
-  coolantIntakeTempC = sensors.getTempCByIndex(0);
-  coolantExhaustTempC = sensors.getTempCByIndex(1);
-
   String out = "";
-  out += "# HELP sovereign_hw_battery_voltage_volts Battery voltage measured via VE.Direct\n";
-  out += "# TYPE sovereign_hw_battery_voltage_volts gauge\n";
-  out += "sovereign_hw_battery_voltage_volts " + String(batteryVoltage, 2) + "\n\n";
+  out.reserve(1536);
 
-  out += "# HELP sovereign_hw_solar_power_watts Instantaneous solar PV harvest power\n";
-  out += "# TYPE sovereign_hw_solar_power_watts gauge\n";
-  out += "sovereign_hw_solar_power_watts " + String(solarPowerWatts, 1) + "\n\n";
+  appendGauge(out, "sovereign_hw_battery_voltage_volts", "Battery voltage measured via VE.Direct", R_BATTERY_VOLTAGE, VE_STALE_MS, 2);
+  appendGauge(out, "sovereign_hw_battery_current_amperes", "Battery current via VE.Direct (+ charging, - discharging)", R_BATTERY_CURRENT, VE_STALE_MS, 2);
+  appendGauge(out, "sovereign_hw_solar_power_watts", "Instantaneous solar PV power (MPPT only)", R_SOLAR_POWER, VE_STALE_MS, 1);
+  appendGauge(out, "sovereign_hw_battery_soc_percent", "Battery state of charge (battery monitor only)", R_BATTERY_SOC, VE_STALE_MS, 1);
+  appendGauge(out, "sovereign_hw_coolant_intake_temp_celsius", "Coolant loop intake temperature", R_COOLANT_INTAKE, TEMP_STALE_MS, 2);
+  appendGauge(out, "sovereign_hw_coolant_exhaust_temp_celsius", "Radiator exhaust temperature", R_COOLANT_EXHAUST, TEMP_STALE_MS, 2);
 
-  out += "# HELP sovereign_hw_battery_soc_percent LiFePO4 Battery SoC\n";
-  out += "# TYPE sovereign_hw_battery_soc_percent gauge\n";
-  out += "sovereign_hw_battery_soc_percent " + String(batterySoC, 1) + "\n\n";
+  if (veFrameSeen) {
+    out += "# HELP sovereign_hw_vedirect_last_frame_age_seconds Seconds since the last checksum-valid VE.Direct frame\n";
+    out += "# TYPE sovereign_hw_vedirect_last_frame_age_seconds gauge\n";
+    out += "sovereign_hw_vedirect_last_frame_age_seconds " + String((millis() - veLastFrameMs) / 1000.0f, 1) + "\n\n";
+  }
 
-  out += "# HELP sovereign_hw_coolant_intake_temp_celsius Coolant loop intake temperature\n";
-  out += "# TYPE sovereign_hw_coolant_intake_temp_celsius gauge\n";
-  out += "sovereign_hw_coolant_intake_temp_celsius " + String(coolantIntakeTempC, 2) + "\n\n";
+  out += "# HELP sovereign_hw_vedirect_frames_valid_total Checksum-valid VE.Direct frames since boot\n";
+  out += "# TYPE sovereign_hw_vedirect_frames_valid_total counter\n";
+  out += "sovereign_hw_vedirect_frames_valid_total " + String(veFramesValid) + "\n\n";
 
-  out += "# HELP sovereign_hw_coolant_exhaust_temp_celsius Radiator exhaust temperature\n";
-  out += "# TYPE sovereign_hw_coolant_exhaust_temp_celsius gauge\n";
-  out += "sovereign_hw_coolant_exhaust_temp_celsius " + String(coolantExhaustTempC, 2) + "\n";
+  out += "# HELP sovereign_hw_vedirect_checksum_errors_total VE.Direct frames dropped for a bad checksum since boot\n";
+  out += "# TYPE sovereign_hw_vedirect_checksum_errors_total counter\n";
+  out += "sovereign_hw_vedirect_checksum_errors_total " + String(veChecksumErrors) + "\n";
 
   server.send(200, "text/plain; version=0.0.4", out);
 }
 
-void updateOLEDDisplay() {
-  // Rotates OLED status screen between Power, Battery, and Cooling
-  displayPage = (displayPage + 1) % 3;
-  if (displayPage == 0) {
-    Serial.printf("[OLED] SOLAR: %.0f W | LOAD: %.0f W\n", solarPowerWatts, (batteryVoltage * -batteryCurrent));
-  } else if (displayPage == 1) {
-    Serial.printf("[OLED] BATT: %.1f V | SoC: %.1f %% | CUR: %.2f A\n", batteryVoltage, batterySoC, batteryCurrent);
+void logReading(const char *label, int idx, unsigned long maxAgeMs, unsigned int decimals) {
+  Serial.print(label);
+  if (readingFresh(idx, maxAgeMs)) {
+    Serial.print(String(readingValue[idx], decimals));
   } else {
-    Serial.printf("[OLED] COOLANT: IN: %.1f C | OUT: %.1f C\n", coolantIntakeTempC, coolantExhaustTempC);
+    Serial.print("n/a");
   }
+}
+
+void logStatus() {
+  logReading("[STATUS] BATT V: ", R_BATTERY_VOLTAGE, VE_STALE_MS, 2);
+  logReading(" | I A: ", R_BATTERY_CURRENT, VE_STALE_MS, 2);
+  logReading(" | SoC %: ", R_BATTERY_SOC, VE_STALE_MS, 1);
+  logReading(" | SOLAR W: ", R_SOLAR_POWER, VE_STALE_MS, 0);
+  logReading(" | COOLANT IN C: ", R_COOLANT_INTAKE, TEMP_STALE_MS, 1);
+  logReading(" | OUT C: ", R_COOLANT_EXHAUST, TEMP_STALE_MS, 1);
+  Serial.println();
 }
 
 void setup() {
@@ -101,11 +334,14 @@ void setup() {
   pinMode(STATUS_LED_PIN, OUTPUT);
   digitalWrite(STATUS_LED_PIN, HIGH);
 
+  veClearStaged();
   veSerial.begin(19200, SERIAL_8N1, RX_VE_DIRECT, TX_VE_DIRECT);
+
   sensors.begin();
+  sensors.setWaitForConversion(false);
 
   WiFi.mode(WIFI_STA);
-  WiFi.begin(ssid, password);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
   server.on("/metrics", handleMetrics);
   server.on("/health", []() { server.send(200, "text/plain", "OK"); });
@@ -115,14 +351,21 @@ void setup() {
 
 void loop() {
   server.handleClient();
-  while (veSerial.available()) {
-    String line = veSerial.readStringUntil('\n');
-    parseVEDirectLine(line);
+
+  // Drain whatever the UART has buffered; read() never waits for more data.
+  while (veSerial.available() > 0) {
+    int b = veSerial.read();
+    if (b < 0) {
+      break;
+    }
+    veHandleByte((uint8_t)b);
   }
-  
-  if (millis() - lastDisplayUpdate > 3000) {
-    lastDisplayUpdate = millis();
-    updateOLEDDisplay();
+
+  serviceTemperatures();
+
+  if (millis() - lastStatusLog > STATUS_LOG_MS) {
+    lastStatusLog = millis();
+    logStatus();
   }
-  delay(10);
+  delay(2);
 }

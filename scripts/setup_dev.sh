@@ -20,7 +20,8 @@ echo -e "\n${YELLOW}[Step 1/4] Checking for uv package manager...${NC}"
 if ! command -v uv &>/dev/null; then
     echo -e "${YELLOW}⚠️ 'uv' not found. Installing via Astral installer...${NC}"
     curl -LsSf https://astral.sh/uv/install.sh | sh
-    export PATH="$HOME/.cargo/bin:$PATH"
+    # The installer puts uv in ~/.local/bin (older releases: ~/.cargo/bin).
+    export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
 fi
 echo -e "${GREEN}✅ uv is available: $(uv --version)${NC}"
 

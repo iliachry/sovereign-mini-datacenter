@@ -6,19 +6,31 @@
 
 import * as THREE from 'three';
 import { getCamera, getScene, setSunElevation } from './scene.js';
-import { toggleDoor, getInteractiveObjects, getComponentData } from './models.js';
+import { toggleDoor, setDoorOpen, getInteractiveObjects, getComponentData } from './models.js';
 import { get as getMaterial } from './materials.js';
 import { triggerSpaceTransmission } from './space.js';
 
 let raycaster, mouse;
 let activeComponentKey = null;
 let isThermal = false;
-let audioCtx = null;
-let audioMuted = true;
 let isLiveConnected = false;
 let nodeBaseUrl = '';
 let eventSource = null;
 let currentFanRpm = 2400;
+
+// Live-shadow connection management
+const RETRY_BASE_MS = 2000; // First retry delay; doubles on every consecutive failure
+const RETRY_MAX_MS = 60000; // Backoff cap
+const RETRY_MAX_ATTEMPTS = 8; // Then stop and stay in simulation until reload
+const POLL_INTERVAL_MS = 2000; // /api/status polling cadence (nodes without SSE)
+const SIM_INTERVAL_MS = 2000; // Local simulated-telemetry cadence (no network)
+const DOOR_SYNC_GRACE_MS = 3000; // Ignore live door state briefly after a local toggle
+let retryAttempt = 0;
+let retryTimer = null;
+let pollTimer = null;
+let simTimer = null;
+let telemetryStopped = false;
+let lastLocalDoorToggle = 0;
 
 export function init() {
   raycaster = new THREE.Raycaster();
@@ -33,86 +45,214 @@ export function init() {
   initTelemetryStream();
 }
 
-function initTelemetryStream() {
-  // 1. Determine Node URL (from query parameter or current origin)
-  const urlParams = new URLSearchParams(window.location.search);
-  nodeBaseUrl = urlParams.get('node') || (window.location.port === '8080' ? window.location.origin : 'http://localhost:8080');
-
-  console.log(`🔌 Initializing Digital Shadow connection to node: ${nodeBaseUrl}...`);
-
-  // Try EventSource SSE connection
-  tryConnectSSE();
-}
-
-function tryConnectSSE() {
-  if (eventSource) {
-    eventSource.close();
-  }
-
+/**
+ * Resolve which node (if any) to shadow.
+ * - `?node=<http(s) url>` always wins.
+ * - Without it, only a page served from localhost auto-connects to the local dashboard.
+ * - Otherwise (e.g. the public GitHub Pages site) no network connection is attempted.
+ */
+/**
+ * Headers for control POSTs. A node exposed beyond loopback requires its operator token
+ * (SMDC_DASHBOARD_TOKEN): pass it once as `?token=...`; it is kept in sessionStorage only.
+ */
+function controlHeaders() {
+  const headers = { 'Content-Type': 'application/json' };
+  let token = '';
   try {
-    const streamUrl = `${nodeBaseUrl}/api/telemetry/stream`;
-    eventSource = new EventSource(streamUrl);
-
-    eventSource.onopen = () => {
-      isLiveConnected = true;
-      updateConnectionBadge(true);
-      showToast('🟢 Connected to Live Sovereign Node Digital Shadow');
-    };
-
-    eventSource.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        applyLiveTelemetry(data);
-      } catch (e) {
-        console.warn('Error parsing telemetry payload', e);
-      }
-    };
-
-    eventSource.onerror = () => {
-      if (isLiveConnected) {
-        console.warn('SSE stream disconnected, falling back to polling...');
-        isLiveConnected = false;
-        updateConnectionBadge(false);
-      }
-      eventSource.close();
-      // Fallback to polling /api/status
-      startPollingFallback();
-    };
+    const fromUrl = new URLSearchParams(window.location.search).get('token');
+    if (fromUrl) sessionStorage.setItem('smdc_token', fromUrl);
+    token = sessionStorage.getItem('smdc_token') || '';
   } catch (e) {
-    console.warn('SSE not supported or blocked, using polling fallback', e);
-    startPollingFallback();
+    // sessionStorage unavailable: send no token
   }
+  if (token) headers.Authorization = `Bearer ${token}`;
+  return headers;
 }
 
-let pollInterval = null;
-function startPollingFallback() {
-  if (pollInterval) clearInterval(pollInterval);
+/** True (after telling the operator) when the node refused a control request. */
+function controlDenied(res) {
+  if (res.status !== 401 && res.status !== 403) return false;
+  showToast('⛔ Node refused control: operator token required (?token=...)');
+  return true;
+}
 
-  pollInterval = setInterval(async () => {
+function resolveNodeBaseUrl() {
+  const nodeParam = new URLSearchParams(window.location.search).get('node');
+  if (nodeParam) {
     try {
-      const res = await fetch(`${nodeBaseUrl}/api/status`, { mode: 'cors' });
-      if (res.ok) {
-        const data = await res.json();
-        if (!isLiveConnected) {
-          isLiveConnected = true;
-          updateConnectionBadge(true);
-        }
-        applyLiveTelemetry(data);
-      } else {
-        fallbackToSimulation();
+      const url = new URL(nodeParam);
+      if (url.protocol === 'http:' || url.protocol === 'https:') {
+        return url.origin + url.pathname.replace(/\/+$/, '');
       }
     } catch (e) {
-      fallbackToSimulation();
+      // fall through
     }
-  }, 2000);
+    console.warn('Ignoring invalid ?node= value (expected an http(s) URL)');
+    return '';
+  }
+
+  const host = window.location.hostname;
+  if (host === 'localhost' || host === '127.0.0.1' || host === '[::1]') {
+    return window.location.port === '8080' ? window.location.origin : 'http://localhost:8080';
+  }
+  return '';
 }
 
-function fallbackToSimulation() {
-  if (isLiveConnected) {
-    isLiveConnected = false;
-    updateConnectionBadge(false);
+function initTelemetryStream() {
+  nodeBaseUrl = resolveNodeBaseUrl();
+  window.addEventListener('pagehide', stopTelemetry);
+  window.addEventListener('pageshow', (e) => {
+    if (e.persisted) startTelemetry(); // Restored from the back/forward cache
+  });
+  startTelemetry();
+}
+
+function startTelemetry() {
+  telemetryStopped = false;
+  retryAttempt = 0;
+
+  if (!nodeBaseUrl) {
+    // Public / air-gapped page: simulation only, no connection attempts.
+    setConnected(false);
+    return;
   }
-  updateSimulatedTelemetry();
+
+  console.log(`🔌 Initializing Digital Shadow connection to node: ${nodeBaseUrl}...`);
+  setConnected(false);
+  connectSSE();
+}
+
+function setConnected(connected) {
+  const changed = connected !== isLiveConnected;
+  isLiveConnected = connected;
+  updateConnectionBadge(connected);
+
+  if (connected) {
+    clearInterval(simTimer);
+    simTimer = null;
+    if (changed) showToast('🟢 Connected to Live Sovereign Node Digital Shadow');
+  } else if (!simTimer && !telemetryStopped) {
+    updateSimulatedTelemetry();
+    simTimer = setInterval(updateSimulatedTelemetry, SIM_INTERVAL_MS);
+  }
+}
+
+function closeEventSource() {
+  if (eventSource) {
+    eventSource.onopen = eventSource.onmessage = eventSource.onerror = null;
+    eventSource.close();
+    eventSource = null;
+  }
+}
+
+/**
+ * Works with both a continuous SSE stream (repeated `data: {...}` events) and a
+ * stream that closes after each event (re-opened after RETRY_BASE_MS, without
+ * flipping the badge, as long as it keeps delivering data).
+ */
+function connectSSE() {
+  if (telemetryStopped) return;
+  closeEventSource();
+
+  let delivered = false;
+  try {
+    eventSource = new EventSource(`${nodeBaseUrl}/api/telemetry/stream`);
+  } catch (e) {
+    console.warn('SSE not supported or blocked, trying /api/status polling', e);
+    pollStatusOnce();
+    return;
+  }
+
+  eventSource.onopen = () => {
+    if (!isLiveConnected) setConnected(true);
+  };
+
+  eventSource.onmessage = (event) => {
+    let data;
+    try {
+      data = JSON.parse(event.data);
+    } catch (e) {
+      console.warn('Error parsing telemetry payload', e);
+      return;
+    }
+    delivered = true;
+    retryAttempt = 0;
+    if (!isLiveConnected) setConnected(true);
+    try {
+      applyLiveTelemetry(data);
+    } catch (e) {
+      console.warn('Error applying telemetry payload', e);
+    }
+  };
+
+  // The node is reachable but has no telemetry source: stop presenting stale values as live.
+  eventSource.addEventListener('unavailable', () => {
+    delivered = true;
+    if (isLiveConnected) {
+      console.warn('Node reports telemetry unavailable; showing simulation until it recovers');
+      setConnected(false);
+    }
+  });
+
+  eventSource.onerror = () => {
+    // Take over from the browser's fixed-interval auto-reconnect.
+    closeEventSource();
+    if (telemetryStopped) return;
+
+    if (delivered) {
+      // Stream ended after delivering data: re-open promptly, keep the badge as is.
+      retryTimer = setTimeout(connectSSE, RETRY_BASE_MS);
+    } else {
+      // Never produced data on this attempt: the node may lack SSE, or be down.
+      pollStatusOnce();
+    }
+  };
+}
+
+async function fetchStatus() {
+  const res = await fetch(`${nodeBaseUrl}/api/status`, { mode: 'cors' });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+/** Fallback for nodes without a usable SSE stream: poll while it works, back off when it doesn't. */
+async function pollStatusOnce() {
+  if (telemetryStopped) return;
+  try {
+    const data = await fetchStatus();
+    if (telemetryStopped) return;
+    retryAttempt = 0;
+    if (!isLiveConnected) setConnected(true);
+    applyLiveTelemetry(data);
+    pollTimer = setTimeout(pollStatusOnce, POLL_INTERVAL_MS);
+  } catch (e) {
+    if (telemetryStopped) return;
+    if (isLiveConnected) console.warn('Live node unreachable, falling back to simulation');
+    setConnected(false);
+    scheduleReconnect();
+  }
+}
+
+function scheduleReconnect() {
+  if (telemetryStopped) return;
+  if (retryAttempt >= RETRY_MAX_ATTEMPTS) {
+    console.warn(`Digital Shadow: node unreachable after ${RETRY_MAX_ATTEMPTS} retries, staying in simulation (reload to retry).`);
+    return;
+  }
+  const delay = Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** retryAttempt);
+  retryAttempt += 1;
+  clearTimeout(retryTimer);
+  retryTimer = setTimeout(connectSSE, delay);
+}
+
+/** Tear down every connection and timer (page unload, or manual stop). */
+export function stopTelemetry() {
+  telemetryStopped = true;
+  closeEventSource();
+  clearTimeout(retryTimer);
+  clearTimeout(pollTimer);
+  clearInterval(simTimer);
+  retryTimer = pollTimer = simTimer = null;
 }
 
 function updateConnectionBadge(connected) {
@@ -136,7 +276,7 @@ function applyLiveTelemetry(data) {
     const volt = data.power.battery_voltage;
 
     const hudSolar = document.getElementById('hud-solar');
-    if (hudSolar) hudSolar.textContent = `${Math.round(solarWatts).toLocaleString()} W`;
+    if (hudSolar) hudSolar.textContent = `${Math.round(solarWatts).toLocaleString('en-US')} W`;
 
     const hudBat = document.getElementById('hud-battery');
     if (hudBat) hudBat.textContent = `${soc.toFixed(1)}% (${volt.toFixed(1)}V)`;
@@ -148,7 +288,7 @@ function applyLiveTelemetry(data) {
       const slider = document.getElementById('slider-sun');
       if (slider) slider.value = estSunDeg;
       const valSun = document.getElementById('val-sun');
-      if (valSun) valSun.textContent = `${estSunDeg}° (${Math.round(solarWatts)}W)`;
+      if (valSun) valSun.textContent = `${estSunDeg}° (${Math.round(solarWatts).toLocaleString('en-US')}W)`;
     }
   }
 
@@ -173,8 +313,10 @@ function applyLiveTelemetry(data) {
   if (data.hardware) {
     currentFanRpm = data.hardware.fan_rpm || 2400;
 
-    // Synchronize 3D door state with live hardware state
-    if (typeof data.hardware.door_open === 'boolean') {
+    // Synchronize the 3D door mesh and the button with live hardware state
+    // (skipped briefly after a local toggle so a stale event cannot undo it).
+    if (typeof data.hardware.door_open === 'boolean' && Date.now() - lastLocalDoorToggle > DOOR_SYNC_GRACE_MS) {
+      setDoorOpen(data.hardware.door_open);
       const doorBtn = document.getElementById('btn-door');
       if (doorBtn) {
         doorBtn.classList.toggle('active', data.hardware.door_open);
@@ -187,7 +329,7 @@ function updateSimulatedTelemetry() {
   const baseSolar = 1330;
   const solarVariation = Math.round(baseSolar + (Math.random() - 0.5) * 40);
   const hudSolar = document.getElementById('hud-solar');
-  if (hudSolar) hudSolar.textContent = `${solarVariation.toLocaleString()} W`;
+  if (hudSolar) hudSolar.textContent = `${solarVariation.toLocaleString('en-US')} W`;
 
   const hudBat = document.getElementById('hud-battery');
   if (hudBat) hudBat.textContent = '88.5% (52.8V)';
@@ -201,14 +343,15 @@ function updateSimulatedTelemetry() {
 export async function triggerRemoteDoorToggle() {
   // 1. Play local 3D animation immediately
   const openState = toggleDoor();
-  playClickSound(500, 0.06);
+  lastLocalDoorToggle = Date.now();
+  document.getElementById('btn-door')?.classList.toggle('active', openState);
 
   // 2. If connected to live node, dispatch POST /api/control/rack-door
   if (isLiveConnected) {
     try {
       const res = await fetch(`${nodeBaseUrl}/api/control/rack-door`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: controlHeaders(),
         body: JSON.stringify({ open: openState }),
       });
       if (res.ok) {
@@ -216,6 +359,7 @@ export async function triggerRemoteDoorToggle() {
         showToast(json.door_open ? '🚪 Rack Door Solenoid Unlocked' : '🔒 Rack Door Solenoid Locked');
         return;
       }
+      if (controlDenied(res)) return;
     } catch (e) {
       console.warn('Failed to dispatch rack door control', e);
     }
@@ -226,14 +370,13 @@ export async function triggerRemoteDoorToggle() {
 export async function triggerRemoteDTNTransmit() {
   // 1. Trigger space beam animation
   triggerSpaceTransmission();
-  playClickSound(1000, 0.1);
 
   // 2. Dispatch to live node DTN router
   if (isLiveConnected) {
     try {
       const res = await fetch(`${nodeBaseUrl}/api/control/dtn-transmit`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: controlHeaders(),
         body: JSON.stringify({
           destination: 'dtn://ground-station-alpha.earth/telemetry',
           payload: `STATUS_SNAP_${Date.now()}`,
@@ -245,6 +388,7 @@ export async function triggerRemoteDTNTransmit() {
         showToast(`🚀 DTN Bundle Queued: ${json.bundle_id.slice(0, 18)}...`);
         return;
       }
+      if (controlDenied(res)) return;
     } catch (e) {
       console.warn('Failed to spool DTN bundle on live node', e);
     }
@@ -264,7 +408,8 @@ function onPointerDown(event) {
   const interactiveList = getInteractiveObjects();
   raycaster.setFromCamera(mouse, camera);
 
-  const intersects = raycaster.intersectObjects(interactiveList, true);
+  // The raycaster ignores .visible, so drop hits inside hidden (layer-isolated) groups.
+  const intersects = raycaster.intersectObjects(interactiveList, true).filter((i) => isVisibleInScene(i.object));
   if (intersects.length > 0) {
     let hit = intersects[0].object;
     while (hit && !hit.userData.componentKey && hit.parent) {
@@ -272,9 +417,15 @@ function onPointerDown(event) {
     }
     if (hit && hit.userData.componentKey) {
       selectComponent(hit.userData.componentKey);
-      playClickSound(800, 0.05);
     }
   }
+}
+
+function isVisibleInScene(obj) {
+  for (let o = obj; o; o = o.parent) {
+    if (!o.visible) return false;
+  }
+  return true;
 }
 
 export function selectComponent(compKey) {
@@ -308,7 +459,8 @@ export function toggleThermalHeatmap() {
   const thermalMat = getMaterial('thermalShader');
 
   scene.traverse((child) => {
-    if (child.isMesh && child.material) {
+    // Beam/pulses (userData.noThermal) keep their own materials: they are animated, not thermal surfaces.
+    if (child.isMesh && child.material && !child.userData.noThermal) {
       if (isThermal) {
         if (!child.userData.origMat) child.userData.origMat = child.material;
         child.material = thermalMat;
@@ -322,39 +474,6 @@ export function toggleThermalHeatmap() {
   if (btn) btn.classList.toggle('active', isThermal);
   showToast(isThermal ? '🌡️ Thermal Heatmap Active' : '🧊 Standard PBR Materials Active');
   return isThermal;
-}
-
-export function playClickSound(freq = 600, duration = 0.04) {
-  if (audioMuted) return;
-  try {
-    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    if (audioCtx.state === 'suspended') audioCtx.resume();
-
-    const osc = audioCtx.createOscillator();
-    const gain = audioCtx.createGain();
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
-    gain.gain.setValueAtTime(0.08, audioCtx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
-
-    osc.connect(gain);
-    gain.connect(audioCtx.destination);
-    osc.start();
-    osc.stop(audioCtx.currentTime + duration);
-  } catch (e) {
-    console.warn('Audio synthesis disabled', e);
-  }
-}
-
-export function toggleAudio() {
-  audioMuted = !audioMuted;
-  if (!audioMuted && !audioCtx) {
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  }
-  const btn = document.getElementById('btn-audio');
-  if (btn) btn.innerHTML = audioMuted ? '🔇 Audio: OFF' : '🔊 Audio: ON';
-  showToast(audioMuted ? '🔇 Audio Muted' : '🔊 Cyber SFX Active');
-  return !audioMuted;
 }
 
 export function showToast(msg) {
@@ -378,25 +497,26 @@ export function showToast(msg) {
 }
 
 export async function triggerUAVOptimization() {
-  playClickSound(880, 0.08);
   showToast('🎯 Triggering Scene-Aware PPO UAV Positioning Optimization...');
   if (isLiveConnected && nodeBaseUrl) {
     try {
       const res = await fetch(`${nodeBaseUrl}/api/metaverse/optimize`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: controlHeaders(),
         body: JSON.stringify({ cycles: 3 }),
       });
       if (res.ok) {
         const data = await res.json();
         const pos = data.uav_position;
         showToast(`✅ SA-PPO Optimized: UAV at (${pos[0].toFixed(1)}m, ${pos[1].toFixed(1)}m, ${pos[2].toFixed(1)}m)`);
+      } else {
+        controlDenied(res);
       }
     } catch (e) {
       console.warn('UAV optimization dispatch notice:', e);
     }
   } else {
-    showToast('✨ SA-PPO Simulated Step: +79.6% Rx1 Capacity Boost');
+    showToast('✨ SA-PPO simulated step (no live node connected)');
   }
 }
 

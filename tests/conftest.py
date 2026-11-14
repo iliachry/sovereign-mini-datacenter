@@ -7,8 +7,10 @@ from pathlib import Path
 
 import pytest
 
+from sovereign_dc import config as smdc_config
 from sovereign_dc.events import reset_event_bus
 from sovereign_dc.mcp.tools import reset_enterprise_manager
+from sovereign_dc.web import dashboard as smdc_dashboard
 from sovereign_dc.web.dashboard import _HARDWARE_LOCK, _HARDWARE_STATE
 
 
@@ -25,9 +27,12 @@ def isolate_smdc_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.delenv("SMDC_DASHBOARD_TOKEN", raising=False)
     monkeypatch.delenv("SMDC_CORS_ORIGIN", raising=False)
 
+    # The config singleton caches DTN_DB_PATH; without a reset every test shares the first one's spool.
+    smdc_config.reset_config()
     reset_event_bus()
     reset_enterprise_manager()
     with _HARDWARE_LOCK:
+        smdc_dashboard._METAVERSE_ORCH = None
         _HARDWARE_STATE["door_open"] = False
         _HARDWARE_STATE["pdu_outlets"] = [True, True, True, True, True, True, True, True]
         _HARDWARE_STATE["fan_rpm"] = 2400
@@ -35,5 +40,6 @@ def isolate_smdc_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
     yield
 
+    smdc_config.reset_config()
     reset_event_bus()
     reset_enterprise_manager()

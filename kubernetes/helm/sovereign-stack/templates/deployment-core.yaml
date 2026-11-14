@@ -10,6 +10,8 @@ metadata:
     app.kubernetes.io/component: open-webui
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       {{- include "sovereign-stack.selectorLabels" . | nindent 6 }}
@@ -70,7 +72,9 @@ metadata:
 spec:
   accessModes:
     - ReadWriteOnce
-  storageClassName: {{ .Values.global.storageClass }}
+  {{- with .Values.global.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
   resources:
     requests:
       storage: 5Gi
@@ -155,7 +159,9 @@ metadata:
 spec:
   accessModes:
     - ReadWriteOnce
-  storageClassName: {{ .Values.global.storageClass }}
+  {{- with .Values.global.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
   resources:
     requests:
       storage: {{ .Values.core.vaultwarden.persistence.size }}
@@ -250,7 +256,9 @@ metadata:
 spec:
   accessModes:
     - ReadWriteOnce
-  storageClassName: {{ .Values.global.storageClass }}
+  {{- with .Values.global.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
   resources:
     requests:
       storage: {{ .Values.core.nextcloud.persistence.size }}

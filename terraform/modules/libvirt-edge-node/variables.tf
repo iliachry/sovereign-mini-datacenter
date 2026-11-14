@@ -23,13 +23,13 @@ variable "pool_name" {
 }
 
 variable "disk_size_bytes" {
-  description = "Disk capacity in bytes"
+  description = "Capacity in bytes of the blank root disk. Only used when base_image_path is empty; a disk created from base_image_path has the size of that image."
   type        = number
   default     = 53687091200 # 50 GiB
 }
 
 variable "base_image_path" {
-  description = "Local path or URL to Talos / Ubuntu raw/qcow2 image"
+  description = "Local path or URL to a bootable Talos / Ubuntu qcow2 disk image. If left empty the VM gets a blank disk and no boot media (this module attaches no ISO), so it will not boot an OS until you install one by other means."
   type        = string
   default     = ""
 }
@@ -38,4 +38,10 @@ variable "network_name" {
   description = "Libvirt virtual network name (e.g. default, bridge)"
   type        = string
   default     = "default"
+}
+
+variable "wait_for_lease" {
+  description = "Block until the VM obtains a DHCP lease on a libvirt-managed network. Keep false when base_image_path is empty (nothing boots, so no lease ever appears) or when network_name is a bridge without libvirt DHCP; ip_addresses is then empty."
+  type        = bool
+  default     = false
 }

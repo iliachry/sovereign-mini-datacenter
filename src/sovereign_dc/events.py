@@ -178,6 +178,8 @@ class SovereignEventBus:
         Returns:
             List of recent events, newest first.
         """
+        if limit <= 0:
+            return []
         with self._lock:
             if event_type is None:
                 return list(reversed(self._history[-limit:]))

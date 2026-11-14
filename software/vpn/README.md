@@ -17,9 +17,18 @@ This module provides a **self-hosted, zero-trust peer-to-peer WireGuard mesh VPN
 
 ### 1. Launch Headscale
 
+Edit `software/vpn/config/headscale.yaml` first and set `server_url` to your public
+VPN URL (the same host as `DOMAIN_VPN` in `software/.env`). Headscale does not expand
+environment variables in this file.
+
 ```bash
-docker compose -f software/vpn/docker-compose.vpn.yml up -d
+./software/setup.sh --with-vpn
+# or standalone (the core stack's Traefik must be running to reach it over HTTPS):
+docker compose --project-directory software -f software/vpn/docker-compose.vpn.yml up -d
 ```
+
+The image is pinned to `headscale/headscale:0.23.0`; the config file follows that
+version's schema. Review both together when upgrading.
 
 ### 2. Create a User
 

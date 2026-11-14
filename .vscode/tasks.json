@@ -42,9 +42,9 @@
     {
       "label": "Run Quality Gates Pipeline",
       "type": "shell",
-      "command": "powershell -ExecutionPolicy Bypass -File .\\scripts\\quality_gate.ps1",
-      "linux": {
-        "command": "bash scripts/quality_gate.sh"
+      "command": "bash scripts/quality_gate.sh",
+      "windows": {
+        "command": "powershell -ExecutionPolicy Bypass -File .\\scripts\\quality_gate.ps1"
       },
       "group": "test",
       "presentation": {
@@ -113,7 +113,10 @@
     {
       "label": "Validate Docker Compose Stacks",
       "type": "shell",
-      "command": "docker compose -f software/docker-compose.yml config --quiet",
+      "command": "bash scripts/validate_compose.sh",
+      "windows": {
+        "command": "powershell -ExecutionPolicy Bypass -File .\\scripts\\dev.ps1 docker-validate"
+      },
       "presentation": {
         "reveal": "always"
       }

@@ -66,29 +66,36 @@ class MeshChaosSimulator:
         Verifies that only the majority partition can elect a leader and commit log entries,
         while the minority partition safely steps down or halts log commits.
         """
+        total = len(self.node_ids)
+        if total < 2:
+            raise ValueError("split-brain simulation needs at least 2 nodes")
+        if not 0 < group_a_size < total:
+            raise ValueError(f"group_a_size must be between 1 and {total - 1} (got {group_a_size})")
+
         t0 = time.perf_counter()
         cluster = RaftCluster(self.node_ids)
 
         group_a = self.node_ids[:group_a_size]
         group_b = self.node_ids[group_a_size:]
+        quorum = (total // 2) + 1
+        # Whichever side holds a strict majority is the "majority partition"; on an
+        # even split neither side has quorum and neither may elect a leader.
+        if len(group_b) >= quorum:
+            majority_group, minority_group = group_b, group_a
+        else:
+            majority_group, minority_group = group_a, group_b
+        majority_has_quorum = len(majority_group) >= quorum
 
         # 1. Elect initial cluster leader across full network
         leader_id = cluster.step_election(self.node_ids[0])
 
-        # 2. Partition: isolate peers between group_a and group_b
-        for nid in group_a:
-            cluster.nodes[nid].peers = [p for p in group_a if p != nid]
-        for nid in group_b:
-            cluster.nodes[nid].peers = [p for p in group_b if p != nid]
+        # 2-4. Partition the network (membership and quorum size stay at ``total``) and
+        # trigger an election on each side; only peers on the same side are reachable.
+        majority_leader = cluster.step_election(majority_group[0], reachable=set(majority_group))
+        minority_leader = cluster.step_election(minority_group[0], reachable=set(minority_group))
 
-        # 3. Trigger election in majority partition (group_a has 3/5 quorum)
-        majority_leader = cluster.step_election(group_a[0])
-
-        # 4. Trigger election in minority partition (group_b has 2/5 -> cannot form quorum)
-        minority_leader = cluster.step_election(group_b[0])
-
-        # Majority must elect a leader; minority must fail (leader is None)
-        quorum_preserved = majority_leader is not None and minority_leader is None
+        # A side elects a leader if and only if it holds quorum.
+        quorum_preserved = (majority_leader is not None) == majority_has_quorum and minority_leader is None
 
         elapsed = (time.perf_counter() - t0) * 1000.0
         return ChaosResult(
@@ -97,8 +104,10 @@ class MeshChaosSimulator:
             success=quorum_preserved,
             details={
                 "initial_leader": leader_id,
-                "majority_partition": group_a,
-                "minority_partition": group_b,
+                "majority_partition": majority_group,
+                "minority_partition": minority_group,
+                "quorum_size": quorum,
+                "majority_has_quorum": majority_has_quorum,
                 "majority_leader": majority_leader,
                 "minority_leader": minority_leader,
                 "split_brain_prevented": quorum_preserved,
@@ -119,15 +128,12 @@ class MeshChaosSimulator:
         cmd_idx = cluster.nodes[crashed_leader].submit_command({"task": "solar_ai_batch"})
         cluster.replicate_heartbeats(crashed_leader)
 
-        # 3. Simulate sudden crash: remove leader from cluster peer lists
+        # 3. Simulate sudden crash: the leader stops answering. It is still a cluster
+        # member, so the survivors need a majority of the ORIGINAL cluster size.
         surviving_nodes = [n for n in self.node_ids if n != crashed_leader]
-        del cluster.nodes[crashed_leader]
-
-        for nid, node in cluster.nodes.items():
-            node.peers = [p for p in surviving_nodes if p != nid]
 
         # 4. Trigger election among surviving nodes
-        new_leader = cluster.step_election(surviving_nodes[0])
+        new_leader = cluster.step_election(surviving_nodes[0], reachable=set(surviving_nodes))
         failover_success = new_leader is not None and new_leader in surviving_nodes
 
         elapsed = (time.perf_counter() - t0) * 1000.0
@@ -191,29 +197,45 @@ class MeshChaosSimulator:
             resilience_score=100.0 if spool_success else 0.0,
         )
 
-    def simulate_packet_loss_replication(self, loss_rate: float = 0.3) -> ChaosResult:
-        """Simulates lossy RF links (e.g. 30% drop rate) during log replication."""
+    def simulate_packet_loss_replication(self, loss_rate: float = 0.3, max_rounds: int = 20) -> ChaosResult:
+        """Simulates lossy RF links (e.g. 30% drop rate) during log replication.
+
+        The leader retransmits for up to ``max_rounds`` heartbeat rounds. The scenario
+        succeeds only if every submitted entry was actually committed on a majority.
+        """
+        if not 0.0 <= loss_rate <= 1.0:
+            raise ValueError(f"loss_rate must be within [0, 1] (got {loss_rate})")
+        if max_rounds < 1:
+            raise ValueError(f"max_rounds must be >= 1 (got {max_rounds})")
+
         t0 = time.perf_counter()
         cluster = RaftCluster(self.node_ids)
         leader_id = cluster.step_election(self.node_ids[0]) or self.node_ids[0]
+        leader = cluster.nodes[leader_id]
 
         # Submit multiple commands
-        for i in range(5):
-            cluster.nodes[leader_id].submit_command({"batch_id": i})
+        submitted = 5
+        for i in range(submitted):
+            leader.submit_command({"batch_id": i})
 
-        # Replicate heartbeats with simulated probabilistic drop
-        leader = cluster.nodes[leader_id]
+        # Replicate with a probabilistic drop on each direction-pair (RPC + reply)
         delivered_count = 0
-        for peer_id in leader.peers:
-            if random.random() >= loss_rate:
-                args = leader.create_append_entries(peer_id)
-                reply = cluster.nodes[peer_id].handle_append_entries(args)
-                leader.handle_append_reply(peer_id, reply, len(cluster.nodes))
-                delivered_count += 1
+        attempts = 0
+        rounds = 0
+        while rounds < max_rounds and leader.commit_index < len(leader.log):
+            rounds += 1
+            for peer_id in leader.peers:
+                attempts += 1
+                if random.random() >= loss_rate:
+                    args = leader.create_append_entries(peer_id)
+                    reply = cluster.nodes[peer_id].handle_append_entries(args)
+                    leader.handle_append_reply(peer_id, reply, len(cluster.nodes))
+                    delivered_count += 1
 
         elapsed = (time.perf_counter() - t0) * 1000.0
-        # Success if leader log remains consistent despite packet drops
-        success = len(leader.log) == 5
+        committed = leader.commit_index
+        success = len(leader.log) == submitted and committed == submitted
+        delivery_ratio = (delivered_count / attempts) if attempts else 0.0
         return ChaosResult(
             scenario=ChaosScenario.PACKET_LOSS_REPLICATION,
             nodes_involved=self.node_ids,
@@ -221,10 +243,14 @@ class MeshChaosSimulator:
             details={
                 "loss_rate": loss_rate,
                 "leader_log_entries": len(leader.log),
+                "committed_entries": committed,
+                "replication_rounds": rounds,
+                "transmission_attempts": attempts,
                 "successful_transmissions": delivered_count,
+                "delivery_ratio": round(delivery_ratio, 3),
             },
             elapsed_ms=round(elapsed, 2),
-            resilience_score=round(100.0 * (1.0 - (loss_rate * 0.2)), 1),
+            resilience_score=round(100.0 * committed / submitted, 1),
         )
 
     def run_all_scenarios(self) -> dict[str, ChaosResult]:

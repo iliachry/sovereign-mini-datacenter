@@ -12,7 +12,7 @@ The Terraform/OpenTofu architecture provides modular, vendor-agnostic infrastruc
 flowchart TD
     subgraph "IaC Orchestration Layer (OpenTofu / Terraform)"
         TF_ROOT["Root Environments<br/>(baremetal-talos / proxmox-dev)"]
-        M_TALOS["Module: talos-cluster<br/>(Machine Secrets, LUKS2, NVIDIA Extensions)"]
+        M_TALOS["Module: talos-cluster<br/>(Machine Secrets, LUKS2, optional NVIDIA Extensions)"]
         M_PVE["Module: proxmox-edge-node<br/>(PCIe GPU Passthrough & 10GbE vLANs)"]
         M_WG["Module: wireguard-mesh<br/>(Zero-Trust P2P Overlay 10.42.0.0/16)"]
         M_HELM["Module: k8s-sovereign-stack<br/>(Helm Deployment of Sovereign Stack)"]
@@ -27,8 +27,8 @@ flowchart TD
     subgraph "Kubernetes Workloads (sovereign Namespace)"
         OLLAMA["Local LLM Inference<br/>(Ollama / Qwen2.5 / DeepSeek)"]
         QDRANT["Semantic Vector DB<br/>(Qdrant RAG)"]
-        TELEMETRY["Solar / BMS Exporter<br/>(Victron MPPT + SmartShunt)"]
-        SPACE_DTN["Space DTN BPv7 Router<br/>(RFC 9171 SGP4 Spool)"]
+        TELEMETRY["Power Telemetry Exporter<br/>(simulated data by default)"]
+        SPACE_DTN["Space DTN BPv7 Router<br/>(RFC 9171 SGP4 Spool, opt-in: space.enabled)"]
     end
 
     TF_ROOT --> M_TALOS
@@ -37,13 +37,13 @@ flowchart TD
     TF_ROOT --> M_HELM
 
     M_TALOS -->|"Apply OS Config & LUKS2"| NODE_CP
-    M_TALOS -->|"Apply GPU Extensions"| NODE_GPU1
-    M_TALOS -->|"Apply GPU Extensions"| NODE_GPU2
+    M_TALOS -->|"Apply OS Config & GPU Image"| NODE_GPU1
+    M_TALOS -->|"Apply OS Config & GPU Image"| NODE_GPU2
 
     M_HELM -->|"Deploy Helm Chart"| OLLAMA
     M_HELM -->|"Deploy Helm Chart"| QDRANT
     M_HELM -->|"Deploy Helm Chart"| TELEMETRY
-    M_HELM -->|"Deploy Helm Chart"| SPACE_DTN
+    M_HELM -.->|"Optional"| SPACE_DTN
 ```
 
 ---
@@ -62,7 +62,7 @@ terraform/
 │   │   └── versions.tf
 │   ├── proxmox-edge-node/              # Proxmox VE VM provisioning with PCIe passthrough
 │   │   ├── main.tf                     # VM resources, virtio SCSI disks, GPU passthrough
-│   │   ├── variables.tf                # CPU cores, RAM, datastore, PCI IDs
+│   │   ├── variables.tf                # CPU cores, RAM, datastore, PCI ID / resource mapping
 │   │   ├── outputs.tf                  # VM IDs, MAC addresses
 │   │   └── versions.tf
 │   ├── libvirt-edge-node/              # Local KVM / Libvirt development cluster
@@ -78,14 +78,14 @@ terraform/
 │   │   └── versions.tf
 │   └── k8s-sovereign-stack/            # Helm deployment of kubernetes/helm/sovereign-stack
 │       ├── main.tf                     # Helm release binding for AI, telemetry & DTN
-│       ├── variables.tf                # Release namespace, GPU limit, AI models
+│       ├── variables.tf                # Namespace, StorageClass, ingress, GPU, AI model
 │       ├── outputs.tf                  # Helm release status and namespace
 │       └── versions.tf
 └── environments/
     ├── baremetal-talos/                # Production bare-metal 3-node cluster deployment
     │   ├── main.tf                     # Integrates talos-cluster and k8s-sovereign-stack
     │   ├── variables.tf
-    │   ├── terraform.tfvars.example    # Sample IPs, node hostnames, and install disks
+    │   ├── terraform.tfvars.example    # Sample IPs, NIC names, install disks, prerequisites
     │   ├── outputs.tf
     │   └── versions.tf
     └── proxmox-dev/                    # Virtualized Proxmox VE testbed deployment
@@ -102,11 +102,11 @@ terraform/
 
 | Module | Target | Key Features |
 | :--- | :--- | :--- |
-| **`talos-cluster`** | Bare-metal compute nodes | LUKS2 disk encryption, 10GbE network bonding, NVIDIA open GPU kernel modules & container toolkit extensions, zero-trust Talos API. |
-| **`proxmox-edge-node`** | Proxmox VE hypervisors | Automated VM creation, PCIe GPU device passthrough (RTX 4090 / Jetson PCIe), VirtIO SCSI SSD storage with TRIM/discard. |
-| **`libvirt-edge-node`** | Local Linux / KVM | Headless edge VM testbeds with host-passthrough CPU and bridged virtual networking. |
-| **`wireguard-mesh`** | Multi-node edge mesh | Dynamic asymmetric key generation, preshared keys, automated `wg0.conf` generation for P2P mesh (`10.42.0.0/16`). |
-| **`k8s-sovereign-stack`** | Kubernetes ($\ge 1.30$) | Automated deployment of [`kubernetes/helm/sovereign-stack`](../kubernetes/helm/sovereign-stack) with Ollama GPU allocation, Qdrant, Space DTN, and telemetry. |
+| **`talos-cluster`** | Bare-metal compute nodes | LUKS2 disk encryption, optional static addressing per node (`interface` + `network_prefix_length` + `gateway`; no bonding), optional NVIDIA drivers for GPU workers via a Talos Image Factory installer image (`gpu_installer_image`) or explicit extension image references (`gpu_extension_images`), Talos API bootstrap and kubeconfig export. |
+| **`proxmox-edge-node`** | Proxmox VE hypervisors | Automated VM creation, PCIe GPU passthrough on the `q35` machine type (by PCI resource mapping `gpu_mapping`, or raw PCI id for `root@pam` password auth only), SCSI SSD storage with TRIM/discard, optional QEMU guest agent (off by default; stock Talos has none). |
+| **`libvirt-edge-node`** | Local Linux / KVM | Headless edge VM testbeds with host-passthrough CPU (dmacvicar/libvirt `0.8.x`). Needs `base_image_path` pointing at a bootable disk image; without it the VM has a blank disk and no boot media. |
+| **`wireguard-mesh`** | Multi-node edge mesh | Asymmetric key generation, one preshared key per node pair, `wg0.conf` generation for a full mesh inside `mesh_subnet` (`10.42.0.0/16`). Each peer is routed only its own `/32` plus explicitly listed extra CIDRs. |
+| **`k8s-sovereign-stack`** | Kubernetes ($\ge 1.30$) | Deploys [`kubernetes/helm/sovereign-stack`](../kubernetes/helm/sovereign-stack) (Ollama, Qdrant, core services, telemetry) and exposes `storage_class`, `ingress_enabled`, `ingress_class_name`, `enable_gpu` and `gpu_runtime_class_name`. Installs no cluster add-ons; see the prerequisites below. Telemetry is simulated by default (`simulate_telemetry = true`): hardware mode (`false`) requires an ESP32 telemetry bridge or a serial device, which the chart does not wire yet, so it yields no real measurements. |
 
 ---
 
@@ -120,6 +120,20 @@ terraform/
 - **`talosctl`** CLI installed for interacting with Talos Linux nodes.
 - **`kubectl`** and **`helm`** CLI tools.
 
+### Cluster prerequisites (not installed by this IaC)
+
+> **Read this before `tofu apply`.** The `talos-cluster` module produces a bare Kubernetes cluster. The Helm chart deployed by `k8s-sovereign-stack` needs cluster add-ons that **no module in this directory installs**:
+
+| Prerequisite | Needed for | Variable | If it is missing |
+| :--- | :--- | :--- | :--- |
+| StorageClass backed by a dynamic provisioner | every PersistentVolumeClaim | `storage_class` | PVCs stay `Pending`; the Helm release times out |
+| Ingress controller | the Ingress for the web UIs | `ingress_enabled`, `ingress_class_name` | the Ingress is never served; keep `ingress_enabled = false` |
+| NVIDIA drivers on GPU workers (Talos Image Factory image), NVIDIA device plugin and usually an `nvidia` RuntimeClass | `nvidia.com/gpu` for Ollama | `gpu_installer_image`, `enable_gpu`, `gpu_runtime_class_name` | the Ollama pod stays `Pending`; keep `enable_gpu = false` (CPU inference) |
+
+k3s ships a `local-path` StorageClass and Traefik, which is why the chart defaults to them; Talos ships neither. In `environments/baremetal-talos`, `storage_class` therefore has no default, and ingress and GPU are off until you enable them.
+
+The NVIDIA extension images are deliberately not hard-coded: their tags are not the Talos version. Generate an installer image (or look up the exact extension references) for your Talos release at [Talos Image Factory](https://factory.talos.dev).
+
 ---
 
 ### Option A — Deploy Bare-Metal Talos Cluster & Sovereign Stack
@@ -132,15 +146,27 @@ terraform/
 2. **Configure Node Hardware Settings**:
    ```bash
    cp terraform.tfvars.example terraform.tfvars
-   # Edit IP addresses, NVMe install disks, and hostnames to match physical rack
+   # Edit IP addresses, NIC names, NVMe install disks and hostnames to match the physical rack,
+   # and set storage_class (see "Cluster prerequisites")
    ```
+   Each node must already answer on its `ip` in Talos maintenance mode (for example through a DHCP reservation). Setting `interface` then pins that address statically; leaving it unset keeps the node on DHCP.
 
-3. **Initialize and Apply Infrastructure**:
+3. **Initialize and Apply in Two Stages**:
    ```bash
    tofu init
+
+   # Stage 1: bring up the Talos cluster only
+   tofu apply -target=module.talos
+
+   # Install the prerequisites on the new cluster (storage provisioner, and
+   # optionally an ingress controller and the NVIDIA device plugin)
+   export KUBECONFIG="$(pwd)/_output/kubeconfig"
+
+   # Stage 2: deploy the sovereign stack
    tofu plan -out=tfplan
    tofu apply tfplan
    ```
+   A single-pass apply cannot converge on a fresh cluster, because the Helm release waits for PersistentVolumeClaims that only bind once a storage provisioner exists.
 
 4. **Verify Deployment & Connect**:
    The module automatically saves the cluster credentials into `./_output/`:
@@ -167,8 +193,9 @@ terraform/
 2. **Set Proxmox API Credentials**:
    ```bash
    cp terraform.tfvars.example terraform.tfvars
-   # Set proxmox_endpoint, proxmox_api_token, and target_node
+   # Set proxmox_endpoint, proxmox_api_token, target_node and gpu_mapping
    ```
+   The GPU worker uses PCIe passthrough through a Proxmox **PCI resource mapping** (`gpu_mapping`, created under Datacenter > Resource Mappings), because Proxmox does not let API tokens attach a raw PCI id. TLS verification of the Proxmox API is on by default (`proxmox_insecure = false`).
 
 3. **Apply Virtual Infrastructure**:
    ```bash
@@ -180,6 +207,6 @@ terraform/
 
 ## 5. Security & Post-Quantum Hardening
 
-- **At-Rest Hardware Encryption**: The `talos-cluster` module automatically provisions **LUKS2** encrypted partitions on `/dev/nvme*` for both system state and ephemeral container storage.
+- **At-Rest Encryption**: With `enable_luks_encryption = true` the `talos-cluster` module encrypts the Talos STATE and EPHEMERAL partitions of the install disk with **LUKS2**, using a key derived from the node's hardware UUID (`nodeID`). This protects data on a disk that is removed from its node (disposal, RMA, a stolen drive). It does **not** protect against theft of the whole node, which unlocks itself at boot, and the node UUID is not a secret. For that threat model switch the key to a TPM-sealed or KMS-backed key in the machine config.
 - **API-Only Zero-Trust Architecture**: Talos Linux nodes operate with no SSH daemons, no shell access, and no mutable root filesystems; all management occurs via mutual-TLS gRPC APIs (`talosctl`).
 - **Mesh Cryptography**: Mesh nodes communicate across isolated WireGuard interfaces configured with unique preshared keys (PSK) and post-quantum compatible packet wrappers.

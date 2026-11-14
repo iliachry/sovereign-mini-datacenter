@@ -1,14 +1,25 @@
 """Sovereign Mini Datacenter — Enterprise Application Lifecycle & Power Manager.
 
-Coordinates process supervision, health probing, load shedding adaptation,
-and air-gapped cryptographic package distribution for enterprise workloads.
+Tracks the declared lifecycle state (registered / running / paused / stopped) of
+registered enterprise workloads, adapts that state to load-shedding events, and builds
+signed `.smdc-app` packages for air-gapped distribution.
+
+Scope note: this manager is a state tracker, not a process supervisor. ``start_app`` /
+``stop_app`` / ``pause_app`` / ``resume_app`` record the intended state and publish events;
+they do not launch, signal or probe an operating-system process, ``pid`` is never set, and
+the CPU / RAM / power figures are estimates derived from the manifest's resource quotas
+(``metrics_source == "estimated"``), not measurements. State lives in memory only, so each
+``EnterpriseManager`` instance (e.g. each CLI invocation) starts from "registered".
 """
 
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import logging
+import math
+import os
 import tarfile
 import threading
 import time
@@ -17,15 +28,47 @@ from pathlib import Path
 from typing import Any
 
 from sovereign_dc.enterprise.registry import EnterpriseRegistry
-from sovereign_dc.enterprise.schema import AppManifest, AppStatus, PowerPriority
+from sovereign_dc.enterprise.schema import (
+    AppManifest,
+    AppStatus,
+    PowerPriority,
+    is_valid_app_id,
+    is_valid_app_version,
+)
 from sovereign_dc.events import Event, SovereignEventBus, get_event_bus
 
 logger = logging.getLogger("smdc.enterprise.manager")
 
+PACKAGE_SIGNATURE_ALGORITHM = "NIST-FIPS-204-ML-DSA-87"
+# Scheme 2 signs the canonical JSON of (app_id, version, sha256, package_size_bytes);
+# sidecars without a scheme marker were signed over the SHA-256 hex digest only.
+PACKAGE_SIGNATURE_SCHEME = "smdc-package-v2"
+
+METRICS_SOURCE_NONE = "none"
+METRICS_SOURCE_ESTIMATED = "estimated"
+
+_SHED_TIERS = (PowerPriority.L2_BACKGROUND, PowerPriority.L3_DEFERRABLE, PowerPriority.L4_IDLE)
+_MODE_LEVELS: dict[str, int] = {
+    "NORMAL": 0,
+    "NOMINAL": 0,
+    "SOLAR_SURPLUS": 0,
+    "SOLAR_SURPLUS_COMPUTE": 0,
+    "ECO_PRESERVATION": 2,
+    "SHEDDING": 2,
+    "LOW_BATTERY": 2,
+    "CRITICAL_SHEDDING": 3,
+    "EMERGENCY": 3,
+    "CRITICAL": 3,
+}
+
 
 @dataclass
 class AppRuntimeState:
-    """Live execution metrics and supervision state for an application."""
+    """Tracked lifecycle state of an application.
+
+    ``cpu_usage_percent``, ``ram_usage_mb`` and ``power_draw_w`` are estimates computed from
+    the manifest quotas when ``metrics_source`` is ``"estimated"``; nothing is measured.
+    """
 
     manifest: AppManifest
     status: AppStatus = AppStatus.REGISTERED
@@ -39,6 +82,7 @@ class AppRuntimeState:
     power_draw_w: float = 0.0
     error_message: str | None = None
     custom_metrics: dict[str, Any] = field(default_factory=dict)
+    metrics_source: str = METRICS_SOURCE_NONE
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -54,13 +98,113 @@ class AppRuntimeState:
             "cpu_usage_percent": self.cpu_usage_percent,
             "ram_usage_mb": self.ram_usage_mb,
             "power_draw_w": self.power_draw_w,
+            "metrics_source": self.metrics_source,
+            "process_supervised": False,
             "error_message": self.error_message,
-            "custom_metrics": self.custom_metrics,
+            "custom_metrics": dict(self.custom_metrics),
         }
 
 
+def package_sidecar_path(package_path: Path | str) -> Path:
+    """Returns the path of the signature/metadata sidecar that belongs to a package file."""
+    return Path(package_path).with_suffix(".smdc-app.sig")
+
+
+def _package_signing_input(metadata: dict[str, Any], scheme: str | None) -> bytes:
+    """Builds the byte string covered by a package signature for the given scheme."""
+    if scheme == PACKAGE_SIGNATURE_SCHEME:
+        return json.dumps(
+            {
+                "scheme": PACKAGE_SIGNATURE_SCHEME,
+                "app_id": metadata.get("app_id"),
+                "version": metadata.get("version"),
+                "sha256": metadata.get("sha256"),
+                "package_size_bytes": metadata.get("package_size_bytes"),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    return str(metadata.get("sha256", "")).encode("utf-8")
+
+
+def _sha256_file(path: Path) -> str:
+    hasher = hashlib.sha256()
+    with open(path, "rb") as f:
+        while chunk := f.read(65536):
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+
+def verify_package(
+    path: Path | str,
+    trusted_public_key: bytes | str,
+    sidecar_path: Path | str | None = None,
+) -> tuple[bool, str]:
+    """Verifies a ``.smdc-app`` package against its sidecar and a pinned ML-DSA-87 public key.
+
+    Checks that the archive's SHA-256 and size match the sidecar, that the sidecar was signed
+    by exactly ``trusted_public_key`` (raw bytes or hex) and that the ML-DSA-87 signature is
+    valid. The key embedded in the sidecar is never trusted on its own.
+
+    Returns:
+        ``(True, "ok")`` on success, otherwise ``(False, <reason>)``.
+    """
+    package = Path(path)
+    sidecar = Path(sidecar_path) if sidecar_path is not None else package_sidecar_path(package)
+    try:
+        trusted = bytes.fromhex(trusted_public_key) if isinstance(trusted_public_key, str) else trusted_public_key
+    except ValueError:
+        return False, "trusted public key is not valid hex"
+    if not isinstance(trusted, (bytes, bytearray)) or not trusted:
+        return False, "trusted public key is required"
+    if not package.is_file():
+        return False, f"package not found: {package}"
+    if not sidecar.is_file():
+        return False, f"signature sidecar not found: {sidecar}"
+
+    try:
+        metadata = json.loads(sidecar.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        return False, f"unreadable signature sidecar: {e}"
+    if not isinstance(metadata, dict):
+        return False, "signature sidecar is not a JSON object"
+
+    try:
+        actual_digest = _sha256_file(package)
+        actual_size = package.stat().st_size
+    except OSError as e:
+        return False, f"unreadable package: {e}"
+    if not hmac.compare_digest(actual_digest, str(metadata.get("sha256", ""))):
+        return False, "package SHA-256 does not match the sidecar"
+
+    sig_block = metadata.get("pqc_signature")
+    if not isinstance(sig_block, dict):
+        return False, "package is not signed"
+    if sig_block.get("algorithm") != PACKAGE_SIGNATURE_ALGORITHM:
+        return False, f"unsupported signature algorithm: {sig_block.get('algorithm')!r}"
+    scheme = sig_block.get("scheme")
+    if scheme not in (None, PACKAGE_SIGNATURE_SCHEME):
+        return False, f"unsupported signature scheme: {scheme!r}"
+    if scheme == PACKAGE_SIGNATURE_SCHEME and metadata.get("package_size_bytes") != actual_size:
+        return False, "package size does not match the sidecar"
+
+    try:
+        signer_key = bytes.fromhex(str(sig_block.get("public_key_hex", "")))
+        signature = bytes.fromhex(str(sig_block.get("signature_hex", "")))
+    except ValueError:
+        return False, "malformed signature block"
+    if not hmac.compare_digest(signer_key, bytes(trusted)):
+        return False, "package was not signed by the trusted public key"
+
+    from sovereign_dc.security.pqc import PQCAlgorithm, PQCSigner
+
+    if not PQCSigner(PQCAlgorithm.ML_DSA_87).verify(_package_signing_input(metadata, scheme), signature, signer_key):
+        return False, "invalid ML-DSA-87 signature"
+    return True, "ok"
+
+
 class EnterpriseManager:
-    """Supervises running enterprise applications and enforces solar-aware shedding."""
+    """Tracks enterprise application lifecycle state and applies solar-aware shedding to it."""
 
     def __init__(
         self,
@@ -71,6 +215,8 @@ class EnterpriseManager:
         self.event_bus = event_bus or get_event_bus()
         self._lock = threading.RLock()
         self._runtimes: dict[str, AppRuntimeState] = {}
+        # Apps this manager paused because of load shedding (as opposed to an operator pause).
+        self._shed_paused: set[str] = set()
 
         # Initialize runtime states from registry
         for app in self.registry.list_apps():
@@ -88,172 +234,263 @@ class EnterpriseManager:
             logger.warning("Could not subscribe to event bus: %s", e)
 
     @staticmethod
-    def _extract_shedding_level(payload: dict[str, Any]) -> int:
-        """Normalize load shedding level from integer, L-tier string, or Sentinel mode string."""
-        raw_level = payload.get("level")
-        if isinstance(raw_level, int):
-            return raw_level
-        if isinstance(raw_level, str):
-            cleaned = raw_level.strip().upper().lstrip("L")
-            if cleaned.isdigit():
-                return int(cleaned)
-        mode = str(payload.get("mode", "")).strip().upper()
-        if mode in ("ECO_PRESERVATION", "SHEDDING", "LOW_BATTERY"):
-            return 2
-        if mode in ("CRITICAL_SHEDDING", "EMERGENCY", "CRITICAL"):
-            return 3
-        return 0
+    def _parse_level(raw: Any) -> int | None:
+        """Parses one level value (2, 2.0, "2", "2.0", "L2", "critical") or returns None."""
+        if raw is None or isinstance(raw, bool):
+            return None
+        if isinstance(raw, (int, float)):
+            if not math.isfinite(raw) or raw < 0:
+                return None
+            return int(raw)
+        if isinstance(raw, str):
+            cleaned = raw.strip().upper()
+            if cleaned in _MODE_LEVELS:
+                return _MODE_LEVELS[cleaned]
+            numeric = cleaned[1:] if cleaned.startswith("L") else cleaned
+            try:
+                value = float(numeric)
+            except ValueError:
+                return None
+            if not math.isfinite(value) or value < 0:
+                return None
+            return int(value)
+        return None
+
+    @classmethod
+    def _extract_shedding_level(cls, payload: dict[str, Any]) -> int | None:
+        """Normalize the load shedding level from a numeric, L-tier or Sentinel mode payload.
+
+        Returns None when the payload carries no level this manager understands; callers
+        must treat that as "no change" rather than as level 0.
+        """
+        level = cls._parse_level(payload.get("level"))
+        if level is not None:
+            return level
+        return cls._parse_level(payload.get("mode"))
 
     def _on_load_shedding_event(self, event: Event) -> None:
-        """Handle power load shedding signals and adjust running enterprise workloads."""
-        level = self._extract_shedding_level(event.payload)
+        """Handle power load shedding signals and adjust tracked enterprise workload state."""
+        payload = event.payload if isinstance(event.payload, dict) else {}
+        level = self._extract_shedding_level(payload)
+        if level is None:
+            logger.warning(
+                "Ignoring load shedding event with unrecognised level/mode: level=%r mode=%r",
+                payload.get("level"),
+                payload.get("mode"),
+            )
+            return
         logger.info("EnterpriseManager received load shedding signal level %s", level)
 
-        with self._lock:
-            runtime_items = list(self._runtimes.items())
-
         if level >= 2:  # Severe/Low Battery Shedding
-            for app_id, runtime in runtime_items:
-                tier = runtime.manifest.power.tier
-                if tier in [PowerPriority.L2_BACKGROUND, PowerPriority.L3_DEFERRABLE, PowerPriority.L4_IDLE]:
-                    if runtime.status == AppStatus.RUNNING:
-                        self.pause_app(app_id, reason=f"Load shedding level {level}")
+            with self._lock:
+                targets = [
+                    app_id
+                    for app_id, runtime in self._runtimes.items()
+                    if runtime.status == AppStatus.RUNNING and runtime.manifest.power.tier in _SHED_TIERS
+                ]
+            for app_id in targets:
+                self._pause(app_id, reason=f"Load shedding level {level}", by_shedding=True)
         elif level == 0:  # Nominal / Solar Surplus
-            for app_id, runtime in runtime_items:
-                if runtime.status == AppStatus.PAUSED:
-                    self.resume_app(app_id, reason="Solar power recovery (Level 0)")
+            # Resume only what shedding paused; an operator's pause stays in force.
+            with self._lock:
+                targets = [
+                    app_id
+                    for app_id in sorted(self._shed_paused)
+                    if app_id in self._runtimes and self._runtimes[app_id].status == AppStatus.PAUSED
+                ]
+                self._shed_paused.clear()
+            for app_id in targets:
+                self.resume_app(app_id, reason="Solar power recovery (Level 0)")
 
     def _on_enterprise_telemetry(self, event: Event) -> None:
         """Ingest custom telemetry published by enterprise app instances."""
-        app_id = event.payload.get("app_id")
-        if app_id and app_id in self._runtimes:
-            metrics = event.payload.get("metrics", {})
-            self._runtimes[app_id].custom_metrics.update(metrics)
+        payload = event.payload if isinstance(event.payload, dict) else {}
+        app_id = payload.get("app_id")
+        metrics = payload.get("metrics", {})
+        if not isinstance(app_id, str) or not isinstance(metrics, dict):
+            return
+        with self._lock:
+            runtime = self._runtimes.get(app_id)
+            if runtime is not None:
+                runtime.custom_metrics.update(metrics)
+
+    @staticmethod
+    def _apply_estimates(runtime: AppRuntimeState, *, paused: bool) -> None:
+        """Fills the resource figures with manifest-derived estimates (nothing is measured)."""
+        resources = runtime.manifest.resources
+        if paused:
+            runtime.power_draw_w = resources.max_power_w * 0.1  # Assumed standby draw
+            runtime.cpu_usage_percent = 1.0
+        else:
+            runtime.power_draw_w = resources.max_power_w * 0.65
+            runtime.ram_usage_mb = float(resources.ram_mb * 0.45)
+            runtime.cpu_usage_percent = float(resources.cpu_cores * 15.0)
+        runtime.metrics_source = METRICS_SOURCE_ESTIMATED
 
     def start_app(self, app_id: str) -> tuple[bool, str]:
-        """Launch an enterprise application according to its runtime definition."""
+        """Mark an application as running and publish ``enterprise.<app_id>.started``.
+
+        No process is launched: the caller (or an external supervisor) is responsible for
+        actually executing the manifest's entrypoint.
+        """
         manifest = self.registry.get_app(app_id)
         if not manifest:
             return False, f"Application '{app_id}' is not registered."
 
-        runtime = self._runtimes.get(app_id) or AppRuntimeState(manifest=manifest)
-        self._runtimes[app_id] = runtime
+        with self._lock:
+            runtime = self._runtimes.get(app_id)
+            if runtime is None:
+                runtime = AppRuntimeState(manifest=manifest)
+                self._runtimes[app_id] = runtime
 
-        if runtime.status == AppStatus.RUNNING:
-            return True, f"Application '{app_id}' is already running."
+            if runtime.status == AppStatus.RUNNING:
+                return True, f"Application '{app_id}' is already running."
 
-        try:
             runtime.status = AppStatus.RUNNING
             runtime.started_at = time.time()
-            runtime.health_status = "healthy"
+            runtime.health_status = "not_probed"
             runtime.error_message = None
-            runtime.power_draw_w = manifest.resources.max_power_w * 0.65
-            runtime.ram_usage_mb = float(manifest.resources.ram_mb * 0.45)
-            runtime.cpu_usage_percent = float(manifest.resources.cpu_cores * 15.0)
+            self._apply_estimates(runtime, paused=False)
+            self._shed_paused.discard(app_id)
+            payload = runtime.to_dict()
 
-            logger.info("Started enterprise app '%s' (Power Tier: %s)", app_id, manifest.power.tier.value)
-            self.event_bus.publish(
-                Event(
-                    event_type=f"enterprise.{app_id}.started",
-                    source="enterprise_manager",
-                    payload=runtime.to_dict(),
-                )
-            )
-            return True, f"Application '{app_id}' started successfully."
-        except Exception as e:
-            runtime.status = AppStatus.ERROR
-            runtime.error_message = str(e)
-            logger.error("Failed to start application %s: %s", app_id, e)
-            return False, f"Failed to start '{app_id}': {e}"
+        logger.info("Marked enterprise app '%s' running (Power Tier: %s)", app_id, manifest.power.tier.value)
+        self.event_bus.publish(
+            Event(event_type=f"enterprise.{app_id}.started", source="enterprise_manager", payload=payload)
+        )
+        return True, f"Application '{app_id}' started (state tracked; no process is supervised by this manager)."
 
     def stop_app(self, app_id: str) -> tuple[bool, str]:
-        """Stop a running enterprise application."""
-        runtime = self._runtimes.get(app_id)
-        if not runtime:
-            return False, f"Application '{app_id}' not found."
+        """Mark an application as stopped and publish ``enterprise.<app_id>.stopped``."""
+        with self._lock:
+            runtime = self._runtimes.get(app_id)
+            if not runtime:
+                return False, f"Application '{app_id}' not found."
 
-        if runtime.status == AppStatus.STOPPED:
-            return True, f"Application '{app_id}' is already stopped."
+            if runtime.status == AppStatus.STOPPED:
+                return True, f"Application '{app_id}' is already stopped."
 
-        runtime.status = AppStatus.STOPPED
-        runtime.pid = None
-        runtime.power_draw_w = 0.0
-        runtime.cpu_usage_percent = 0.0
-        runtime.health_status = "stopped"
+            runtime.status = AppStatus.STOPPED
+            runtime.pid = None
+            runtime.power_draw_w = 0.0
+            runtime.cpu_usage_percent = 0.0
+            runtime.ram_usage_mb = 0.0
+            runtime.metrics_source = METRICS_SOURCE_NONE
+            runtime.health_status = "stopped"
+            self._shed_paused.discard(app_id)
+            payload = runtime.to_dict()
 
-        logger.info("Stopped enterprise app '%s'", app_id)
+        logger.info("Marked enterprise app '%s' stopped", app_id)
         self.event_bus.publish(
-            Event(
-                event_type=f"enterprise.{app_id}.stopped",
-                source="enterprise_manager",
-                payload=runtime.to_dict(),
-            )
+            Event(event_type=f"enterprise.{app_id}.stopped", source="enterprise_manager", payload=payload)
         )
         return True, f"Application '{app_id}' stopped."
 
     def restart_app(self, app_id: str) -> tuple[bool, str]:
-        """Restart an enterprise application."""
+        """Restart an enterprise application (stop + start of the tracked state)."""
         self.stop_app(app_id)
         success, msg = self.start_app(app_id)
-        if success and app_id in self._runtimes:
-            self._runtimes[app_id].restart_count += 1
+        if success:
+            with self._lock:
+                runtime = self._runtimes.get(app_id)
+                if runtime is not None:
+                    runtime.restart_count += 1
         return success, msg
 
-    def pause_app(self, app_id: str, reason: str = "Energy preservation") -> tuple[bool, str]:
-        """Temporarily pause application execution during low solar/battery states."""
-        runtime = self._runtimes.get(app_id)
-        if not runtime or runtime.status != AppStatus.RUNNING:
-            return False, f"Application '{app_id}' is not currently running."
+    def _pause(self, app_id: str, reason: str, *, by_shedding: bool) -> tuple[bool, str]:
+        with self._lock:
+            runtime = self._runtimes.get(app_id)
+            if not runtime or runtime.status != AppStatus.RUNNING:
+                return False, f"Application '{app_id}' is not currently running."
 
-        runtime.status = AppStatus.PAUSED
-        runtime.power_draw_w = runtime.manifest.resources.max_power_w * 0.1  # Standby idle draw
-        runtime.cpu_usage_percent = 1.0
+            runtime.status = AppStatus.PAUSED
+            self._apply_estimates(runtime, paused=True)
+            if by_shedding:
+                self._shed_paused.add(app_id)
+            else:
+                self._shed_paused.discard(app_id)
+            payload = {"reason": reason, "paused_by": "load_shedding" if by_shedding else "operator"}
+            payload.update(runtime.to_dict())
 
         logger.warning("Paused enterprise app '%s': %s", app_id, reason)
         self.event_bus.publish(
-            Event(
-                event_type=f"enterprise.{app_id}.paused",
-                source="enterprise_manager",
-                payload={"reason": reason, **runtime.to_dict()},
-            )
+            Event(event_type=f"enterprise.{app_id}.paused", source="enterprise_manager", payload=payload)
         )
         return True, f"Application '{app_id}' paused: {reason}"
 
+    def pause_app(self, app_id: str, reason: str = "Energy preservation") -> tuple[bool, str]:
+        """Mark an application paused on request. Such a pause is not lifted by solar recovery."""
+        return self._pause(app_id, reason, by_shedding=False)
+
     def resume_app(self, app_id: str, reason: str = "Solar surplus") -> tuple[bool, str]:
         """Resume execution of a paused application."""
-        runtime = self._runtimes.get(app_id)
-        if not runtime or runtime.status != AppStatus.PAUSED:
-            return False, f"Application '{app_id}' is not paused."
+        with self._lock:
+            runtime = self._runtimes.get(app_id)
+            if not runtime or runtime.status != AppStatus.PAUSED:
+                return False, f"Application '{app_id}' is not paused."
 
-        runtime.status = AppStatus.RUNNING
-        runtime.power_draw_w = runtime.manifest.resources.max_power_w * 0.65
-        runtime.cpu_usage_percent = float(runtime.manifest.resources.cpu_cores * 15.0)
+            runtime.status = AppStatus.RUNNING
+            self._apply_estimates(runtime, paused=False)
+            self._shed_paused.discard(app_id)
+            payload = {"reason": reason}
+            payload.update(runtime.to_dict())
 
         logger.info("Resumed enterprise app '%s': %s", app_id, reason)
         self.event_bus.publish(
-            Event(
-                event_type=f"enterprise.{app_id}.resumed",
-                source="enterprise_manager",
-                payload={"reason": reason, **runtime.to_dict()},
-            )
+            Event(event_type=f"enterprise.{app_id}.resumed", source="enterprise_manager", payload=payload)
         )
         return True, f"Application '{app_id}' resumed: {reason}"
 
     def get_runtime_state(self, app_id: str) -> AppRuntimeState | None:
-        """Get live runtime metrics for a specific app."""
-        return self._runtimes.get(app_id)
+        """Get the tracked runtime state for a specific app."""
+        with self._lock:
+            return self._runtimes.get(app_id)
 
     def list_runtime_states(self) -> list[AppRuntimeState]:
-        """Return live runtime states of all registered applications."""
-        for app in self.registry.list_apps():
-            if app.app_id not in self._runtimes:
-                self._runtimes[app.app_id] = AppRuntimeState(manifest=app)
-        return list(self._runtimes.values())
+        """Return tracked runtime states of all registered applications."""
+        apps = self.registry.list_apps()
+        with self._lock:
+            for app in apps:
+                if app.app_id not in self._runtimes:
+                    self._runtimes[app.app_id] = AppRuntimeState(manifest=app)
+            return list(self._runtimes.values())
+
+    @staticmethod
+    def _is_excluded_name(name: str) -> bool:
+        """Dotfiles (.env, .git, .venv, ...) and bytecode caches never go into a package."""
+        return name.startswith(".") or name.startswith("__pycache__")
+
+    @classmethod
+    def _collect_package_files(cls, source_dir: Path, skip: set[Path]) -> list[tuple[Path, str]]:
+        """Walks ``source_dir`` and returns (path, archive name) pairs, filtering at every depth."""
+        root = source_dir.resolve()
+        collected: list[tuple[Path, str]] = []
+        for dirpath, dirnames, filenames in os.walk(source_dir, followlinks=False):
+            dirnames[:] = sorted(d for d in dirnames if not cls._is_excluded_name(d))
+            current = Path(dirpath)
+            # Symlinked directories are listed in dirnames but not descended into.
+            for name in sorted(filenames) + [d for d in dirnames if (current / d).is_symlink()]:
+                if cls._is_excluded_name(name):
+                    continue
+                item = current / name
+                resolved = item.resolve()
+                if resolved in skip:
+                    continue
+                if item.is_symlink() and root not in resolved.parents and resolved != root:
+                    logger.warning("Skipping symlink that points outside the app directory: %s", item)
+                    continue
+                collected.append((item, item.relative_to(source_dir).as_posix()))
+        return collected
 
     def package_app(
         self, app_path: Path | str, output_path: Path | str | None = None, sign_pqc: bool = True
     ) -> tuple[bool, str, dict[str, Any]]:
-        """Bundle an enterprise application directory into a `.smdc-app` verified archive."""
+        """Bundle an enterprise application directory into a `.smdc-app` archive with a sidecar.
+
+        With ``sign_pqc`` the sidecar carries an ML-DSA-87 signature by this node's persistent
+        identity key. Signing is not verification: consumers must call ``verify_package()``
+        with a public key they already trust.
+        """
         source_dir = Path(app_path)
         if not source_dir.exists() or not source_dir.is_dir():
             return False, f"Directory not found: {source_dir}", {}
@@ -268,23 +505,26 @@ class EnterpriseManager:
         if not manifest:
             return False, "Failed to parse application manifest.", {}
 
+        # Both values are embedded in the default output file name: refuse anything that
+        # could act as a path (separators, "..", leading dots).
+        if not is_valid_app_id(manifest.app_id):
+            return False, f"Refusing to package: invalid app_id {manifest.app_id!r}.", {}
+        if not is_valid_app_version(manifest.version):
+            return False, f"Refusing to package: invalid version {manifest.version!r}.", {}
+
         out_file = Path(output_path or f"{manifest.app_id}-{manifest.version}.smdc-app")
-        out_file.parent.mkdir(parents=True, exist_ok=True)
+        sidecar = package_sidecar_path(out_file)
 
         try:
+            out_file.parent.mkdir(parents=True, exist_ok=True)
+            members = self._collect_package_files(source_dir, skip={out_file.resolve(), sidecar.resolve()})
+
             # Build tarball
             with tarfile.open(out_file, "w:gz") as tar:
-                for item in source_dir.iterdir():
-                    if item.name.startswith((".", "__pycache__", ".venv")):
-                        continue
-                    tar.add(item, arcname=item.name)
+                for item, arcname in members:
+                    tar.add(item, arcname=arcname, recursive=False)
 
-            # Compute SHA-256 hash
-            hasher = hashlib.sha256()
-            with open(out_file, "rb") as f:
-                while chunk := f.read(65536):
-                    hasher.update(chunk)
-            sha256_digest = hasher.hexdigest()
+            sha256_digest = _sha256_file(out_file)
 
             metadata: dict[str, Any] = {
                 "app_id": manifest.app_id,
@@ -302,9 +542,10 @@ class EnterpriseManager:
 
                     signer = PQCSigner(PQCAlgorithm.ML_DSA_87)
                     kp = get_node_pqc_keypair(PQCAlgorithm.ML_DSA_87)
-                    sig = signer.sign(sha256_digest.encode("utf-8"), kp.private_key)
+                    sig = signer.sign(_package_signing_input(metadata, PACKAGE_SIGNATURE_SCHEME), kp.private_key)
                     metadata["pqc_signature"] = {
-                        "algorithm": "NIST-FIPS-204-ML-DSA-87",
+                        "algorithm": PACKAGE_SIGNATURE_ALGORITHM,
+                        "scheme": PACKAGE_SIGNATURE_SCHEME,
                         "key_id": kp.key_id,
                         "public_key_hex": kp.public_key.hex(),
                         "signature_hex": sig.hex(),
@@ -313,7 +554,6 @@ class EnterpriseManager:
                     logger.warning("PQC package signing skipped: %s", e)
 
             # Save manifest sidecar
-            sidecar = out_file.with_suffix(".smdc-app.sig")
             sidecar.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
 
             logger.info(

@@ -1,15 +1,25 @@
+# Headscale mesh VPN control plane overlay.
+#
+# Relative paths below are resolved against the Compose project directory,
+# which is `software/` when this file is merged with the core stack
+# (`./setup.sh --with-vpn`). To run it standalone, pin the project directory:
+#   docker compose --project-directory software -f software/vpn/docker-compose.vpn.yml up -d
+#
+# Before starting, set server_url in vpn/config/headscale.yaml.
 networks:
   sovereign_net:
     name: software_sovereign_net
 
 services:
   headscale:
-    image: headscale/headscale:latest
+    # Pinned: vpn/config/headscale.yaml follows the 0.23.x config schema.
+    image: headscale/headscale:0.23.0
     container_name: sovereign_headscale
     restart: unless-stopped
-    command: headscale serve
+    # The image entrypoint is the headscale binary.
+    command: serve
     volumes:
-      - ./config:/etc/headscale
+      - ./vpn/config/headscale.yaml:/etc/headscale/config.yaml:ro
       - headscale_data:/var/lib/headscale
     networks:
       - sovereign_net

@@ -8,6 +8,10 @@ metadata:
     app.kubernetes.io/component: ai-cluster
 spec:
   replicas: 1
+  # One GPU and ReadWriteOnce volumes: a rolling update could never schedule
+  # the surge pod, so replace the pod in place.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       {{- include "sovereign-stack.selectorLabels" . | nindent 6 }}
@@ -18,6 +22,9 @@ spec:
         {{- include "sovereign-stack.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: ai-cluster
     spec:
+      {{- with .Values.ai.ollama.runtimeClassName }}
+      runtimeClassName: {{ . | quote }}
+      {{- end }}
       containers:
         - name: ollama
           image: "{{ .Values.ai.ollama.image.repository }}:{{ .Values.ai.ollama.image.tag }}"
@@ -29,8 +36,42 @@ spec:
           env:
             - name: OLLAMA_KEEP_ALIVE
               value: "24h"
+            {{- if .Values.ai.ollama.defaultModel }}
+            - name: OLLAMA_DEFAULT_MODEL
+              value: {{ .Values.ai.ollama.defaultModel | quote }}
+            {{- end }}
+          {{- if .Values.ai.ollama.defaultModel }}
+          lifecycle:
+            postStart:
+              exec:
+                command:
+                  - /bin/sh
+                  - -c
+                  - |
+                    # Best-effort background pre-pull of the default model. It is
+                    # detached so that a slow or failed download never blocks or
+                    # fails container start-up.
+                    (
+                      i=0
+                      until ollama list >/dev/null 2>&1 || [ "$i" -ge 60 ]; do
+                        i=$((i + 1))
+                        sleep 2
+                      done
+                      ollama pull "$OLLAMA_DEFAULT_MODEL" || true
+                    ) >/dev/null 2>&1 &
+          {{- end }}
           resources:
-            {{- toYaml .Values.ai.ollama.resources | nindent 12 }}
+            limits:
+              {{- with .Values.ai.ollama.resources.limits }}
+              {{- toYaml . | nindent 14 }}
+              {{- end }}
+              {{- if .Values.ai.ollama.gpu.enabled }}
+              nvidia.com/gpu: {{ .Values.ai.ollama.gpu.count | quote }}
+              {{- end }}
+            {{- with .Values.ai.ollama.resources.requests }}
+            requests:
+              {{- toYaml . | nindent 14 }}
+            {{- end }}
           volumeMounts:
             - name: ollama-data
               mountPath: /root/.ollama
@@ -46,11 +87,20 @@ spec:
               mountPath: /qdrant/storage
       volumes:
         - name: ollama-data
+          {{- if .Values.ai.ollama.persistence.enabled }}
           persistentVolumeClaim:
             claimName: {{ include "sovereign-stack.fullname" . }}-ollama-pvc
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
         - name: qdrant-data
+          {{- if .Values.ai.qdrant.persistence.enabled }}
           persistentVolumeClaim:
             claimName: {{ include "sovereign-stack.fullname" . }}-qdrant-pvc
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+{{- if .Values.ai.ollama.persistence.enabled }}
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -59,10 +109,14 @@ metadata:
 spec:
   accessModes:
     - ReadWriteOnce
-  storageClassName: {{ .Values.global.storageClass }}
+  {{- with .Values.global.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
   resources:
     requests:
       storage: {{ .Values.ai.ollama.persistence.size }}
+{{- end }}
+{{- if .Values.ai.qdrant.persistence.enabled }}
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -71,8 +125,11 @@ metadata:
 spec:
   accessModes:
     - ReadWriteOnce
-  storageClassName: {{ .Values.global.storageClass }}
+  {{- with .Values.global.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
   resources:
     requests:
       storage: {{ .Values.ai.qdrant.persistence.size }}
+{{- end }}
 {{- end }}

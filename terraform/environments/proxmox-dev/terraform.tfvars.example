@@ -1,5 +1,7 @@
 proxmox_endpoint  = "https://10.0.0.5:8006/"
 proxmox_api_token = "root@pam!token_name=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-proxmox_insecure  = true
+# Set to true ONLY if the Proxmox host still serves its self-signed certificate.
+proxmox_insecure  = false
 target_node       = "pve-01"
 cluster_name      = "smdc-proxmox-dev"
+gpu_mapping       = "smdc-gpu0" # example name; create it under Datacenter > Resource Mappings first

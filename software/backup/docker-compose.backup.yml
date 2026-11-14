@@ -10,44 +10,51 @@ networks:
 
 services:
   backup-cron:
-    image: restic/restic:latest
+    image: restic/restic:0.19.1
     container_name: sovereign_backup
     restart: unless-stopped
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
         echo "Starting Sovereign Restic Backup Daemon (interval: $${BACKUP_INTERVAL_SECONDS}s)..."
-        apk add --no-cache bash >/dev/null 2>&1 || true
         while true; do
-          bash /backup.sh || echo "[WARN] Backup run failed; retrying after $${BACKUP_INTERVAL_SECONDS}s"
+          sh /backup.sh || echo "[WARN] Backup run failed; retrying after $${BACKUP_INTERVAL_SECONDS}s"
           sleep "$${BACKUP_INTERVAL_SECONDS}"
         done
     environment:
       - BACKUP_INTERVAL_SECONDS=${BACKUP_INTERVAL_SECONDS:-86400}
-      - RESTIC_REPOSITORY=${RESTIC_REPOSITORY:-/backups}
-      - RESTIC_PASSWORD=${RESTIC_PASSWORD:-changeme_sovereign_backup_key}
+      # Local repositories must live under /var/backups/sovereign (the
+      # backup_storage volume) to survive container re-creation.
+      - RESTIC_REPOSITORY=${RESTIC_REPOSITORY:-/var/backups/sovereign}
+      - RESTIC_PASSWORD=${RESTIC_PASSWORD:?Set RESTIC_PASSWORD in software/.env}
       - AWS_ACCESS_KEY_ID=${RESTIC_S3_KEY:-}
       - AWS_SECRET_ACCESS_KEY=${RESTIC_S3_SECRET:-}
       - RESTIC_COMPRESSION=auto
     volumes:
       - ./backup/backup.sh:/backup.sh:ro
-      - backup_storage:/backups
+      - backup_storage:/var/backups/sovereign
       - traefik_certs:/data/traefik_certs:ro
       - webui_data:/data/webui_data:ro
       - gitlab_data:/data/gitlab_data:ro
       - gitlab_config:/data/gitlab_config:ro
       - openproject_data:/data/openproject_data:ro
+      - openproject_pgdata:/data/openproject_pgdata:ro
       - nextcloud_data:/data/nextcloud_data:ro
       - vaultwarden_data:/data/vaultwarden_data:ro
       - grafana_data:/data/grafana_data:ro
       - prometheus_data:/data/prometheus_data:ro
       - qdrant_data:/data/qdrant_data:ro
+      - headscale_data:/data/headscale_data:ro
     networks:
       - sovereign_net
 
 # Volume keys match software/docker-compose.yml so that, when merged, Compose
 # resolves them to the very same named volumes. Standalone, they bind to the
 # existing volumes created by the core stack (project name "software").
+# headscale_data exists only with the VPN overlay; without it an empty volume
+# is created and backed up.
+# Note: database volumes (openproject_pgdata, gitlab_data) are copied while the
+# services are running, so those snapshots are crash-consistent at best.
 volumes:
   backup_storage:
   traefik_certs:
@@ -60,6 +67,8 @@ volumes:
     name: software_gitlab_config
   openproject_data:
     name: software_openproject_data
+  openproject_pgdata:
+    name: software_openproject_pgdata
   nextcloud_data:
     name: software_nextcloud_data
   vaultwarden_data:
@@ -70,3 +79,5 @@ volumes:
     name: software_prometheus_data
   qdrant_data:
     name: software_qdrant_data
+  headscale_data:
+    name: software_headscale_data

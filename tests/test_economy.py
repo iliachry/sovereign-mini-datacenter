@@ -336,6 +336,8 @@ class TestSettlementEngine:
         # Reconcile on recipient ledger
         recip_db = str(tmp_path / "recip_ledger.db")
         recip_ledger = Ledger(db_path=recip_db)
+        # A replica only accepts spends it can fund: it must already know alice's allocation.
+        recip_ledger.mint(alice.address, 100.0)
         reconciled = SettlementEngine.reconcile_dtn_settlement_bundle(bundle, recip_ledger)
         assert len(reconciled) == 1
         assert reconciled[0].tx_id == tx.tx_id
@@ -394,7 +396,7 @@ class TestEconomyCLI:
 
         # Send
         args_send = Namespace(
-            recipient="sov_recipient_123456",
+            recipient=NodeWallet.create(node_id="recipient-node").address,
             amount=25.0,
             memo="INFERENCE_PAYMENT",
             wallet_file=wallet_file,

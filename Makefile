@@ -87,9 +87,7 @@ benchmark:
 	$(PYTHON) -m sovereign_dc.cli sim benchmark --episodes 15 --steps 20
 
 docker-validate:
-	@if [ ! -f software/.env ]; then cp software/env.example software/.env; fi
-	docker compose -f software/docker-compose.yml config --quiet
-	@echo "Docker Compose configurations valid."
+	bash scripts/validate_compose.sh
 
 scad-export:
 	@mkdir -p docs/cad

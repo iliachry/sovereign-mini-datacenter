@@ -2,11 +2,15 @@ networks:
   sovereign_net:
     driver: bridge
 
+# Image versions are pinned to exact releases (verified to exist on 2026-11-14) so an
+# off-grid node that pulls after a long offline period gets the same software, and GitLab
+# never skips a required upgrade stop. Upgrade deliberately: bump one tag, read that
+# project's release notes, then `docker compose pull && docker compose up -d`.
 services:
 
   # ─── 0. TRAEFIK (Reverse Proxy + Automatic TLS via Let's Encrypt) ───
   traefik:
-    image: traefik:v3.1
+    image: traefik:v3.7.19
     container_name: sovereign_traefik
     restart: unless-stopped
     command:
@@ -24,12 +28,20 @@ services:
       - "--certificatesresolvers.le.acme.storage=/letsencrypt/acme.json"
       - "--log.level=INFO"
       - "--accesslog=true"
+      # File access log on a shared volume, read by the CrowdSec overlay.
+      # Traefik does not rotate this file.
+      - "--accesslog.filepath=/var/log/traefik/access.log"
+      # Prometheus metrics on an internal-only entrypoint (not published).
+      - "--metrics.prometheus=true"
+      - "--entrypoints.metrics.address=:8082"
+      - "--metrics.prometheus.entrypoint=metrics"
     ports:
       - "80:80"
       - "443:443"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - traefik_certs:/letsencrypt
+      - traefik_logs:/var/log/traefik
     networks:
       - sovereign_net
     labels:
@@ -43,7 +55,7 @@ services:
 
   # ─── 1. OLLAMA (GPU-Accelerated Local LLM API) ───
   ollama:
-    image: ollama/ollama:latest
+    image: ollama/ollama:0.40.16
     container_name: sovereign_ollama
     restart: unless-stopped
     environment:
@@ -63,14 +75,15 @@ services:
               count: all
               capabilities: [gpu]
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      # The ollama image ships no curl/wget.
+      test: ["CMD", "ollama", "list"]
       interval: 30s
       timeout: 10s
       retries: 3
 
   # ─── 2. OPEN-WEBUI (ChatGPT-Style Private Interface) ───
   open-webui:
-    image: ghcr.io/open-webui/open-webui:main
+    image: ghcr.io/open-webui/open-webui:v0.13.3
     container_name: sovereign_webui
     restart: unless-stopped
     environment:
@@ -101,7 +114,7 @@ services:
 
   # ─── 2b. QDRANT (Vector Database for Local RAG & Semantic Search) ───
   qdrant:
-    image: qdrant/qdrant:latest
+    image: qdrant/qdrant:v1.20.1
     container_name: sovereign_qdrant
     restart: unless-stopped
     volumes:
@@ -116,7 +129,7 @@ services:
 
   # ─── 3. GITLAB CE (Self-Hosted Git & CI/CD) ───
   gitlab:
-    image: gitlab/gitlab-ce:latest
+    image: gitlab/gitlab-ce:19.5.5-ce.0
     container_name: sovereign_gitlab
     restart: unless-stopped
     hostname: ${DOMAIN_GITLAB:-gitlab.sovereign.local}
@@ -157,7 +170,7 @@ services:
 
   # ─── 4. OPENPROJECT (Project & Task Management) ───
   openproject:
-    image: openproject/community:13
+    image: openproject/community:13.4.1
     container_name: sovereign_openproject
     restart: unless-stopped
     environment:
@@ -166,6 +179,13 @@ services:
       - OPENPROJECT_HTTPS=true
     volumes:
       - openproject_data:/var/openproject/assets
+      # Embedded PostgreSQL data directory of the all-in-one image. The image declares
+      # this path as a VOLUME, so a deployment created before this named volume was
+      # added has its database in an ANONYMOUS volume; recreating the container would
+      # start on an empty database. setup.sh refuses to deploy in that case and prints
+      # the one-time migration steps (check_openproject_pgdata_volume). Do not run
+      # `docker compose up` by hand on such a deployment before migrating.
+      - openproject_pgdata:/var/openproject/pgdata
     networks:
       - sovereign_net
     labels:
@@ -183,7 +203,7 @@ services:
 
   # ─── 5. NEXTCLOUD (End-to-End Encrypted File Cloud) ───
   nextcloud:
-    image: nextcloud:stable-apache
+    image: nextcloud:34.0.6-apache
     container_name: sovereign_nextcloud
     restart: unless-stopped
     environment:
@@ -213,7 +233,7 @@ services:
 
   # ─── 6. VAULTWARDEN (Self-Hosted Bitwarden-Compatible Password Manager) ───
   vaultwarden:
-    image: vaultwarden/server:latest
+    image: vaultwarden/server:1.37.5
     container_name: sovereign_vaultwarden
     restart: unless-stopped
     environment:
@@ -247,7 +267,7 @@ services:
 
   # ─── 7. PROMETHEUS (Metrics Collection) ───
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v3.16.0
     container_name: sovereign_prometheus
     restart: unless-stopped
     command:
@@ -275,7 +295,7 @@ services:
 
   # ─── 8. GRAFANA (Metrics Dashboards) ───
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:13.3.1
     container_name: sovereign_grafana
     restart: unless-stopped
     environment:
@@ -306,7 +326,7 @@ services:
 
   # ─── 9. CADVISOR (Container + GPU Resource Metrics) ───
   cadvisor:
-    image: gcr.io/cadvisor/cadvisor:latest
+    image: gcr.io/cadvisor/cadvisor:v0.55.1
     container_name: sovereign_cadvisor
     restart: unless-stopped
     privileged: true
@@ -328,7 +348,7 @@ services:
 
   # ─── 10. NODE EXPORTER (Host Hardware Metrics) ───
   node-exporter:
-    image: prom/node-exporter:latest
+    image: prom/node-exporter:v1.12.1
     container_name: sovereign_node_exporter
     restart: unless-stopped
     command:
@@ -350,12 +370,15 @@ services:
 
 volumes:
   traefik_certs:
+  traefik_logs:
+    name: sovereign_traefik_logs
   ollama_data:
   webui_data:
   gitlab_config:
   gitlab_logs:
   gitlab_data:
   openproject_data:
+  openproject_pgdata:
   nextcloud_data:
   vaultwarden_data:
   prometheus_data:

@@ -62,6 +62,8 @@ class Packet:
 class NetworkSlicingManager:
     """Manages 5G network slicing, QoS isolation, and SDN packet routing."""
 
+    MAX_TRANSMISSION_LOG = 1000  # Most recent packets retained in memory
+
     def __init__(self) -> None:
         self.slices: dict[SliceType, NetworkSlice] = {
             SliceType.URLLC: NetworkSlice(
@@ -90,6 +92,7 @@ class NetworkSlicingManager:
             ),
         }
         self.transmission_log: list[Packet] = []
+        self.total_packets_logged: int = 0
 
     def transmit_packet(
         self,
@@ -106,7 +109,7 @@ class NetworkSlicingManager:
         total_latency_ms = s.avg_latency_ms + tx_delay_ms
 
         packet = Packet(
-            packet_id=f"pkt_{int(time.time() * 1000)}_{len(self.transmission_log) + 1}",
+            packet_id=f"pkt_{int(time.time() * 1000)}_{self.total_packets_logged + 1}",
             slice_type=slice_type,
             payload_size_bytes=payload_size_bytes,
             priority=priority,
@@ -117,6 +120,9 @@ class NetworkSlicingManager:
         s.total_bytes_transmitted += payload_size_bytes
         s.total_packets_transmitted += 1
         self.transmission_log.append(packet)
+        self.total_packets_logged += 1
+        if len(self.transmission_log) > self.MAX_TRANSMISSION_LOG:
+            del self.transmission_log[: -self.MAX_TRANSMISSION_LOG]
         return packet
 
     def transmit_uav_control_command(self, action_vector: tuple[float, float, float]) -> Packet:
