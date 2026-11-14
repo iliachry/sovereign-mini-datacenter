@@ -12,7 +12,7 @@ A **Fully Autonomous Network of Sovereign Mini Datacenters (Autonomous Sovereign
 
 Unlike traditional cloud architectures that depend on centralized control planes (e.g. AWS, Azure, GCP, Cloudflare), **every node in this network is an independently viable sovereign micro-datacenter**. Each unit incorporates its own:
 - ☀️ **Solar Micro-Grid & Battery Management System (BMS)**
-- ❄️ **Closed-Loop Liquid Cooling Subsystem**
+- ❄️ **Cooling Subsystem** (air-cooled AI nodes, closed liquid loop for the system host)
 - 🤖 **Local AI Inference Engine & Multi-Agent Copilots**
 - 📡 **Multi-Spectral Communication Transceivers** (Terrestrial Mesh, Starlink/LEO, Sub-GHz LoRa, and Space DTN/BPv7)
 
@@ -91,7 +91,7 @@ graph TD
 | **L4: Trust & Identity** | Zero-Trust & PKI | SPIFFE/SPIRE, TPM 2.0 / HSM Attestation, Kyber/Dilithium PQC | Cryptographic machine identity, mutual TLS (mTLS), hardware trust roots. |
 | **L3: Network Fabric** | Multi-Tier Overlay Mesh | Headscale (WireGuard), Nebula, Yggdrasil, BGP EVPN | Seamless P2P flat mesh routing across dynamic NATs, firewalls, and air-gaps. |
 | **L2: Deep Out-of-Band** | Emergency Comms & DTN | RFC 9171 DTN/BPv7, Meshtastic LoRa, Starlink, SGP4 Orbit Tracker | Asynchronous orbital store-and-forward, low-baud heartbeat broadcast. |
-| **L1: Energy & Physical** | Microgrid & Telemetry | LiFePO4 BMS, Victron MPPT (VE.Direct/RS485), ESP32, Liquid Cooling | Solar harvesting, autonomous thermal regulation, brownout cold-recovery. |
+| **L1: Energy & Physical** | Microgrid & Telemetry | LiFePO4 BMS, Victron MPPT (VE.Direct/RS485), ESP32, Host Liquid Loop & Exhaust Fans | Solar harvesting, autonomous thermal regulation, brownout cold-recovery. |
 
 ---
 
@@ -269,7 +269,7 @@ graph LR
     D ---|P2P Agent Gossip Protocol| P2
 ```
 
-- **Sentinel Copilot Agent**: Parses hardware telemetry (`/dev/ttyUSB0` VE.Direct, RS485 Modbus, 1-Wire sensors) and executes deterministic emergency actions (GPU throttling, coolant pump speed adjustment, radiator fan PWM control).
+- **Sentinel Copilot Agent**: Parses hardware telemetry (`/dev/ttyUSB0` VE.Direct, RS485 Modbus, 1-Wire sensors) and executes deterministic emergency actions (GPU throttling, coolant pump speed adjustment, radiator and exhaust fan PWM control).
 - **Swarm Dispatcher Agent**: Participates in an open compute-bidding marketplace, shifting heavy compute tasks to nodes with >80% battery SoC and excess solar.
 - **Space Link Scheduler Agent**: Continuously recalculates orbital trajectories for LEO satellites using SGP4 algorithms, queueing DTN bundles for burst transmission during orbital passes.
 

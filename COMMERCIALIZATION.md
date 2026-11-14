@@ -29,7 +29,7 @@ flowchart LR
     Problem ==> Solution
 ```
 
-**Sovereign Mini Datacenter (SMDC)** is the world’s first open-source, self-powered, liquid-cooled 9U micro-datacenter. It delivers **on-premise AI compute on two NVIDIA DGX Spark nodes (256 GB of unified memory in total)**, **10.24 kWh of energy storage**, and **RFC 9171 Space Delay-Tolerant Networking (BPv7)** in a deployable, turnkey form factor that operates with **zero recurring cloud bills** and **100% computational autonomy**.
+**Sovereign Mini Datacenter (SMDC)** is the world’s first open-source, self-powered, solar-backed 9U micro-datacenter with air-cooled AI nodes and a liquid-cooled host. It delivers **on-premise AI compute on two NVIDIA DGX Spark nodes (256 GB of unified memory in total)**, **10.24 kWh of energy storage**, and **RFC 9171 Space Delay-Tolerant Networking (BPv7)** in a deployable, turnkey form factor that operates with **zero recurring cloud bills** and **100% computational autonomy**.
 
 ---
 
@@ -78,14 +78,14 @@ The Sovereign Mini Datacenter leverages a proven **hybrid commercialization mode
 flowchart TD
     SMDC["Sovereign Commercial Engine"]
     
-    SMDC --> H["📦 1. Turnkey Hardware Kits (CapEx)<br/>• Standard 9U Node: $24,500<br/>• Hardware Gross Margin: ~22.8%"]
+    SMDC --> H["📦 1. Turnkey Hardware Kits (CapEx)<br/>• Standard 9U Node: $31,500<br/>• Hardware Gross Margin: ~26.2%"]
     SMDC --> S["🔄 2. Sovereign Control Plane (ARR SaaS)<br/>• Fleet Mesh & DTN Management: $199/node/mo<br/>• Gross Margin: ~88%"]
     SMDC --> E["🛡️ 3. Enterprise Support & PQC Audits<br/>• Mission-Critical SLA & Space Ephemeris Relays<br/>• $15,000/year/fleet"]
 ```
 
 ### Revenue Streams
 1. **Turnkey Hardware Deliveries**:
-   - **SMDC-Core-9U**: \$24,500 per unit (BOM cost: \$18,915 $\implies$ \$5,585 gross profit per node, a 22.8% gross margin). The BOM is the itemised total in [`hardware/COMPONENTS.md`](hardware/COMPONENTS.md): \$9,517 for the priced non-compute lines plus 2 × \$4,699 for the DGX Spark nodes. It excludes assembly labour, shipping, taxes and the unpriced items listed in that file, so the realised margin is lower.
+   - **SMDC-Core-9U**: \$31,500 per unit (BOM cost: \$23,257 $\implies$ \$8,243 gross profit per node, a 26.2% gross margin). The BOM is the itemised total in [`hardware/COMPONENTS.md`](hardware/COMPONENTS.md): \$9,357 for the priced non-compute lines plus 2 × \$6,950 for the DGX Spark nodes (the price NVIDIA lists on its marketplace page, checked on 2026-11-14). It excludes assembly labour, shipping, taxes and the unpriced items listed in that file, so the realised margin is lower.
    - **SMDC-Rugged-IP67 (Mobile Tactical)**: \$38,000 per unit (MIL-STD-810H vibration and shock damping).
 2. **Sovereign Control Plane (Recurring SaaS ARR)**:
    - Zero-trust mesh orchestration, federated Qdrant vector index synchronization, orbital pass scheduling, and remote telemetry monitoring at \$199/node/month.
@@ -103,7 +103,7 @@ xychart-beta
     title "3-Year Cumulative Cost ($USD): Sovereign Mini Datacenter vs. AWS Cloud + Grid"
     x-axis ["Year 0 (CapEx)", "Year 1", "Year 2", "Year 3"]
     y-axis "Cumulative Spend ($k)" 0 --> 120
-    bar [24.5, 26.9, 29.3, 31.7]
+    bar [31.5, 33.9, 36.3, 38.7]
     line [12.0, 48.0, 84.0, 120.0]
 ```
 
@@ -111,21 +111,21 @@ xychart-beta
 
 | Cost Category | Sovereign Mini Datacenter (1 Node) | Hyperscaler Cloud (AWS + Diesel Power) | 3-Year Net Savings |
 | :--- | :---: | :---: | :---: |
-| **Initial Hardware & Setup (CapEx)** | \$24,500 *(One-time)* | \$12,000 *(Edge gateway & diesel gen)* | -\$12,500 |
+| **Initial Hardware & Setup (CapEx)** | \$31,500 *(One-time)* | \$12,000 *(Edge gateway & diesel gen)* | -\$19,500 |
 | **Electricity / Fuel (3 Years)** | **\$0** *(8-panel array: 14.5 kWh/day annual-average yield vs. 11.2 kWh/day draw)* | \$24,800 *(Diesel fuel + grid tariffs)* | **+\$24,800** |
 | **AI Inference & GPU Rental (3 Years)** | **\$0** *(2× DGX Spark on-prem)* | \$54,000 *(\$1,500/mo 2× A100/H100 cloud)* | **+\$54,000** |
 | **Data Egress & Cloud SaaS (3 Years)** | **\$0** *(Local Nextcloud / Mailcow)* | \$14,400 *(\$400/mo egress & storage)* | **+\$14,400** |
 | **Maintenance & Mesh SaaS (3 Years)** | \$7,164 *(\$199/mo control plane)* | \$14,800 *(Cloud security & support)* | **+\$7,636** |
-| **TOTAL 3-YEAR SPEND** | **\$31,664** | **\$120,000** | **+\$88,336 (73.6% Savings)** |
+| **TOTAL 3-YEAR SPEND** | **\$38,664** | **\$120,000** | **+\$81,336 (67.8% Savings)** |
 
 The electricity row uses the sizing calculator's reference duty cycle (both DGX Spark nodes under load 12 h/day): an 11.16 kWh/day draw against a 14.50 kWh/day annual-average yield from the 3,280W array (8 × 410W, 5.2 peak sun hours, 85% system efficiency) leaves a surplus of 3.34 kWh/day, so no energy is bought on an annual-average basis. Yield is seasonal: in low-sun weeks the battery and then a grid or generator top-up carry the shortfall, and that top-up is not costed here. Monthly operating savings are the cloud-side recurring costs minus the SMDC-side recurring costs: (\$108,000 − \$7,164) / 36 = \$2,801.
 
 $$
-\text{Payback Period} = \frac{\text{Initial Net CapEx}}{\text{Monthly OpEx Savings}} = \frac{\$12,500}{\$2,801/\text{month}} = \mathbf{4.5\text{ Months}}
+\text{Payback Period} = \frac{\text{Initial Net CapEx}}{\text{Monthly OpEx Savings}} = \frac{\$19,500}{\$2,801/\text{month}} = \mathbf{7.0\text{ Months}}
 $$
 
 > [!TIP]
-> **Key Investor Metric**: The customer recovers the additional hardware investment in **about 4.5 months**, saving **\$88,336 (73.6%)** over a 3-year operating lifecycle while gaining 100% data sovereignty and battery-backed resilience to grid blackouts.
+> **Key Investor Metric**: The customer recovers the additional hardware investment in **about 7.0 months**, saving **\$81,336 (67.8%)** over a 3-year operating lifecycle while gaining 100% data sovereignty and battery-backed resilience to grid blackouts.
 
 ---
 
@@ -135,23 +135,33 @@ $$
 Metric                 Year 1       Year 2       Year 3       Year 4       Year 5
 ─────────────────────────────────────────────────────────────────────────────────
 Nodes Deployed             45          180          620        1,850        4,200
-Hardware Revenue       $1.10M       $4.41M      $15.19M      $45.32M     $102.90M
+Hardware Revenue       $1.42M       $5.67M      $19.53M      $58.28M     $132.30M
 Recurring ARR          $0.11M       $0.54M       $2.02M       $6.44M      $16.45M
 Services & SLA         $0.25M       $0.85M       $2.40M       $6.20M      $12.50M
 ─────────────────────────────────────────────────────────────────────────────────
-TOTAL REVENUE          $1.46M       $5.80M      $19.61M      $57.96M     $131.85M
-Gross Profit           $0.47M       $1.91M       $6.44M      $19.10M      $44.18M
-Gross Margin (%)        32.4%        32.9%        32.8%        33.0%        33.5%
+TOTAL REVENUE          $1.78M       $7.06M      $23.95M      $70.92M     $161.25M
+Gross Profit           $0.59M       $2.38M       $8.09M      $24.02M      $55.35M
+Gross Margin (%)        33.3%        33.8%        33.8%        33.9%        34.3%
 ─────────────────────────────────────────────────────────────────────────────────
-Not re-modelled (see note):
-EBITDA Margin (%)      -12.4%        14.2%        28.6%        34.1%        37.8%
-Net Operating Cash     -$0.18M      +$0.82M      +$5.61M     +$19.76M     +$49.84M
+Operating Expenses     $0.86M       $2.35M       $6.79M      $19.36M      $41.66M
+EBITDA                -$0.26M      +$0.03M      +$1.30M      +$4.66M     +$13.68M
+EBITDA Margin (%)      -14.8%         0.4%         5.4%         6.6%         8.5%
+Net Operating Cash    -$0.26M      +$0.03M      +$1.30M      +$4.66M     +$13.68M
 ```
 
-Gross profit is derived from the revenue rows above: hardware revenue × 22.8% (the \$5,585 gross profit per \$24,500 node at the reference BOM of \$18,915), plus recurring ARR × 88% (the SaaS gross margin stated in Section 4), plus services & SLA revenue × 50%. This document states no margin for services, so the 50% is an assumption; with services at 0% or 100% margin, Year 1 gross margin would be 23.8% or 40.9%. Gross margin is gross profit divided by total revenue. No volume BOM reduction is assumed.
+Hardware revenue is nodes deployed × the \$31,500 SMDC-Core-9U list price. Gross profit is derived from the revenue rows above: hardware revenue × 26.2% (the \$8,243 gross profit per \$31,500 node at the reference BOM of \$23,257), plus recurring ARR × 88% (the SaaS gross margin stated in Section 4), plus services & SLA revenue × 50%. This document states no margin for services, so the 50% is an assumption; with services at 0% or 100% margin, Year 1 gross margin would be 26.3% or 40.4%. Gross margin is gross profit divided by total revenue. No volume BOM reduction is assumed.
 
 > [!NOTE]
-> The EBITDA margin and net operating cash rows are carried over from an earlier model. This document states no operating-expense schedule, so they cannot be derived from the rows above and have not been recomputed. They are not consistent with the gross-margin row: in Years 4 and 5 the EBITDA margin (34.1%, 37.8%) exceeds the gross margin (33.0%, 33.5%), which is impossible at the reference BOM. Treat both rows as unsupported until an operating-cost model is added.
+> **How the operating rows are derived.** This document has no bottom-up operating-cost model. The operating-expense row is the schedule implied by the first version of this table (at a \$24,500 list price), kept unchanged: implied operating expenses = original gross profit − original EBITDA, where original gross profit = original revenue × original gross margin and original EBITDA = original revenue × original EBITDA margin.
+>
+> | Original table | Year 1 | Year 2 | Year 3 | Year 4 | Year 5 |
+> | :--- | ---: | ---: | ---: | ---: | ---: |
+> | Total revenue | \$1.46M | \$5.80M | \$19.61M | \$57.96M | \$131.85M |
+> | Gross margin | 46.2% | 54.8% | 63.2% | 67.5% | 69.4% |
+> | EBITDA margin | -12.4% | 14.2% | 28.6% | 34.1% | 37.8% |
+> | Implied operating expenses | \$0.86M | \$2.35M | \$6.79M | \$19.36M | \$41.66M |
+>
+> EBITDA in the table above = gross profit − operating expenses, and EBITDA margin = EBITDA ÷ total revenue. In the original table net operating cash equalled revenue × EBITDA margin to within rounding (\$0.01M) in every year, so net operating cash is set equal to EBITDA here as well; no working-capital, tax or capital-expenditure effects are modelled. The original gross margins (46–69%) assumed a much lower BOM than the itemised one, which is why EBITDA is far lower here than in the original table. Treat the operating-expense schedule as a placeholder until a bottom-up cost model replaces it.
 
 ---
 
@@ -189,14 +199,14 @@ mindmap
 ```
 Slide 01: Title ────────────── Sovereign Mini Datacenter: Solar-Powered Sovereign AI Infrastructure
 Slide 02: The Problem ──────── Energy Crises, Cloud Lock-In & Digital Sovereignty Loss
-Slide 03: The Solution ─────── Turnkey 9U Micro-Datacenter: Solar, Liquid-Cooling, Local AI
+Slide 03: The Solution ─────── Turnkey 9U Micro-Datacenter: Solar, Battery, Local AI
 Slide 04: Product Demo ─────── Live 3D WebGL Digital Twin & Physical Hardware Specs
 Slide 05: Market Size ──────── $60.4B TAM / $6.4B SAM (Dual-Use Defense, Remote Industry)
-Slide 06: Unit Economics ───── 73.6% 3-Year TCO Savings ($88.3k saved per node, 4.5 mo payback)
-Slide 07: Business Model ───── Turnkey Hardware ($24.5k) + Sovereign SaaS ($199/node/mo)
+Slide 06: Unit Economics ───── 67.8% 3-Year TCO Savings ($81.3k saved per node, 7.0 mo payback)
+Slide 07: Business Model ───── Turnkey Hardware ($31.5k) + Sovereign SaaS ($199/node/mo)
 Slide 08: Traction & Code ──── 681 Automated Tests, 89.8% Coverage, Ready-to-Deploy Stacks
 Slide 09: Technology Moat ──── Space DTN (RFC 9171), Energy Load-Shedder, PQC Zero-Trust
-Slide 10: Financials ───────── $1.46M Y1 -> $19.61M Y3 -> $131.85M Y5 (37.8% EBITDA)
+Slide 10: Financials ───────── $1.78M Y1 -> $23.95M Y3 -> $161.25M Y5 (8.5% EBITDA in Y5)
 Slide 11: Team & Advisory ──── Metatopia Studio: DeepTech Systems, AI & Embedded Engineers
 Slide 12: The Ask ──────────── $2.5M Seed Round to scale batch manufacturing & certifications
 ```

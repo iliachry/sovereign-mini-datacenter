@@ -30,9 +30,11 @@ const BATTERY_USABLE_DOD = 0.85; // Usable depth of discharge
 
 // BOM cost estimator (USD)
 // Unit prices are the priced rows of hardware/COMPONENTS.md; at DEFAULT_SIZING the total equals
-// that file's reference BOM: 3,757 + 2×4,699 + 2×1,200 + 8×180 + 1,320 + 1×600 = $18,915.
-const COST_BASE_USD = 3757; // Host, storage, switch (1,940) + PDU (250) + host liquid cooling (775) + network cabling (170) + enclosure (622)
-const COST_NODE_USD = 4699; // NVIDIA DGX Spark Founders Edition (128 GB / 4 TB), NVIDIA MSRP since Feb 2026
+// that file's reference BOM: 3,597 + 2×6,950 + 2×1,200 + 8×180 + 1,320 + 1×600 = $23,257.
+// Host liquid loop and enclosure fans (615) = radiator 1×140 + pump 90 + fans 6×32 + CPU water block 90
+// + coolant 1 L×30 + compression fittings 6×8 + tubing 25.
+const COST_BASE_USD = 3597; // Host, storage, switch (1,940) + PDU (250) + host liquid loop and fans (615) + network cabling (170) + enclosure (622)
+const COST_NODE_USD = 6950; // NVIDIA DGX Spark (128 GB / 4 TB), price listed on marketplace.nvidia.com, checked 2026-11-14
 const COST_BATTERY_PACK_USD = 1200; // 5.12 kWh 48V 100Ah LiFePO4
 const COST_PANEL_USD = 180; // 410W monocrystalline PERC
 const COST_POWER_FIXED_USD = 1320; // MultiPlus-II (1,100) + SmartShunt (130) + Lynx Distributor (90)
@@ -46,7 +48,7 @@ const ROI_YEARS = 3;
 const MONTHS_PER_YEAR = 12;
 const DAYS_PER_YEAR = 365;
 // The ROI model is what a customer pays (COMMERCIALIZATION.md), not the build cost.
-const SMDC_CAPEX_PER_UNIT_USD = 24500; // SMDC-Core-9U turnkey list price
+const SMDC_CAPEX_PER_UNIT_USD = 31500; // SMDC-Core-9U turnkey list price
 const SMDC_OPEX_PER_UNIT_MONTHLY_USD = 199; // Sovereign Control Plane subscription per node
 const GRID_CO2_KG_PER_KWH = 0.42; // Grid emission factor (kg CO2 per kWh displaced)
 const KG_PER_TONNE = 1000;
@@ -276,7 +278,7 @@ export function exportBOMCSV() {
       ['Energy Storage', 'LiFePO4 48V 100Ah 5.12kWh Module', input.batPacks, `$${fmtInt(r.costs.battery)}`],
       ['Solar PV', '410W Monocrystalline PERC Panel', input.panels, `$${fmtInt(r.costs.solar)}`],
       ['Power Conversion', `Victron MultiPlus-II 48/3000 + ${r.mpptCount}x SmartSolar MPPT 250/70 + SmartShunt + Lynx Distributor`, 1, `$${fmtInt(r.costs.powerConversion)}`],
-      ['Chassis, Host & Network', '9U 19" Rack + Host Server & NVMe Storage + 10GbE Switch + PDU + Host Liquid Cooling', 1, `$${fmtInt(r.costs.base)}`],
+      ['Chassis, Host & Network', '9U 19" Rack + Host Server & NVMe Storage + 10GbE Switch + PDU + Host Liquid Loop & Fans', 1, `$${fmtInt(r.costs.base)}`],
       ['Total', 'Sovereign Mini Datacenter Complete BOM', '', out.cost],
       ['Energy Balance', `Daily draw ${out.draw} vs solar yield ${out.yield}`, '', `${r.balanceKwh >= 0 ? '+' : '-'}${Math.abs(r.balanceKwh).toFixed(1)} kWh/day`],
     ],
@@ -377,7 +379,7 @@ export function handleTerminalInput(e) {
     print(`<span class="term-line-cyan">[SYSTEM STATUS]</span>
   Solar PV:       2,660 W (250V MPPT, 3,280 W Array)
   LiFePO4 Bank:   88.5% (52.8V, 10.24 kWh Reserve)
-  Coolant Loop:   31.2°C (Dual 360mm Rads, Flow: 4.2 L/min)
+  Coolant Loop:   31.2°C (Host loop, 1x 360mm Rad, Flow: 4.2 L/min)
   AI Inference:   Ollama nomic-embed-text (0.42ms/token)
   Space Link:     IN CONTACT (57.1° EL, SNR: 14.2 dB)
   Load Shedding:  L0 (Full Compute Operations Authorized)`);

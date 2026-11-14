@@ -84,7 +84,7 @@ def read_manifest_resource() -> str:
             "energy_storage": "10.24 kWh LiFePO4 (2x 48V 100Ah Smart BMS)",
             "solar_array": "3,280W Monocrystalline PERC PV (8x 410W, 4S2P)",
             "power_conversion": "Victron MultiPlus-II 48/3000 + SmartSolar MPPT 250/70",
-            "liquid_cooling": "System-host loop: dual 360mm radiators with 1-Wire DS18B20 probes (DGX Spark units are air-cooled)",
+            "liquid_cooling": "System-host loop: single 360mm radiator with 1-Wire DS18B20 probes (DGX Spark units are air-cooled, three rear exhaust fans)",
             "space_link": "RFC 9171 BPv7 Delay-Tolerant Network Terminal (S-Band / Ku-Band)",
         },
     }

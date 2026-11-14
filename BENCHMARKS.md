@@ -17,7 +17,7 @@ flowchart LR
         C["⚡ Compute: 2× NVIDIA DGX Spark<br/>(GB10 Superchip, 128GB Unified LPDDR5x, 4TB NVMe each)"]
         S["💾 Storage: 2× 4TB Samsung 990 PRO NVMe<br/>(PCIe 4.0 x4, LUKS2 AES-XTS-256)"]
         P["🔋 Power: 10.24 kWh LiFePO4 48V Bank<br/>+ 3,280W Monocrystalline PERC Solar PV Array"]
-        T["❄️ Thermal: DGX Spark units air-cooled;<br/>system-host liquid loop (dual 360mm, D5 pump)"]
+        T["❄️ Thermal: DGX Spark units air-cooled;<br/>system-host liquid loop (single 360mm, D5 pump)"]
     end
 ```
 
@@ -141,7 +141,7 @@ xychart-beta
 | **Radiator Delta-T ($\Delta T$)** | **$6.4^\circ\text{C}$** | **$6.2^\circ\text{C}$** | $15.0^\circ\text{C}$ |
 
 > [!TIP]
-> The dual 360mm radiator loop cools the system host only and keeps its coolant well below the $60.0^\circ\text{C}$ threshold in $35.0^\circ\text{C}$ ambient conditions. The two DGX Spark units are sealed, air-cooled appliances outside the loop; their core temperature depends on enclosure airflow, not on the radiators.
+> The single 360mm radiator loop cools the system host only and keeps its coolant well below the $60.0^\circ\text{C}$ threshold in $35.0^\circ\text{C}$ ambient conditions. The two DGX Spark units are sealed, air-cooled appliances outside the loop; their core temperature depends on enclosure airflow (side vent slots and the three rear exhaust fans), not on the radiator.
 
 ---
 

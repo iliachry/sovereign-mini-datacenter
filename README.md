@@ -2,7 +2,7 @@
 
 ![Sovereign Mini Datacenter 3D Render](cad/render.jpg)
 
-**Sovereign Mini Datacenter** is a self-powered, solar-backed, liquid-cooled micro-datacenter stack designed for **complete data and computational sovereignty**. Run your own private AI with semantic RAG, Git hosting, project management, encrypted file cloud, email server, password vault, and zero-trust mesh VPN — fully off-grid capable.
+**Sovereign Mini Datacenter** is a self-powered, solar-backed micro-datacenter stack with air-cooled AI nodes and a liquid-cooled host, designed for **complete data and computational sovereignty**. Run your own private AI with semantic RAG, Git hosting, project management, encrypted file cloud, email server, password vault, and zero-trust mesh VPN — fully off-grid capable.
 
 Developed by **[Metatopia Studio](https://metatopia.gr)** · Author & Lead Architect: **[Ilias Chrysovergis](https://iliachry.gr)** · License: MIT · © 2026
 
@@ -24,7 +24,7 @@ Developed by **[Metatopia Studio](https://metatopia.gr)** · Author & Lead Archi
 | Resource | Scope & Key Takeaways | Link |
 | :--- | :--- | :---: |
 | **🏢 Enterprise Onboarding & SDK** | Vendor-neutral manifest (`smdc-app.yaml`), zero-dependency SDK, power tiers ($L_0 \to L_4$), and PQC packaging | [**`ENTERPRISE_ONBOARDING.md`**](ENTERPRISE_ONBOARDING.md) |
-| **📈 Commercial Strategy & TCO Model** | Market Sizing (\$60.4B TAM), Unit Economics, 5-Year Financials, **4.5 Mo Payback & 73.6% TCO Savings** vs. AWS | [**`COMMERCIALIZATION.md`**](COMMERCIALIZATION.md) |
+| **📈 Commercial Strategy & TCO Model** | Market Sizing (\$60.4B TAM), Unit Economics, 5-Year Financials, **7.0 Mo Payback & 67.8% TCO Savings** vs. AWS | [**`COMMERCIALIZATION.md`**](COMMERCIALIZATION.md) |
 | **🏗️ Terraform & OpenTofu IaC** | Bare-metal Talos Linux, Proxmox VE GPU passthrough, WireGuard mesh, and automated Helm bootstrapping | [**`terraform/README.md`**](terraform/README.md) |
 | **⚡ Performance Reference Figures** | Reference figures for local LLM token throughput, Qdrant retrieval latency and load-shedding response (not reproducible from this repository; see the provenance note) | [**`BENCHMARKS.md`**](BENCHMARKS.md) |
 | **🛡️ Enterprise Compliance & PQC Security** | SOC 2 Type II, ISO 27001, NIST 800-207 Zero Trust, Post-Quantum Cryptography (ML-KEM/Kyber-1024), TPM 2.0 | [**`COMPLIANCE.md`**](COMPLIANCE.md) |
@@ -60,7 +60,7 @@ graph TD
         Solar["3,280W Monocrystalline PERC Solar PV"]:::power
         MPPT["Victron SmartSolar MPPT 250/70"]:::power
         Battery["10.24 kWh LiFePO4 Smart BMS"]:::power
-        Cooling["System-Host Liquid Loop, Dual 360mm<br/>(1-Wire DS18B20 Probes)"]:::power
+        Cooling["System-Host Liquid Loop, Single 360mm<br/>(1-Wire DS18B20 Probes)"]:::power
     end
 
     subgraph ComputeStack["⚡ Sovereign Edge Compute & AI Cluster"]
@@ -502,7 +502,7 @@ uv run pytest tests/ --cov=src/sovereign_dc --cov-fail-under=85
 - **Compute:** 2× NVIDIA DGX Spark (NVIDIA GB10 Grace Blackwell Superchip, 128GB unified LPDDR5x memory and 4TB NVMe each; 240W power supply per unit)
 - **Storage:** 2× Samsung 990 PRO 4TB NVMe (8TB total NVMe storage)
 - **Power:** 10.24 kWh LiFePO4 battery bank + 3,280W monocrystalline PERC solar PV array (8 × 410W, 4S2P on a Victron SmartSolar MPPT 250/70). At the reference duty cycle (both nodes under load 12 h/day) the array yields about 14.5 kWh/day on annual average against an 11.2 kWh/day draw, a surplus of about 3.3 kWh/day; zero-sun autonomy is about 18.7 hours. Winter yield is lower, so low-sun periods still draw on the battery and then on grid or generator (see the sizing calculator)
-- **Cooling:** The two DGX Spark units are sealed and air-cooled. A dual 360mm radiator loop with Alphacool D5 pump cools the system host only
+- **Cooling:** The two DGX Spark units are sealed and air-cooled. Three rear exhaust fans move air through the enclosure for them. A single 360mm radiator loop (three fans, Alphacool D5 pump) cools the system host CPU only
 - **Chassis:** Custom 9U 19" aluminum rack enclosure (EIA-310-D compliant)
 
 See [`hardware/COMPONENTS.md`](hardware/COMPONENTS.md) for the complete Bill of Materials and [`cad/MANUFACTURING_GUIDE.md`](cad/MANUFACTURING_GUIDE.md) for laser cutting and CNC bending instructions.

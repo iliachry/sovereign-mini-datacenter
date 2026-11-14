@@ -1,6 +1,6 @@
 # Bill of Materials (BOM) & Component Specifications
 
-> **Total Estimated Build Cost:** $18,915 USD for the priced lines below (sum of quantity × estimated unit cost): $9,398 for the two DGX Spark compute nodes plus $9,517 for everything else (host, storage and switch $1,940; power and solar $6,010; host liquid cooling $775; network cabling $170; enclosure $622). This **excludes** the items listed as not yet in the BOM in sections 2 and 3 (battery fuses, DC and PV cabling, lugs and connectors, PV isolator, panel mounting, earthing hardware, 12V supply, host CPU water block), as well as shipping and taxes.
+> **Total Estimated Build Cost:** $23,257 USD for the priced lines below (sum of quantity × estimated unit cost): $13,900 for the two DGX Spark compute nodes plus $9,357 for everything else (host, storage and switch $1,940; power and solar $6,010; host liquid loop and enclosure fans $615; network cabling $170; enclosure $622). This **excludes** the items listed as not yet in the BOM in sections 2 and 3 (battery fuses, DC and PV cabling, lugs and connectors, PV isolator, panel mounting, earthing hardware, 12V supply, fan mounting for the exhaust opening), as well as shipping and taxes.
 
 ---
 
@@ -8,14 +8,14 @@
 
 | Subsystem | Component Model | Spec / Description | Qty | Est. Unit Cost |
 | :--- | :--- | :--- | :---: | :---: |
-| **GPU Compute** | NVIDIA DGX Spark (Founders Edition) | NVIDIA GB10 Grace Blackwell Superchip (20-core Arm), 128GB unified LPDDR5x memory, 4TB NVMe M.2, 10GbE RJ-45 + ConnectX-7 (2× QSFP), 240W external power supply | 2 | $4,699 |
+| **GPU Compute** | NVIDIA DGX Spark (128GB / 4TB) | NVIDIA GB10 Grace Blackwell Superchip (20-core Arm), 128GB unified LPDDR5x memory, 4TB NVMe M.2, 10GbE RJ-45 + ConnectX-7 (2× QSFP), 240W external power supply | 2 | $6,950 |
 | **Networking** | Mikrotik CRS309-1G-8S+IN | 8x 10GbE SFP+, L2/L3 Hardware Offload, RouterOS | 1 | $270 |
 | **Storage (Primary)** | Samsung 990 PRO 4TB NVMe SSD | PCIe 4.0 (7,450 MB/s Read, 6,900 MB/s Write) | 2 | $320 |
 | **System Host** | Custom Mini-ITX Server Board | Intel Xeon E-2300 or AMD EPYC 4004 Series | 1 | $650 |
 | **RAM (System Host)** | ECC Unbuffered 32GB module, matched to the board | DDR5 ECC unbuffered for EPYC 4004 (AM5) boards, DDR4 ECC unbuffered for Xeon E-2300 (LGA1200) boards; neither platform accepts registered (RDIMM) memory. Form factor (UDIMM or SO-DIMM) and speed per the board's QVL. | 2 | $160 |
 | **Boot Drive** | Samsung 980 500GB NVMe | PCIe 3.0, OS boot drive for Ubuntu Server | 1 | $60 |
 
-> DGX Spark price is NVIDIA's Founders Edition MSRP as announced in February 2026 ([NVIDIA developer forum](https://forums.developer.nvidia.com/t/2-23-2026-price-change-announcement/361713)); check current pricing before ordering. Specifications are from NVIDIA's [DGX Spark hardware overview](https://docs.nvidia.com/dgx/dgx-spark/hardware.html). A lower-power alternative is the NVIDIA Jetson AGX Orin 64GB; it is not the reference build and is not priced here.
+> DGX Spark price is the $6,950.00 that NVIDIA lists for the 128GB / 4TB DGX Spark on its own marketplace page ([NVIDIA Marketplace](https://marketplace.nvidia.com/en-us/enterprise/personal-ai-supercomputers/dgx-spark/), checked on 2026-11-14); check current pricing before ordering. Specifications are from NVIDIA's [DGX Spark hardware overview](https://docs.nvidia.com/dgx/dgx-spark/hardware.html). A lower-power alternative is the NVIDIA Jetson AGX Orin 64GB; it is not the reference build and is not priced here.
 
 ---
 
@@ -42,26 +42,31 @@
 >
 > Controller limits (Victron datasheet linked above): 250V absolute maximum PV open-circuit voltage at the coldest conditions, 245V start-up and operating maximum, 35A maximum PV short-circuit current, 4,000W nominal PV power at 48V. The installer must confirm, with the Voc, Isc and temperature coefficient of the panels actually bought, that 4 × Voc corrected to the lowest site temperature stays below 245V and that 2 × Isc stays below 35A. The 3,280W array is within the 4,000W nominal PV power, so the controller does not clip. Do not use this array with a 150V controller: four panels in series exceed 150V, and four parallel strings of two 108-cell panels (56A) exceed the 50A PV short-circuit limit of the MPPT 150/70.
 >
-> **Charge current:** 3,280W into a 51.2V bank is about 64A, within the controller's 70A rating. Check it against the maximum charge current in the battery pack datasheet (two packs in parallel share it) and, if the packs allow less, lower the MPPT's maximum charge current in VictronConnect. When the MultiPlus-II is also charging from grid or generator its charger (up to 35A) adds to the MPPT current.
+> **Charge current:** 3,280W into a 51.2V bank is about 64A, within the controller's 70A rating. When the MultiPlus-II 48/3000/35 is also charging from grid or generator, its charger adds up to 35A, so the worst case is about 64A + 35A = 99A into the 200Ah bank (two 100Ah packs in parallel), which is about 0.5C. Check that figure against the maximum charge current in the battery pack datasheet (two packs in parallel share it, about 50A each). If the packs allow less, two settings cap it: the MPPT's "max charge current" in VictronConnect, and the MultiPlus-II's charge current limit in VEConfigure or VictronConnect. Set them so that their sum does not exceed the bank's limit.
 
-> **Not yet in this BOM (size from the datasheets before ordering):** the two 125A battery fuses with a DC voltage rating suitable for a 48V bank, 35mm² battery cable and lugs, the PV isolator (2-pole DC breaker or switch-disconnector rated for at least 250V DC and 35A), PV string cable, MC4 connectors and the two-string combiner, panel mounting structure, earthing hardware, and a 12V DC supply (for example a 48V-to-12V DC-DC converter) for the coolant pump and radiator fans — nothing listed above provides 12V.
+> **Not yet in this BOM (size from the datasheets before ordering):** the two 125A battery fuses with a DC voltage rating suitable for a 48V bank, 35mm² battery cable and lugs, the PV isolator (2-pole DC breaker or switch-disconnector rated for at least 250V DC and 35A), PV string cable, MC4 connectors and the two-string combiner, panel mounting structure, earthing hardware, and a 12V DC supply (for example a 48V-to-12V DC-DC converter) for the coolant pump and the six 120mm fans (three on the radiator, three exhaust) — nothing listed above provides 12V.
 
 ---
 
-## 3. Liquid Cooling Subsystem (System Host Only)
+## 3. Cooling Subsystem (Host Liquid Loop and Enclosure Exhaust)
 
-> The loop cools the system host (the custom Mini-ITX server) only. The two DGX Spark units are sealed, air-cooled appliances: they are not opened, carry no water block and are not part of the loop; they need unobstructed intake and exhaust airflow inside the enclosure (side vent slots). The loop's heat load is therefore the host CPU, on the order of 65–125W depending on the CPU fitted (check its datasheet), for which the dual 360mm radiators are heavily oversized; they are kept because the enclosure's rear panel is cut for them, and they allow low fan speeds.
+> The liquid loop cools the system host (the custom Mini-ITX server) only. Its heat load is the host CPU, on the order of 65–125W depending on the CPU fitted (check its datasheet), so the loop is a single CPU water block, one pump-reservoir and one 360mm radiator with three fans, which still leaves a large margin and allows low fan speeds. The two DGX Spark units are sealed, air-cooled appliances: they are not opened, carry no water block and are not part of the loop; they need unobstructed intake and exhaust airflow inside the enclosure (side vent slots).
 >
-> **Not yet in this BOM:** a CPU water block matching the host board's socket (AM5 for EPYC 4004, LGA1200 for Xeon E-2300).
+> **Rear panel:** the enclosure's rear panel has two 360mm × 120mm openings. One carries the radiator with its three fans. The other carries the remaining three 120mm fans as plain exhaust fans, which pull air in through the side vent slots and across the air-cooled DGX Spark units, the inverter and the power electronics. The fan total stays at six.
+>
+> **Loop fittings:** six G1/4 compression fittings, two per component (water block in/out, pump-reservoir in/out, radiator in/out). The assembly manual uses no quick-disconnect couplings, so none are listed.
+>
+> **Not yet in this BOM:** mounting for the three exhaust fans in the second rear opening (a 3 × 120mm fan bracket, or fan-screw holes drilled around the opening), and fan grilles.
 
 | Subsystem | Component Model | Spec / Description | Qty | Est. Unit Cost |
 | :--- | :--- | :--- | :---: | :---: |
-| **Cooling Radiators** | EK-Quantum Surface P360M | 360mm Triple Fan, Copper Core, 30mm Thick | 2 | $140 |
+| **Cooling Radiator** | EK-Quantum Surface P360M | 360mm Triple Fan, Copper Core, 30mm Thick; fills one of the two rear openings | 1 | $140 |
+| **CPU Water Block** | CPU water block for the chosen socket (AM5 or LGA1200) | Generic copper cold-plate block with G1/4 ports and the mounting kit for the host board's socket (AM5 for EPYC 4004, LGA1200 for Xeon E-2300). No model is selected; the price is a mid-market estimate, not a quote. | 1 | $90 |
 | **Industrial Pump** | Alphacool VPP755 Eispumpe Single | D5 Variant, 3,500 RPM, 350 L/h, PWM Control | 1 | $90 |
-| **High-PPC Fans** | Noctua NF-A12x25 iPPC-3000 PWM | 120mm, 3,000 RPM, 102.1 m³/h, 49.5 dB(A) | 6 | $32 |
-| **Coolant** | EK-CryoFuel Clear Concentrate (1:9) | Non-conductive, anti-corrosive glycol, UV stable | 2 L | $30 / L |
-| **Quick Disconnect Fittings** | EK-Quantum Torque STC-10/16 | Stainless steel, G1/4 thread, leak-free | 16 | $8 |
-| **Tubing** | EK-Tube ZMT 16mm OD Matte Black | Soft tubing 10/16mm, UV-stable rubber, 3m | 1 | $25 |
+| **High-PPC Fans** | Noctua NF-A12x25 iPPC-3000 PWM | 120mm, 3,000 RPM, 102.1 m³/h, 49.5 dB(A); 3 on the radiator, 3 as exhaust fans in the second rear opening | 6 | $32 |
+| **Coolant** | EK-CryoFuel Clear Concentrate (1:9) | Non-conductive, anti-corrosive glycol, UV stable. 1 L of mixed coolant fills the single-radiator loop and leaves a top-up reserve (measure the fill volume when priming). | 1 L | $30 / L |
+| **Compression Fittings** | EK-Quantum Torque STC-10/16 | G1/4 thread compression fittings for 10/16mm soft tubing; 2 each for the water block, the pump-reservoir and the radiator | 6 | $8 |
+| **Tubing** | EK-Tube ZMT 16mm OD Matte Black | Soft tubing 10/16mm, UV-stable rubber, 3m length (three runs: pump to block, block to radiator, radiator to reservoir) | 1 | $25 |
 
 ---
 

@@ -49,8 +49,8 @@
 ---
 
 ### Phase 3: Liquid Cooling Loop & Leak Testing
-1. **Radiator Mounting:** Mount the dual 360mm copper radiators to the rear exhaust brackets with vibration-dampening EPDM gaskets.
-2. **Tubing Routing:** Connect EPDM 10/16mm ZMT tubing between the D5 pump reservoir, the system host's CPU water block, and the radiators using G1/4" compression fittings. The two DGX Spark units are sealed, air-cooled appliances: do not open them and do not connect them to the loop. Mount them with their intake and exhaust vents unobstructed.
+1. **Radiator & Exhaust Fan Mounting:** Mount the single 360mm copper radiator, with three of the six 120mm fans, behind one of the two rear-panel openings on the rear brackets with vibration-dampening EPDM gaskets. Mount the other three 120mm fans in the second rear opening as exhaust fans (blowing out of the enclosure) for the air-cooled DGX Spark units and the power electronics; this needs a 3 × 120mm fan bracket or fan-screw holes drilled around the opening.
+2. **Tubing Routing:** Connect EPDM 10/16mm ZMT tubing in three runs (pump-reservoir outlet to the system host's CPU water block, water block to the radiator, radiator back to the reservoir) using six G1/4" compression fittings, two per component. Fit the water block to the host CPU with the mounting kit for its socket (AM5 or LGA1200) before routing the tubing. The two DGX Spark units are sealed, air-cooled appliances: do not open them and do not connect them to the loop. Mount them with their intake and exhaust vents unobstructed.
 3. **24-Hour Pressure Leak Test:**
    * Screw the pneumatic hand-pump leak tester into the reservoir fill port.
    * Pressurize loop to **0.6 bar (8.7 PSI)**.
@@ -65,7 +65,7 @@
    * Run each string in 4mm² solar cable to a two-string combiner, then 6mm² through a 2-pole DC isolator (miniature circuit breaker or switch-disconnector rated for at least 250V DC and 35A; a 1000V DC PV-rated device is suitable) into the PV terminals of the MPPT 250/70-Tr.
    * Two parallel strings need no string fuses provided the panel's maximum series fuse rating is above one panel Isc; check the panel datasheet.
    * Measure each string's open-circuit voltage and polarity with the multimeter before closing the isolator. The strings are live whenever the panels are lit: cover the panels or work with the MC4 connectors open, and never unplug a connector under load.
-   * In VictronConnect set the battery voltage to 48V, the LiFePO4 charge voltages from the battery pack datasheet, and a maximum charge current no higher than the two packs' combined charge limit (the array can deliver about 64A).
+   * In VictronConnect set the battery voltage to 48V, the LiFePO4 charge voltages from the battery pack datasheet, and a maximum charge current no higher than the two packs' combined charge limit (the array can deliver about 64A). The MultiPlus-II charger can add up to 35A from grid or generator, about 99A in total into the 200Ah bank (about 0.5C): if the pack datasheet allows less, also lower the MultiPlus-II charge current limit in VEConfigure or VictronConnect so that the two limits together stay within the bank's limit.
 2. **Grounding:** Drive a 2.4m copper ground rod into soil and bond chassis and surge arrestors with 16mm² earth wire (< 10Ω ground resistance).
 3. **Phased-Array Mast:** Mount the motorized satellite tracking terminal atop the 9U chassis, ensuring an unobstructed $360^\circ$ azimuth sky view with $>10^\circ$ elevation clearance.
 

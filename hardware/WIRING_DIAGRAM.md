@@ -52,7 +52,7 @@
 >
 > - **Voltage:** the string Voc is four times the panel Voc and rises as the panels get colder. Corrected to the lowest temperature expected on site it must stay below the MPPT 250/70's 245V start-up and operating maximum (250V is the absolute maximum). Worked examples at −10°C with a −0.28%/°C coefficient: 4 × 38V × 1.098 ≈ 167V for 108 half-cell panels; 4 × 50V × 1.098 ≈ 220V for 144 half-cell panels. A panel with an STC Voc above 50V needs its own check.
 > - **Current:** the array Isc is twice the panel Isc (28A for 14A panels) and must stay below the controller's 35A maximum PV short-circuit current.
-> - **Power:** 3,280W is within the controller's 4,000W nominal PV power at 48V, and gives about 64A of charge current at 51.2V against the 70A rating.
+> - **Power:** 3,280W is within the controller's 4,000W nominal PV power at 48V, and gives about 64A of charge current at 51.2V against the 70A rating. With the MultiPlus-II charger (up to 35A) running at the same time, the bank can see about 99A, about 0.5C for 200Ah; see the charge-current note in `COMPONENTS.md` for the two settings that cap it.
 > - **String fuses:** with two strings in parallel a faulted string can only be back-fed by one other string (1 × Isc), which is below the maximum series fuse rating of typical panels, so string fuses are not required; confirm the "maximum series fuse" value on the panel datasheet. Three or more parallel strings would need a fuse per string.
 > - **Cable:** 4mm² solar cable (EN 50618 / H1Z2Z2-K) per string, each carrying at most one panel Isc; 6mm² from the combiner to the MPPT, which carries both strings (up to 28A). Increase the cross-section if the run length gives more than about 3% voltage drop.
 > - **Isolation and hazard:** the array open-circuit voltage is 150–230V DC, well above the 48V battery side and no longer extra-low voltage. Fit a 2-pole DC isolator rated for at least 250V DC and 35A between the combiner and the MPPT, use touch-safe MC4 connectors, and never open a PV connector under load.
@@ -94,18 +94,20 @@ Each pack has its own positive lead and its own fuse; the two negatives join and
          │
          ▼  ← Cold Coolant In (~25°C)
   [System Host CPU Water Block]  (Mini-ITX server; block matched
-         │                        to the board's socket, QD fittings)
+         │                        to the board's socket, G1/4
+         │                        compression fittings)
          ▼  ← Warm Coolant Out (a few °C above inlet at full host load)
-  [Primary 360mm Copper Radiator]  (3x Noctua iPPC-3000 @ 3000 RPM)
-         │
-         ▼
-  [Secondary 360mm Copper Radiator] (3x Noctua iPPC-3000 @ 3000 RPM)
+  [360mm Copper Radiator]  (rear opening 1; 3x Noctua iPPC-3000, PWM)
          │
          ▼
   [Return to Pump/Reservoir]
+
+  Not on the loop:
+  [Rear opening 2]  3x Noctua iPPC-3000 exhaust fans (PWM) for the
+                    air-cooled DGX Spark units, inverter and PSUs
 ```
 
-> **Scope:** the two NVIDIA DGX Spark units are sealed, air-cooled appliances. They are not opened, have no water block and are not connected to this loop; keep their intake and exhaust vents clear. The loop carries only the system host's CPU heat (on the order of 65–125W depending on the CPU fitted), so the two 360mm radiators run far below their capacity and the fans can be run slowly.
+> **Scope:** the two NVIDIA DGX Spark units are sealed, air-cooled appliances. They are not opened, have no water block and are not connected to this loop; keep their intake and exhaust vents clear. The loop carries only the system host's CPU heat (on the order of 65–125W depending on the CPU fitted), so the single 360mm radiator runs far below its capacity and its fans can be run slowly. The loop has six G1/4 compression fittings (two each on the water block, the pump-reservoir and the radiator) and no quick-disconnect couplings. The second rear opening holds three exhaust fans that move enclosure air only.
 
 > **Bleed procedure:** Run pump at full speed for 30 min with reservoir cap loose. Tilt enclosure side-to-side. Top up coolant. Verify no air bubbles in sight glass.
 

@@ -53,7 +53,7 @@ The DXF profiles contain the panel outline and its cutouts only. Add the bend fl
 ### Step 2 — Laser Cutting / CNC Punching
 
 - Cut 2.0mm aluminum side (×2), top (×1), bottom (×1) panels from DXF.
-- Cut the rear panel (×1) with its **radiator openings:** 2× 360mm × 120mm (W × H), stacked with a 40mm web and centred on the panel (`rad_opening_*` parameters, `rear_openings_2d()` module). Each opening exposes the 3 × 120mm fan area of one 360mm radiator, whose body is roughly 120mm × 400mm overall. Verify the opening and the fan-screw pattern against the datasheet of the radiator you actually fit before cutting.
+- Cut the rear panel (×1) with its **radiator openings:** 2× 360mm × 120mm (W × H), stacked with a 40mm web and centred on the panel (`rad_opening_*` parameters, `rear_openings_2d()` module). Each opening exposes a 3 × 120mm fan area. In the reference build one opening carries the single 360mm radiator of the host liquid loop (body roughly 120mm × 400mm overall) with three fans, and the other carries three 120mm exhaust fans for the air-cooled DGX Spark units and the power electronics. Verify the opening and the fan-screw pattern against the datasheet of the radiator and fans you actually fit before cutting; the exhaust opening needs fan-screw holes or a 3 × 120mm fan bracket, which the model does not include.
 - Cut **side vent slots** on both side panels per the `vent_slots_2d()` module (8 × 9 grid of 8mm × 30mm slots).
 - Tolerance: ±0.2mm for panel dimensions; ±0.1mm for rail hole pitch.
 
@@ -76,7 +76,7 @@ The DXF profiles contain the panel outline and its cutouts only. Add the bend fl
 2. Slide and bolt 19" rails into extrusion channels — M6 × 12mm SHCS, Nyloc nut.
 3. Attach top/bottom panels — M4 × 8mm countersunk screws into tapped extrusion holes.
 4. Press-fit rubber corner guards into extrusion tongue-and-groove edges.
-5. Mount rear radiator brackets — 3mm aluminum L-bracket, M4 × 10mm.
+5. Mount the rear radiator brackets (one 360mm radiator; the second opening takes three exhaust fans) — 3mm aluminum L-bracket, M4 × 10mm.
 
 ### Step 6 — Quality Checks
 

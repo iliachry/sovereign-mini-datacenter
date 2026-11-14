@@ -8,7 +8,7 @@
 
 ## 1. Repository Purpose & Engineering Philosophy
 
-**Sovereign Mini Datacenter** is an open-source, self-powered, solar-backed, liquid-cooled micro-datacenter stack designed for **complete data and computational sovereignty**.
+**Sovereign Mini Datacenter** is an open-source, self-powered, solar-backed micro-datacenter stack with air-cooled AI nodes and a liquid-cooled host, designed for **complete data and computational sovereignty**.
 
 ### Key Architectural Pillars
 1. **Cloud Independence & Off-Grid Capability**: Operates without relying on centralized cloud providers (AWS, GCP, Azure, Cloudflare). Solar and battery carry the load as far as the array is sized for it: the reference 8-panel build (3,280W) yields about 14.5 kWh/day on annual average against an 11.2 kWh/day draw at a 12 h/day GPU duty cycle, a surplus of about 3.3 kWh/day. Winter yield is lower, so low-sun periods draw on the battery and then on grid or generator.

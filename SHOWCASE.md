@@ -39,7 +39,7 @@ We'd love to hear your feedback on the CAD blueprints, electrical diagrams, and 
 ## 2. 🤖 Reddit Launch Post (r/selfhosted & r/homelab)
 
 **Title:**  
-`I built an open-source 9U Sovereign Mini Datacenter: Solar-powered AI cluster, liquid cooling, and Space DTN communications`
+`I built an open-source 9U Sovereign Mini Datacenter: Solar-powered AI cluster, battery storage, and Space DTN communications`
 
 **Post Body:**
 ```markdown
@@ -55,7 +55,7 @@ I wanted to share the Sovereign Mini Datacenter — an end-to-end open-source bl
 * 10.24 kWh LiFePO4 48V server-rack battery bank
 * 3,280W Monocrystalline PERC solar array (8x 410W)
 * Victron MultiPlus-II 48/3000 Inverter + SmartSolar MPPT 250/70
-* Dual 360mm copper radiator loop + Alphacool D5 pump for the system host (the DGX Spark units are air-cooled)
+* Single 360mm copper radiator loop + Alphacool D5 pump for the system host CPU; the DGX Spark units are air-cooled, with three rear exhaust fans
 
 ### 💻 Software & Space Framework:
 * Core 12-service stack: Traefik, Ollama, Open WebUI, Qdrant, GitLab, OpenProject, Nextcloud, Vaultwarden, Prometheus, Grafana, cAdvisor, node-exporter (Mailcow is installed separately)

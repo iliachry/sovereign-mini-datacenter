@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Sovereign Mini Datacenter — 3D Infrastructure Digital Twin & NOC Console</title>
-  <meta name="description" content="Open-source, self-powered, solar-backed, liquid-cooled micro-datacenter stack with on-premise AI, space DTN satellite routing, and post-quantum zero-trust mesh.">
+  <meta name="description" content="Open-source, self-powered, solar-backed micro-datacenter stack with air-cooled AI nodes, a liquid-cooled host, on-premise AI, space DTN satellite routing, and post-quantum zero-trust mesh.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,300;0,400;0,600;0,700;1,400&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -220,7 +220,7 @@
           <div class="metric-box"><div class="metric-box-label">DAILY DRAW</div><div class="metric-box-val" id="calc-res-draw">11.2 kWh</div></div>
           <div class="metric-box"><div class="metric-box-label">DAILY SOLAR YIELD</div><div class="metric-box-val" id="calc-res-yield" style="color:var(--accent-emerald);">14.5 kWh</div></div>
           <div class="metric-box"><div class="metric-box-label">ZERO-SUN AUTONOMY</div><div class="metric-box-val" id="calc-res-autonomy" style="color:var(--accent-amber);">18.7 hrs</div></div>
-          <div class="metric-box"><div class="metric-box-label">ESTIMATED BOM</div><div class="metric-box-val" id="calc-res-cost" style="color:var(--accent-sky);">$18,915</div></div>
+          <div class="metric-box"><div class="metric-box-label">ESTIMATED BOM</div><div class="metric-box-val" id="calc-res-cost" style="color:var(--accent-sky);">$23,257</div></div>
         </div>
         <div id="calc-res-balance" style="font-family:var(--font-mono); font-size:11px; color:var(--accent-emerald);">✓ Solar surplus: +3.3 kWh/day — solar covers the full daily draw</div>
       </div>
@@ -255,20 +255,20 @@
         </div>
 
         <div class="metric-grid-4">
-          <div class="metric-box"><div class="metric-box-label">PAYBACK PERIOD</div><div class="metric-box-val" id="roi-res-payback" style="color:var(--accent-emerald);">10.1 Months</div></div>
-          <div class="metric-box"><div class="metric-box-label">3-YEAR NET SAVINGS</div><div class="metric-box-val" id="roi-res-savings" style="color:var(--accent-sky);">$62,613</div></div>
-          <div class="metric-box"><div class="metric-box-label">3-YEAR ROI</div><div class="metric-box-val" id="roi-res-roi" style="color:var(--accent-amber);">255.6%</div></div>
+          <div class="metric-box"><div class="metric-box-label">PAYBACK PERIOD</div><div class="metric-box-val" id="roi-res-payback" style="color:var(--accent-emerald);">13.0 Months</div></div>
+          <div class="metric-box"><div class="metric-box-label">3-YEAR NET SAVINGS</div><div class="metric-box-val" id="roi-res-savings" style="color:var(--accent-sky);">$55,613</div></div>
+          <div class="metric-box"><div class="metric-box-label">3-YEAR ROI</div><div class="metric-box-val" id="roi-res-roi" style="color:var(--accent-amber);">176.5%</div></div>
           <div class="metric-box"><div class="metric-box-label">CO₂ AVOIDED / YEAR</div><div class="metric-box-val" id="roi-res-co2" style="color:var(--accent-purple);">1.7 Tons</div></div>
         </div>
 
         <div class="cost-comparison-container">
           <div style="display:flex; justify-content:space-between; font-family:var(--font-mono); font-size:11px; margin-bottom:4px;">
-            <span style="color:var(--accent-emerald);">🟢 SMDC 3-Yr: <b id="roi-bar-val-smdc">$31.7k</b></span>
+            <span style="color:var(--accent-emerald);">🟢 SMDC 3-Yr: <b id="roi-bar-val-smdc">$38.7k</b></span>
             <span style="color:var(--accent-rose);">🔴 Cloud + Grid Energy 3-Yr: <b id="roi-bar-val-cloud">$94.3k</b></span>
           </div>
           <div class="cost-bar-track">
-            <div class="cost-bar-smdc" id="roi-bar-smdc" style="width: 25%;">SMDC</div>
-            <div class="cost-bar-cloud" id="roi-bar-cloud" style="width: 75%;">CLOUD + GRID</div>
+            <div class="cost-bar-smdc" id="roi-bar-smdc" style="width: 29%;">SMDC</div>
+            <div class="cost-bar-cloud" id="roi-bar-cloud" style="width: 71%;">CLOUD + GRID</div>
           </div>
           <div id="roi-res-energy" style="font-family:var(--font-mono); font-size:11px; color:var(--text-muted);">Includes $4,277 of grid energy displaced by solar over 3 yr (11.2 kWh/day per node at $0.35/kWh)</div>
         </div>
