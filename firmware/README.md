@@ -55,6 +55,40 @@ The Arduino flavour exports a metric only after it has really been measured:
 
 ---
 
+## 🧪 Testing
+
+Neither flavour has been run against a real Victron device yet, so the host tests below are the evidence that the VE.Direct parser is right. CI (job `quality-gate-firmware-validation`) runs all three steps on every push.
+
+**1. Host-side parser tests** — need only a C++17 compiler and `python3`, no Arduino / PlatformIO / ESPHome toolchain:
+
+```bash
+tests/firmware/run.sh             # both flavours, one line per test, non-zero exit on failure
+tests/firmware/run.sh checksum    # only the tests whose name contains "checksum"
+CXX=g++ tests/firmware/run.sh     # pick the compiler (default: c++)
+```
+
+The runner compiles the **unmodified** `esp32_telemetry_bridge.ino` against stub headers (`tests/firmware/stubs/arduino/`), and the VE.Direct lambdas **extracted from `esphome_smdc_bridge.yaml` at build time** (`tests/firmware/extract_esphome_lambdas.py`) against `tests/firmware/stubs/esphome/`. Both run the same frame corpus (`tests/firmware/ve_shared.h`), so the two parsers cannot drift apart. It builds with AddressSanitizer + UBSan when the compiler can run them (CI requires it via `SMDC_REQUIRE_SANITIZE=1`).
+
+Covered: the byte-exact BMV-700 example frame from Victron's [VE.Direct Protocol FAQ](https://www.victronenergy.com/live/vedirect_protocol:faq) (Q8), battery-monitor and MPPT frames with unit conversion, every single-byte corruption of every frame, frames split across arbitrary reads, interleaved HEX messages, `---` placeholders, garbage / over-long lines, the 10 s staleness limit, the DS18B20 `-127 °C` sentinel and the exact `/metrics` text.
+
+**2. Cross-compile the Arduino sketch for a real ESP32** (PlatformIO; the first run downloads the toolchain):
+
+```bash
+work="$(mktemp -d)" && mkdir "$work/src"
+cp tests/firmware/platformio/platformio.ini "$work/"
+cp firmware/esp32_telemetry_bridge.ino "$work/src/main.ino"
+pio run -d "$work"                # or: uvx platformio run -d "$work"
+```
+
+**3. Validate the ESPHome configuration** (schema check, no compile):
+
+```bash
+cp firmware/secrets.yaml.example firmware/secrets.yaml   # skip if you already have one
+esphome config firmware/esphome_smdc_bridge.yaml         # or: uvx esphome config ...
+```
+
+---
+
 ## 🚀 Flashing the Arduino Firmware
 
 1. Copy `secrets.h.example` to `secrets.h` (git-ignored) and set `WIFI_SSID` / `WIFI_PASSWORD`. Without `secrets.h` the sketch compiles with placeholder credentials that cannot join a network.

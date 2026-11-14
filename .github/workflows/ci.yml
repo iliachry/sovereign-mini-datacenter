@@ -172,6 +172,45 @@ jobs:
           [ -s firmware/esp32_telemetry_bridge.ino ] || (echo "Arduino firmware missing!" && exit 1)
           echo "✅ ESPHome configuration and Arduino INO verified."
 
+      # VE.Direct parser, staleness and DS18B20 behaviour of BOTH flavours,
+      # run on the host against stub headers (the unmodified .ino and the
+      # lambdas extracted from the ESPHome YAML) under ASan + UBSan.
+      - name: Host-side firmware parser tests (g++, ASan + UBSan)
+        env:
+          CXX: g++
+          SMDC_REQUIRE_SANITIZE: "1"
+        run: tests/firmware/run.sh
+
+      - name: Install PlatformIO and ESPHome
+        run: |
+          pip install esphome platformio
+          pio --version
+          esphome version
+
+      - name: Cache PlatformIO toolchains and libraries
+        uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: platformio-${{ runner.os }}-${{ hashFiles('tests/firmware/platformio/platformio.ini') }}
+
+      # Real cross-compile for the ESP32: catches anything the host stubs
+      # cannot (Arduino core / library API changes, flash size).
+      - name: Cross-compile the Arduino sketch for ESP32 (PlatformIO)
+        run: |
+          work="$RUNNER_TEMP/smdc-firmware"
+          mkdir -p "$work/src"
+          cp tests/firmware/platformio/platformio.ini "$work/platformio.ini"
+          cp firmware/esp32_telemetry_bridge.ino "$work/src/main.ino"
+          pio run -d "$work"
+
+      # Schema validation only (no compile): every component option and
+      # !secret reference must be accepted by the current ESPHome release.
+      - name: Validate the ESPHome configuration (esphome config)
+        run: |
+          cp firmware/secrets.yaml.example firmware/secrets.yaml
+          esphome config firmware/esphome_smdc_bridge.yaml > /dev/null
+          echo "✅ esphome config accepted firmware/esphome_smdc_bridge.yaml"
+
   # ── Quality Gate Final: GitHub Pages Deployment ────────────────────
   deploy-pages:
     name: "Deploy 3D Digital Twin to GitHub Pages"
