@@ -18,7 +18,7 @@ Hi HN!
 
 Over the past months, we designed and built the Sovereign Mini Datacenter — a complete open-source hardware & software stack for 100% computational and data sovereignty.
 
-It is a 9U 19" aluminum rack system powered by 10.24 kWh LiFePO4 batteries and 1.64 kW solar PV, featuring:
+It is a 9U 19" aluminum rack system powered by 10.24 kWh LiFePO4 batteries and 3.28 kW solar PV, featuring:
 
 • 🤖 Private Local AI: 2x NVIDIA DGX Spark nodes (128GB unified memory each) running Ollama + Qdrant for semantic RAG, with an automated GitLab Code Reviewer and Nextcloud Knowledge Indexer.
 • ⚡ Solar Micro-Grid & Load Shedding: Victron MultiPlus-II inverter, SmartSolar MPPT, and a dynamic sentinel that throttles heavy GPU batch jobs if battery SoC drops below 25%.
@@ -53,9 +53,9 @@ I wanted to share the Sovereign Mini Datacenter — an end-to-end open-source bl
 * 8 TB NVMe RAID-1 PCIe 4.0 storage
 * MikroTik CRS309 10GbE SFP+ switch
 * 10.24 kWh LiFePO4 48V server-rack battery bank
-* 1,640W Monocrystalline PERC solar array (4x 410W)
-* Victron MultiPlus-II 48/3000 Inverter + SmartSolar MPPT 150/70
-* Dual 360mm copper radiator loop + Alphacool D5 pump
+* 3,280W Monocrystalline PERC solar array (8x 410W)
+* Victron MultiPlus-II 48/3000 Inverter + SmartSolar MPPT 250/70
+* Dual 360mm copper radiator loop + Alphacool D5 pump for the system host (the DGX Spark units are air-cooled)
 
 ### 💻 Software & Space Framework:
 * Core 12-service stack: Traefik, Ollama, Open WebUI, Qdrant, GitLab, OpenProject, Nextcloud, Vaultwarden, Prometheus, Grafana, cAdvisor, node-exporter (Mailcow is installed separately)

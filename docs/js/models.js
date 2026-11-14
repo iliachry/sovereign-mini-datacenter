@@ -36,13 +36,13 @@ const COMPONENT_DATA = {
     name: 'NVIDIA DGX Spark AI Core 1',
     badge: 'AI COMPUTE',
     desc: 'Primary AI node built on the NVIDIA GB10 Grace Blackwell Superchip with 128GB unified memory and 4TB NVMe, hosting local Ollama LLMs and Qdrant semantic vector embeddings.',
-    specs: { 'Chip': 'NVIDIA GB10 (20-core Arm)', 'Memory': '128GB unified LPDDR5x', 'Power': '240W supply / 140W SoC TDP', 'Cooling': 'EK Copper Block', 'Thermal': '42.4°C' },
+    specs: { 'Chip': 'NVIDIA GB10 (20-core Arm)', 'Memory': '128GB unified LPDDR5x', 'Power': '240W supply / 140W SoC TDP', 'Cooling': 'Sealed unit, air-cooled', 'Thermal': '42.4°C' },
   },
   dgx2: {
     name: 'NVIDIA DGX Spark AI Core 2',
     badge: 'AI COMPUTE',
     desc: 'Secondary parallel AI accelerator coupled over the ConnectX-7 QSFP / 10GbE fabric for distributed multi-agent LLM inference and GitLab code reviews.',
-    specs: { 'Chip': 'NVIDIA GB10 (20-core Arm)', 'Memory': '128GB unified LPDDR5x', 'Power': '240W supply / 140W SoC TDP', 'Cooling': 'EK Copper Block', 'Thermal': '43.1°C' },
+    specs: { 'Chip': 'NVIDIA GB10 (20-core Arm)', 'Memory': '128GB unified LPDDR5x', 'Power': '240W supply / 140W SoC TDP', 'Cooling': 'Sealed unit, air-cooled', 'Thermal': '43.1°C' },
   },
   battery1: {
     name: 'LiFePO4 Battery Pack 1 (48V 100Ah)',
@@ -65,7 +65,7 @@ const COMPONENT_DATA = {
   server: {
     name: 'AMD EPYC 4004 System Host',
     badge: 'CORE HOST',
-    desc: 'Host coordinator with 64GB ECC DDR5, dual Samsung 990 PRO 4TB NVMe SSDs in RAID-1, and local ZFS backup spool.',
+    desc: 'Host coordinator with 64GB ECC DDR5, dual Samsung 990 PRO 4TB NVMe SSDs in RAID-1, and local ZFS backup spool. Its CPU is the only component on the liquid cooling loop.',
     specs: { 'CPU': 'AMD EPYC 4004', 'RAM': '64GB ECC DDR5', 'NVMe': '8TB PCIe 4.0', 'OS': 'Talos Linux / Ubuntu 24.04', 'Temp': '37.8°C' },
   },
   pdu: {
@@ -81,16 +81,16 @@ const COMPONENT_DATA = {
     specs: { 'Output': '3,000VA (2.4kW)', 'DC Input': '48V (38-66V)', 'Efficiency': '95%', 'Transfer': '< 20ms', 'Mode': 'Off-Grid Inverting' },
   },
   mppt: {
-    name: 'Victron SmartSolar MPPT 150/70',
+    name: 'Victron SmartSolar MPPT 250/70',
     badge: 'SOLAR MPPT',
     desc: 'Ultra-fast Maximum Power Point Tracking (MPPT) solar charge controller converting high-voltage PV input to 48V battery bank.',
-    specs: { 'Max PV Voltage': '150V', 'Max Charge Current': '70A', 'Peak Efficiency': '98%', 'Comms': 'VE.Direct Serial', 'Power': '1,330W Harvest' },
+    specs: { 'Max PV Voltage': '250V', 'Max PV Isc': '35A', 'Max Charge Current': '70A', 'Peak Efficiency': '99%', 'Comms': 'VE.Direct Serial', 'Power': '2,660W Harvest' },
   },
   solar_panels: {
-    name: 'Solar Photovoltaic Array (1.64 kWp)',
+    name: 'Solar Photovoltaic Array (3.28 kWp)',
     badge: 'SOLAR PV',
-    desc: '4x 410W monocrystalline PERC solar panels yielding about 7.2 kWh per day on annual average in Southern European latitudes (5.2 peak sun hours, 85% system efficiency).',
-    specs: { 'Rating': '1,640W Peak', 'Cells': 'Monocrystalline PERC', 'Wiring': '2S2P (2x 820W strings)', 'Daily Yield': '7.2 kWh / day (avg)', 'Area': '7.8 m²' },
+    desc: '8x 410W monocrystalline PERC solar panels yielding about 14.5 kWh per day on annual average in Southern European latitudes (5.2 peak sun hours, 85% system efficiency).',
+    specs: { 'Rating': '3,280W Peak', 'Cells': 'Monocrystalline PERC', 'Wiring': '4S2P (2x 1,640W strings)', 'Daily Yield': '14.5 kWh / day (avg)', 'Area': '15.6 m²' },
   },
   uav_relay: {
     name: 'Autonomous 5G UAV Mesh Relay (SA-PPO)',
@@ -284,7 +284,8 @@ function buildRackMountComponents() {
   registerInteractive(pduBody, 'pdu');
 
   // 2U AI Compute Blade (Slot 3U-4U): two side-by-side DGX Spark sleds,
-  // AI Core 1 (left) and AI Core 2 (right), each with its own heatsink and cold block.
+  // AI Core 1 (left) and AI Core 2 (right). The Sparks are sealed, air-cooled units:
+  // the gold/copper meshes below are stylised heatsink detail, not liquid cold blocks.
   const dgxGroup = new THREE.Group();
   dgxGroup.position.set(0, baseY - 2.5 * uHeight, 0);
 
@@ -298,7 +299,7 @@ function buildRackMountComponents() {
     sledBody.position.x = sled.x;
     dgxGroup.add(sledBody);
 
-    // Gold Heatsink & Coolant Block
+    // Gold heatsink with copper heat-spreader detail (air-cooled)
     const heatsink = new THREE.Mesh(
       new THREE.BoxGeometry(90, 20, 120),
       getMaterial('goldHeatsink')
@@ -445,7 +446,7 @@ function buildPowerWall() {
   wallGroup.add(invBody);
   registerInteractive(invBody, 'inverter');
 
-  // Victron SmartSolar MPPT 150/70
+  // Victron SmartSolar MPPT 250/70
   const mpptBody = new THREE.Mesh(
     new THREE.BoxGeometry(50, 150, 100),
     getMaterial('victronBlue')
@@ -483,10 +484,11 @@ function buildSolarArray() {
   const frameMat = getMaterial('solarFrame');
   const cellMat = getMaterial('solarCells');
 
-  for (let row = 0; row < 2; row++) {
+  // 8 panels: 2 columns up the slope x 4 rows along the rack depth (two 4-panel strings).
+  for (let row = 0; row < 4; row++) {
     for (let col = 0; col < 2; col++) {
       const pGroup = new THREE.Group();
-      pGroup.position.set(col * 210 - 105, 0, row * 330 - 165);
+      pGroup.position.set(col * 210 - 105, 0, row * 330 - 495);
 
       const frame = new THREE.Mesh(new THREE.BoxGeometry(200, 8, 320), frameMat);
       frame.castShadow = true;
@@ -504,7 +506,7 @@ function buildSolarArray() {
   // Industrial Galvanized Steel Mounting Struts
   const strutGeom = new THREE.CylinderGeometry(10, 10, 280, 16);
   const strutMat = new THREE.MeshStandardMaterial({ color: 0x64748b, metalness: 0.9 });
-  [-150, 150].forEach((z) => {
+  [-480, -160, 160, 480].forEach((z) => {
     const leg = new THREE.Mesh(strutGeom, strutMat);
     leg.position.set(-120, -140, z);
     leg.castShadow = true;

@@ -61,7 +61,7 @@ def get_solar_forecast() -> float:
     # Simple bell curve for daylight between 6am and 8pm (20:00)
     if 6 <= future_hour <= 20:
         daylight = max(0.0, math.sin(math.pi * (future_hour - 6) / 14))
-        return daylight * 1500.0  # Max 1500W predicted
+        return daylight * 3000.0  # Max 3000W predicted (3,280W array)
     return 0.0
 
 

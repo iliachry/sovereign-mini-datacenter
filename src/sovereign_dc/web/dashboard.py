@@ -285,7 +285,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         const solar = data.power.solar_watts || 0;
         document.getElementById('solar-watts').textContent = `${solar.toFixed(0)} W`;
         document.getElementById('net-power').textContent = `Net Flow: ${(solar - data.power.system_load_watts).toFixed(0)} W`;
-        document.getElementById('solar-bar').style.width = `${Math.min(100, (solar / 1640) * 100)}%`;
+        document.getElementById('solar-bar').style.width = `${Math.min(100, (solar / 3280) * 100)}%`;
 
         // Telemetry provenance: never present simulated values as live
         const simulated = data.power.is_simulated || data.thermal.is_simulated;

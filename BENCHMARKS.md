@@ -16,8 +16,8 @@ flowchart LR
     subgraph Rig["🖥️ Reference SMDC Benchmark Rig"]
         C["⚡ Compute: 2× NVIDIA DGX Spark<br/>(GB10 Superchip, 128GB Unified LPDDR5x, 4TB NVMe each)"]
         S["💾 Storage: 2× 4TB Samsung 990 PRO NVMe<br/>(PCIe 4.0 x4, LUKS2 AES-XTS-256)"]
-        P["🔋 Power: 10.24 kWh LiFePO4 48V Bank<br/>+ 1,640W Monocrystalline PERC Solar PV Array"]
-        T["❄️ Thermal: Dual 360mm Radiators<br/>+ Alphacool D5 Pump (Liquid Loop)"]
+        P["🔋 Power: 10.24 kWh LiFePO4 48V Bank<br/>+ 3,280W Monocrystalline PERC Solar PV Array"]
+        T["❄️ Thermal: DGX Spark units air-cooled;<br/>system-host liquid loop (dual 360mm, D5 pump)"]
     end
 ```
 
@@ -122,25 +122,26 @@ xychart-beta
 
 ---
 
-## 6. Benchmark Suite 5: Solar MPPT & Thermal Liquid Cooling
+## 6. Benchmark Suite 5: Solar MPPT & Thermal Management
 
 ### Solar Energy Conversion Efficiency
-- **Victron SmartSolar MPPT 150/70**:
-  - Peak Efficiency: **98.4%** at 48V nominal battery charging.
-  - Tracking Efficiency: **99.8%** dynamic MPPT algorithm response under fast cloud cover transitions.
-  - Daily Solar Yield (Athens / Southern Europe, 1.64 kW array): **8.62 kWh / day** (Summer peak) / **3.84 kWh / day** (Winter average).
+- **Victron SmartSolar MPPT 250/70** (3.28 kW array, 8 × 410W in 4S2P):
+  - Maximum Efficiency: **99%** (Victron datasheet value for the MPPT 250/70, not measured here).
+  - Tracking Efficiency: **99.8%** dynamic MPPT algorithm response under fast cloud cover transitions (reference value).
+  - Daily Solar Yield (Athens / Southern Europe, 3.28 kW array): **17.24 kWh / day** (Summer peak) / **7.68 kWh / day** (Winter average). These are the earlier reference figures for a 1.64 kW array (8.62 and 3.84 kWh/day, i.e. 5.26 and 2.34 kWh per kWp per day) scaled linearly to 3.28 kW; they are not measurements. The annual-average planning figure used by the sizing calculator is 14.5 kWh/day (5.2 peak sun hours, 85% system efficiency).
+  - Against the reference duty cycle's 11.2 kWh/day draw, the summer figure is a surplus of about 6.1 kWh/day and the winter-average figure a shortfall of about 3.5 kWh/day, which the battery covers only briefly (about 18.7 hours of zero-sun autonomy); sustained winter operation at that duty cycle needs load shedding or a grid or generator top-up.
 
 ### Thermal Dissipation (Continuous 350W Compute Load)
 
 | Component Monitored | Ambient $22.0^\circ\text{C}$ | Ambient $35.0^\circ\text{C}$ (Harsh Outdoor) | Max Allowed Limit |
 | :--- | :---: | :---: | :---: |
 | **Coolant Loop Temperature** | **$28.4^\circ\text{C}$** | **$41.2^\circ\text{C}$** | $60.0^\circ\text{C}$ |
-| **GPU Compute Core Temp** | **$48.2^\circ\text{C}$** | **$61.8^\circ\text{C}$** | $85.0^\circ\text{C}$ |
+| **DGX Spark Core Temp (air-cooled)** | **$48.2^\circ\text{C}$** | **$61.8^\circ\text{C}$** | $85.0^\circ\text{C}$ |
 | **LiFePO4 Battery Core Temp** | **$24.1^\circ\text{C}$** | **$31.5^\circ\text{C}$** | $45.0^\circ\text{C}$ |
 | **Radiator Delta-T ($\Delta T$)** | **$6.4^\circ\text{C}$** | **$6.2^\circ\text{C}$** | $15.0^\circ\text{C}$ |
 
 > [!TIP]
-> The dual 360mm radiator loop maintains coolant temperatures well below the $60.0^\circ\text{C}$ thermal throttling threshold even when operating under full continuous compute load in $35.0^\circ\text{C}$ ambient desert/outdoor conditions.
+> The dual 360mm radiator loop cools the system host only and keeps its coolant well below the $60.0^\circ\text{C}$ threshold in $35.0^\circ\text{C}$ ambient conditions. The two DGX Spark units are sealed, air-cooled appliances outside the loop; their core temperature depends on enclosure airflow, not on the radiators.
 
 ---
 

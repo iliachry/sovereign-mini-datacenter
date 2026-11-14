@@ -100,7 +100,7 @@ function setupUIListeners() {
   if (sunSlider) {
     sunSlider.addEventListener('input', (e) => {
       const val = parseInt(e.target.value);
-      const estWatts = Math.round(1640 * Math.sin((val * Math.PI) / 180));
+      const estWatts = Math.round(3280 * Math.sin((val * Math.PI) / 180));
       document.getElementById('val-sun').textContent = `${val}° (${estWatts.toLocaleString('en-US')}W)`;
       Scene.setSunElevation(val);
     });

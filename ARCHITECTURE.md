@@ -26,7 +26,7 @@ Unlike traditional cloud architectures that depend on centralized control planes
 ┌──────────────────────────────────────────────┐              ┌──────────────────────────────────────────────┐
 │       NODE-ALPHA (Sovereign Core)            │              │        NODE-BETA (Edge AI Station)           │
 │ ┌──────────────────────────────────────────┐ │              │ ┌──────────────────────────────────────────┐ │
-│ │ Power Microgrid: 1.64kW PV + 10.24kWh    │ │              │ │ Power Microgrid: 820W PV + 5.12kWh       │ │
+│ │ Power Microgrid: 3.28kW PV + 10.24kWh    │ │              │ │ Power Microgrid: 820W PV + 5.12kWh       │ │
 │ │ Compute: 2x NVIDIA DGX Spark (GB10)      │ │              │ │ Compute: 1x Jetson Orin AGX (275 TOPS)   │ │
 │ │ Storage: 8TB NVMe RAID-1 (ZFS + Seaweed) │ │              │ │ Storage: 4TB NVMe RAID-1                 │ │
 │ │ Local AI: Ollama + Qdrant RAG + Sentinel │ │              │ │ Local AI: Ollama + Local Agents          │ │
@@ -340,7 +340,7 @@ sequenceDiagram
 
 | Node Archetype | Hardware Platform | Power Subsystem | Primary Capabilities | Typical Location |
 | :--- | :--- | :--- | :--- | :--- |
-| **Core Nexus** | 2x NVIDIA DGX Spark (reference build), or Dual AMD EPYC + 4x RTX 4090 | 10.24–20.48 kWh LiFePO4 + 2.4 kW Solar | Heavy LLM fine-tuning, Master Headscale control plane, S3 Master. | Fixed bunker, research lab, regional HQ |
+| **Core Nexus** | 2x NVIDIA DGX Spark (reference build), or Dual AMD EPYC + 4x RTX 4090 | 10.24–20.48 kWh LiFePO4 + 3.28 kW Solar | Heavy LLM fine-tuning, Master Headscale control plane, S3 Master. | Fixed bunker, research lab, regional HQ |
 | **Edge Station** | 1x NVIDIA Jetson AGX Orin (lower-power alternative) + 1x Supermicro Mini-ITX | 5.12 kWh LiFePO4 + 820W Solar | Local AI inference, GitLab CI/CD, Nextcloud file sync, Starlink uplink. | Remote outpost, mobile vehicle, container |
 | **Off-Grid Island** | 2x Low-power ARM64 nodes + SX1262 LoRa + Iridium | 2.56 kWh LiFePO4 + 410W Solar | Mesh relay, LoRa packet gateway, environmental sensing, DTN pass station. | Mountain peak, island, deep wilderness |
 

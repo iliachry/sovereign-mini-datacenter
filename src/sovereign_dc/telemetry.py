@@ -79,7 +79,7 @@ def get_telemetry_metrics() -> str:
         hour = (time.time() / 3600) % 24
         daylight = max(0.0, math.sin(math.pi * (hour - 6) / 14)) if 6 <= hour <= 20 else 0.0
 
-        solar_watts = daylight * 1640.0 * (0.85 + 0.15 * math.sin(t / 10.0))
+        solar_watts = daylight * 3280.0 * (0.85 + 0.15 * math.sin(t / 10.0))
         base_load_watts = 280.0 + 80.0 * math.sin(t / 45.0)
         net_power = solar_watts - base_load_watts
 
@@ -91,7 +91,7 @@ def get_telemetry_metrics() -> str:
         coolant_temp_celsius = 28.0 + (base_load_watts / 400.0) * 12.0
         rack_exhaust_celsius = rack_inlet_celsius + (base_load_watts / 350.0) * 8.5
 
-        daily_yield_kwh = max(1.2, 8.4 * daylight)
+        daily_yield_kwh = max(1.2, 16.8 * daylight)
         load_shedding = 1.0 if soc_percent < 20.0 else 0.0
     else:
         if not _warned_no_hardware:

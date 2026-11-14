@@ -19,7 +19,7 @@ const CAMERA_PRESETS = {
   antenna: { pos: [0, 380, 280], target: [0, 230, 0] },
   front: { pos: [0, 60, 880], target: [0, 60, 0] },
   power: { pos: [580, 100, 450], target: [400, 40, 0] },
-  solar: { pos: [-780, 140, 450], target: [-600, 0, 0] },
+  solar: { pos: [-1500, 900, 1500], target: [-560, -20, 0] },
 };
 
 export function init(containerId) {

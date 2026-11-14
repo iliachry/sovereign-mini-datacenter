@@ -12,7 +12,7 @@ import { triggerSpaceTransmission } from './space.js';
 // ---------------------------------------------------------------------------
 
 /** Slider defaults in index.html; also the reference rack used by the ROI model. */
-export const DEFAULT_SIZING = Object.freeze({ nodes: 2, hours: 12, batPacks: 2, panels: 4 });
+export const DEFAULT_SIZING = Object.freeze({ nodes: 2, hours: 12, batPacks: 2, panels: 8 });
 export const DEFAULT_ROI = Object.freeze({ cloudMonthly: 2500, gridRate: 0.35, nodeCount: 1 });
 
 // Electrical model
@@ -30,12 +30,16 @@ const BATTERY_USABLE_DOD = 0.85; // Usable depth of discharge
 
 // BOM cost estimator (USD)
 // Unit prices are the priced rows of hardware/COMPONENTS.md; at DEFAULT_SIZING the total equals
-// that file's reference BOM: 4,097 + 2×4,699 + 2×1,200 + 4×180 + 1,860 = $18,475.
-const COST_BASE_USD = 4097; // Host, storage, switch (1,940) + PDU (250) + cooling (1,115) + network cabling (170) + enclosure (622)
+// that file's reference BOM: 3,757 + 2×4,699 + 2×1,200 + 8×180 + 1,320 + 1×600 = $18,915.
+const COST_BASE_USD = 3757; // Host, storage, switch (1,940) + PDU (250) + host liquid cooling (775) + network cabling (170) + enclosure (622)
 const COST_NODE_USD = 4699; // NVIDIA DGX Spark Founders Edition (128 GB / 4 TB), NVIDIA MSRP since Feb 2026
 const COST_BATTERY_PACK_USD = 1200; // 5.12 kWh 48V 100Ah LiFePO4
 const COST_PANEL_USD = 180; // 410W monocrystalline PERC
-const COST_POWER_CONVERSION_USD = 1860; // MultiPlus-II (1,100) + MPPT 150/70 (540) + SmartShunt (130) + Lynx Distributor (90)
+const COST_POWER_FIXED_USD = 1320; // MultiPlus-II (1,100) + SmartShunt (130) + Lynx Distributor (90)
+const COST_MPPT_USD = 600; // Victron SmartSolar MPPT 250/70-Tr
+// One MPPT 250/70 takes two strings of four panels (4S2P): a third parallel string would exceed
+// its 35 A PV short-circuit limit with 14 A panels, so every further 8 panels add a controller.
+const PANELS_PER_MPPT = 8;
 
 // ROI model
 const ROI_YEARS = 3;
@@ -61,12 +65,13 @@ export function computeSizing({ nodes, hours, batPacks, panels }) {
   const balanceKwh = dailyYieldKwh - dailyDrawKwh; // < 0 means the array cannot carry the load
   const solarCoveragePct = Math.min(100, (dailyYieldKwh / dailyDrawKwh) * 100);
 
+  const mpptCount = Math.max(1, Math.ceil(panels / PANELS_PER_MPPT));
   const costs = {
     base: COST_BASE_USD,
     compute: nodes * COST_NODE_USD,
     battery: batPacks * COST_BATTERY_PACK_USD,
     solar: panels * COST_PANEL_USD,
-    powerConversion: COST_POWER_CONVERSION_USD,
+    powerConversion: COST_POWER_FIXED_USD + mpptCount * COST_MPPT_USD,
   };
   const totalBom = costs.base + costs.compute + costs.battery + costs.solar + costs.powerConversion;
 
@@ -79,6 +84,7 @@ export function computeSizing({ nodes, hours, batPacks, panels }) {
     autonomyHours,
     balanceKwh,
     solarCoveragePct,
+    mpptCount,
     costs,
     totalBom,
   };
@@ -269,8 +275,8 @@ export function exportBOMCSV() {
       ['AI Compute', 'NVIDIA DGX Spark (128GB unified memory, 4TB NVMe)', input.nodes, `$${fmtInt(r.costs.compute)}`],
       ['Energy Storage', 'LiFePO4 48V 100Ah 5.12kWh Module', input.batPacks, `$${fmtInt(r.costs.battery)}`],
       ['Solar PV', '410W Monocrystalline PERC Panel', input.panels, `$${fmtInt(r.costs.solar)}`],
-      ['Power Conversion', 'Victron MultiPlus-II 48/3000 + SmartSolar MPPT 150/70 + SmartShunt + Lynx Distributor', 1, `$${fmtInt(r.costs.powerConversion)}`],
-      ['Chassis, Host & Network', '9U 19" Rack + Host Server & NVMe Storage + 10GbE Switch + PDU + Liquid Cooling', 1, `$${fmtInt(r.costs.base)}`],
+      ['Power Conversion', `Victron MultiPlus-II 48/3000 + ${r.mpptCount}x SmartSolar MPPT 250/70 + SmartShunt + Lynx Distributor`, 1, `$${fmtInt(r.costs.powerConversion)}`],
+      ['Chassis, Host & Network', '9U 19" Rack + Host Server & NVMe Storage + 10GbE Switch + PDU + Host Liquid Cooling', 1, `$${fmtInt(r.costs.base)}`],
       ['Total', 'Sovereign Mini Datacenter Complete BOM', '', out.cost],
       ['Energy Balance', `Daily draw ${out.draw} vs solar yield ${out.yield}`, '', `${r.balanceKwh >= 0 ? '+' : '-'}${Math.abs(r.balanceKwh).toFixed(1)} kWh/day`],
     ],
@@ -369,7 +375,7 @@ export function handleTerminalInput(e) {
     screen.textContent = 'Sovereign Mini Datacenter Interactive Terminal (smdc v1.4.0).\n';
   } else if (lower.includes('status')) {
     print(`<span class="term-line-cyan">[SYSTEM STATUS]</span>
-  Solar PV:       1,330 W (150V MPPT Peak Nominal)
+  Solar PV:       2,660 W (250V MPPT, 3,280 W Array)
   LiFePO4 Bank:   88.5% (52.8V, 10.24 kWh Reserve)
   Coolant Loop:   31.2°C (Dual 360mm Rads, Flow: 4.2 L/min)
   AI Inference:   Ollama nomic-embed-text (0.42ms/token)
@@ -383,7 +389,7 @@ export function handleTerminalInput(e) {
   Active Channels:     2 Open Channels (Streaming Compute)`);
   } else if (lower.includes('economy') && lower.includes('market')) {
     print(`<span class="term-line-amber">[MARKET PRICING ORACLE]</span>
-  Solar Harvest:  1,330 W (>1,000 W Threshold)
+  Solar Harvest:  2,660 W (>1,000 W Threshold)
   Battery SoC:    88.5% (>75% Threshold)
   Solar Discount: 50.0% OFF (Surplus Solar Compute Rate)
   LLM Inference:  0.0025 SOV / 1k tokens

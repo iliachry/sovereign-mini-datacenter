@@ -5,14 +5,21 @@
 ```
  ┌─────────────────────────────────────────────────────────────────┐
  │                      SOLAR ARRAY (ROOFTOP)                      │
- │         4x Monocrystalline 410W Panels — 2S2P Config           │
- │   String Voc = 2x panel Voc, array Isc = 2x panel Isc (*)       │
+ │    8x Monocrystalline 410W Panels — 4S2P Config (3,280W)       │
+ │   String Voc = 4x panel Voc, array Isc = 2x panel Isc (*)       │
  └──────────────────────────┬──────────────────────────────────────┘
-                            │ 4mm² Solar DC Cable (Red/Black)
+                            │ 2 strings, 4mm² solar cable each
                             ▼
           ┌─────────────────────────────────┐
-          │  Victron SmartSolar MPPT 150/70 │
-          │  (Max 150V PV, 70A Charge Out)  │
+          │ 2-string combiner + 2-pole PV   │
+          │ DC isolator (250V DC, 35A min)  │
+          └──────────────┬──────────────────┘
+                         │ 6mm² Solar DC Cable (Red/Black)
+                         ▼
+          ┌─────────────────────────────────┐
+          │ Victron SmartSolar MPPT 250/70  │
+          │ (Max 250V PV, 35A PV Isc,       │
+          │  70A Charge Out)                │
           └──────────────┬──────────────────┘
                          │ 35mm² Flex DC Cable
                          ▼
@@ -37,10 +44,20 @@
                         ┌─────────────────┼─────────────────┐
                         ▼                 ▼                  ▼
               [DGX Spark Node 1]  [DGX Spark Node 2]  [Mini-ITX Host]
-              (Liquid Cooled)     (Liquid Cooled)      + [Switch]
+              (Air Cooled,        (Air Cooled,        (Liquid Cooled)
+               own 240W PSU)       own 240W PSU)       + [Switch]
 ```
 
-> **(\*) PV array:** take Voc and Isc from the datasheet of the panels you install. With 2 panels in series the string Voc is twice the panel Voc and must stay below the MPPT's 150V limit at the lowest temperature expected on site (Voc rises as panels get colder). With 2 strings in parallel the array Isc is twice the panel Isc; verify it against the MPPT's PV short-circuit current rating.
+> **(\*) PV array:** take Voc, Isc and the Voc temperature coefficient from the datasheet of the panels you install. The eight panels are wired as two strings of four in series (4S2P).
+>
+> - **Voltage:** the string Voc is four times the panel Voc and rises as the panels get colder. Corrected to the lowest temperature expected on site it must stay below the MPPT 250/70's 245V start-up and operating maximum (250V is the absolute maximum). Worked examples at −10°C with a −0.28%/°C coefficient: 4 × 38V × 1.098 ≈ 167V for 108 half-cell panels; 4 × 50V × 1.098 ≈ 220V for 144 half-cell panels. A panel with an STC Voc above 50V needs its own check.
+> - **Current:** the array Isc is twice the panel Isc (28A for 14A panels) and must stay below the controller's 35A maximum PV short-circuit current.
+> - **Power:** 3,280W is within the controller's 4,000W nominal PV power at 48V, and gives about 64A of charge current at 51.2V against the 70A rating.
+> - **String fuses:** with two strings in parallel a faulted string can only be back-fed by one other string (1 × Isc), which is below the maximum series fuse rating of typical panels, so string fuses are not required; confirm the "maximum series fuse" value on the panel datasheet. Three or more parallel strings would need a fuse per string.
+> - **Cable:** 4mm² solar cable (EN 50618 / H1Z2Z2-K) per string, each carrying at most one panel Isc; 6mm² from the combiner to the MPPT, which carries both strings (up to 28A). Increase the cross-section if the run length gives more than about 3% voltage drop.
+> - **Isolation and hazard:** the array open-circuit voltage is 150–230V DC, well above the 48V battery side and no longer extra-low voltage. Fit a 2-pole DC isolator rated for at least 250V DC and 35A between the combiner and the MPPT, use touch-safe MC4 connectors, and never open a PV connector under load.
+>
+> Controller figures are from Victron's [SmartSolar MPPT 250/60 and 250/70 datasheet](https://www.victronenergy.com/upload/documents/Datasheet-SmartSolar-charge-controller-MPPT-250-60-and-250-70-EN.pdf).
 
 ### Battery connection detail
 
@@ -69,33 +86,26 @@ Each pack has its own positive lead and its own fuse; the two negatives join and
 
 ```
  ┌─────────────────────────────────────────────────────────────────┐
- │                    LIQUID COOLING LOOP                          │
- │                 (EK CryoFuel Clear, ~8L Total)                  │
+ │          LIQUID COOLING LOOP (SYSTEM HOST ONLY)                 │
+ │      (EK-CryoFuel Clear concentrate, mixed 1:9 with water)      │
  └─────────────────────────────────────────────────────────────────┘
 
   [Alphacool D5 Pump + Reservoir Combo]
          │
          ▼  ← Cold Coolant In (~25°C)
-  ┌──────┴──────────────────────────────────────────────────────┐
-  │  COLD DISTRIBUTION MANIFOLD (QD Fittings, G1/4 thread)     │
-  │     ├── Port A → [DGX Spark Node 1 — EK Full-Cover Block]   │
-  │     └── Port B → [DGX Spark Node 2 — EK Full-Cover Block]   │
-  └──────┬──────────────────────────────────────────────────────┘
-         │
-         ▼  ← Hot Coolant Out (~42–48°C at full GPU load)
-  ┌──────┴──────────────────────────────────────────────────────┐
-  │  HOT RETURN MANIFOLD                                        │
-  └──────┬──────────────────────────────────────────────────────┘
-         │
-         ▼
+  [System Host CPU Water Block]  (Mini-ITX server; block matched
+         │                        to the board's socket, QD fittings)
+         ▼  ← Warm Coolant Out (a few °C above inlet at full host load)
   [Primary 360mm Copper Radiator]  (3x Noctua iPPC-3000 @ 3000 RPM)
          │
          ▼
   [Secondary 360mm Copper Radiator] (3x Noctua iPPC-3000 @ 3000 RPM)
          │
          ▼
-  [Return to Pump/Reservoir]  ←────────────────────────────────┘
+  [Return to Pump/Reservoir]
 ```
+
+> **Scope:** the two NVIDIA DGX Spark units are sealed, air-cooled appliances. They are not opened, have no water block and are not connected to this loop; keep their intake and exhaust vents clear. The loop carries only the system host's CPU heat (on the order of 65–125W depending on the CPU fitted), so the two 360mm radiators run far below their capacity and the fans can be run slowly.
 
 > **Bleed procedure:** Run pump at full speed for 30 min with reservoir cap loose. Tilt enclosure side-to-side. Top up coolant. Verify no air bubbles in sight glass.
 

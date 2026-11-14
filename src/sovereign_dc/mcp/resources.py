@@ -82,9 +82,9 @@ def read_manifest_resource() -> str:
             "host_cpu": "AMD EPYC 4004 (8C/16T, 64GB DDR5 ECC)",
             "storage": "8TB NVMe PCIe 4.0 (RAID-1 ZFS Mirror)",
             "energy_storage": "10.24 kWh LiFePO4 (2x 48V 100Ah Smart BMS)",
-            "solar_array": "1,640W Monocrystalline Bifacial PV (4x 410W)",
-            "power_conversion": "Victron MultiPlus-II 48/3000 + SmartSolar MPPT 150/35",
-            "liquid_cooling": "Dual 360mm Radiators with 1-Wire DS18B20 Flow Probes",
+            "solar_array": "3,280W Monocrystalline PERC PV (8x 410W, 4S2P)",
+            "power_conversion": "Victron MultiPlus-II 48/3000 + SmartSolar MPPT 250/70",
+            "liquid_cooling": "System-host loop: dual 360mm radiators with 1-Wire DS18B20 probes (DGX Spark units are air-cooled)",
             "space_link": "RFC 9171 BPv7 Delay-Tolerant Network Terminal (S-Band / Ku-Band)",
         },
     }

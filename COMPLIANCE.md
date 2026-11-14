@@ -31,7 +31,7 @@ flowchart TD
 | **CC6.1 - CC6.3** | **Logical Access Controls** | WireGuard Zero-Trust private mesh (`100.64.0.0/16`), Traefik 2FA/Authelia SSO, Vaultwarden password vault with hardware FIDO2/WebAuthn. | `smdc audit` benchmark |
 | **CC6.6 - CC6.8** | **Data Boundary & Perimeter** | Zero outbound unauthenticated telemetry. Micro-segmentation enforced via Docker bridge networks & nftables/iptables kernel firewalls. | Automated in CI Gate 3 |
 | **CC7.1 - CC7.4** | **System & Threat Monitoring** | CrowdSec intrusion detection (no bouncer wired yet), Prometheus + Grafana real-time anomaly detection, Sentinel Copilot watchdog. | Tested in `test_sentinel_copilot.py` |
-| **A1.1 - A1.3** | **High Availability & Power** | 10.24 kWh LiFePO4 battery bank (2 × 5.12 kWh), dual MPPT solar inputs, 5-stage dynamic load shedding ($L_0 \to L_4$), and black-start cold boot. | Tested in `test_telemetry.py` |
+| **A1.1 - A1.3** | **High Availability & Power** | 10.24 kWh LiFePO4 battery bank (2 × 5.12 kWh), a 3,280W solar array on one MPPT charge controller (two PV strings), 5-stage dynamic load shedding ($L_0 \to L_4$), and black-start cold boot. | Tested in `test_telemetry.py` |
 | **C1.1 - C1.2** | **Confidentiality of Data** | Full-disk encryption at rest (LUKS2 with 512-bit keys), in-transit ChaCha20-Poly1305 encryption, zero cloud telemetry export. | Verified via `smdc audit` |
 
 ---

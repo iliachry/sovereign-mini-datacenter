@@ -283,7 +283,7 @@ function applyLiveTelemetry(data) {
 
     // Map solar wattage to 3D sun elevation
     if (solarWatts > 0) {
-      const estSunDeg = Math.min(90, Math.max(10, Math.round((solarWatts / 1640) * 80 + 10)));
+      const estSunDeg = Math.min(90, Math.max(10, Math.round((solarWatts / 3280) * 80 + 10)));
       setSunElevation(estSunDeg);
       const slider = document.getElementById('slider-sun');
       if (slider) slider.value = estSunDeg;
@@ -326,7 +326,7 @@ function applyLiveTelemetry(data) {
 }
 
 function updateSimulatedTelemetry() {
-  const baseSolar = 1330;
+  const baseSolar = 2660;
   const solarVariation = Math.round(baseSolar + (Math.random() - 0.5) * 40);
   const hudSolar = document.getElementById('hud-solar');
   if (hudSolar) hudSolar.textContent = `${solarVariation.toLocaleString('en-US')} W`;
