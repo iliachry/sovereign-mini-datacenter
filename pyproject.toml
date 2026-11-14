@@ -122,14 +122,14 @@ select = [
 ignore = [
     "E501", # line length handled by formatter
     "S101", # allow assert statements in tests
-    "S104", # allow binding to all interfaces (0.0.0.0 for Prometheus exporters)
-    "S108", # allow default temporary spool path (/tmp/dtn_spool.db)
-    "S110", # allow try-except-pass
+    # S104 (bind to all interfaces) and S108 (hard-coded temp path) are NOT ignored globally:
+    # the two Prometheus exporters and the two legacy-/tmp lookups carry a justified
+    # per-line `# noqa`. S324 (md5) is not ignored either: nothing uses md5 any more.
+    "S110", # allow try-except-pass (best-effort cleanup and optional-probe fallbacks)
     "S311", # allow pseudo-random generators in simulation link models
-    "S310", # allow urllib.request open
-    "S324", # allow md5 for non-cryptographic point ID generation
-    "S603", # allow subprocess run with trusted parameters
-    "S607", # allow starting processes with partial paths
+    "S310", # allow urllib.request open (URLs come from operator configuration, http/https endpoints)
+    "S603", # allow subprocess run with argument lists (never shell=True)
+    "S607", # allow starting docker/nvidia-smi/sensors by name (resolved through PATH)
     "B008", # allow function call in argument default
 ]
 

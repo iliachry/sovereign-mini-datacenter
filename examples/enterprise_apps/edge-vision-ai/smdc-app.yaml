@@ -2,7 +2,7 @@
 name: "Edge Vision AI Pipeline"
 app_id: "edge-vision-ai"
 version: "1.0.0"
-description: "Jetson Orin / TensorRT accelerated real-time computer vision inference and object detection."
+description: "Simulated reference skeleton of a GPU computer vision workload: pause/resume and DTN wiring with random inference figures; no model, TensorRT or CUDA."
 author: "Computer Vision Engineering"
 category: "ai_inference"
 runtime: "process"

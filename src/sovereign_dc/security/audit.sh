@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # ====================================================================
-# Sovereign Mini Datacenter — Automated Security & Compliance Auditor
-# Checks Docker CIS benchmarks, kernel hardening, firewall & permissions
+# Sovereign Mini Datacenter — Host Hardening Audit
+# Checks kernel settings, Docker exposure, host firewall state and .env hygiene.
+# It is a hardening check script: not a CIS benchmark and not a compliance audit.
 #
 # Exit codes:
 #   0  all checks passed (warnings allowed unless --strict)
@@ -32,7 +33,7 @@ for arg in "$@"; do
     esac
 done
 
-echo -e "\n${BOLD}${CYAN}=== Sovereign Mini Datacenter — Security Audit ===${RESET}\n"
+echo -e "\n${BOLD}${CYAN}=== Sovereign Mini Datacenter — Host Hardening Audit ===${RESET}\n"
 
 PASS_COUNT=0
 WARN_COUNT=0
@@ -200,7 +201,7 @@ else
 fi
 
 # ---------------------------------------------------------------------
-echo -e "\n${BOLD}[3] Firewall & Zero-Trust Mesh Exposure:${RESET}"
+echo -e "\n${BOLD}[3] Firewall & Mesh Exposure:${RESET}"
 # A firewall only counts when a ruleset is actually loaded and enforcing;
 # an installed binary alone proves nothing. Reading rules needs root.
 if command -v ufw >/dev/null 2>&1; then
@@ -296,12 +297,12 @@ echo -e "  Audit Complete: ${GREEN}${PASS_COUNT} Passed${RESET}, ${YELLOW}${WARN
 echo -e "=====================================================================\n"
 
 if [[ "$FAIL_COUNT" -gt 0 ]]; then
-    echo -e "${RED}${BOLD}✖ Security audit FAILED: ${FAIL_COUNT} critical check(s) did not pass.${RESET}\n"
+    echo -e "${RED}${BOLD}✖ Host hardening audit FAILED: ${FAIL_COUNT} critical check(s) did not pass.${RESET}\n"
     exit 2
 fi
 if [[ "$STRICT" == "true" && "$WARN_COUNT" -gt 0 ]]; then
     echo -e "${YELLOW}${BOLD}⚠ Strict mode: ${WARN_COUNT} warning(s) treated as failure.${RESET}\n"
     exit 1
 fi
-echo -e "${GREEN}${BOLD}✔ Security audit passed.${RESET}\n"
+echo -e "${GREEN}${BOLD}✔ Host hardening audit passed.${RESET}\n"
 exit 0

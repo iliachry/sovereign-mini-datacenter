@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """
 Sovereign Mini Datacenter — Autonomous Node Bootstrap Provisioner
-Executes on DGX Spark / Jetson cold-start or power-up to autonomously discover hardware,
-connect to the sovereign mesh, spin up core services, synchronise distributed state,
-and report operational status or request help from human technicians.
+Runs on node start-up as a read-only checker: it inventories the hardware, probes mesh
+peers, checks whether Docker, Ollama, Qdrant and Prometheus answer, reads the DTN spool
+depth, and reports the result (or what could not be verified) to the technician notifier.
+It starts no service and synchronises no state; CRDT sync and backup verification are
+reported as not implemented.
 """
 
 from __future__ import annotations

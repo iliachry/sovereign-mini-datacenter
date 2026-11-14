@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from sovereign_dc import config as smdc_config
+from sovereign_dc.economy import node_state as smdc_node_state
 from sovereign_dc.events import reset_event_bus
 from sovereign_dc.mcp.tools import reset_enterprise_manager
 from sovereign_dc.space.dtn import router as smdc_dtn_router
@@ -28,6 +29,8 @@ def isolate_smdc_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     # Legacy-spool fallback must never pick up a real /tmp/dtn_spool.db from the host.
     monkeypatch.setattr(smdc_config, "LEGACY_TMP_DIR", str(tmp_path / "legacy_tmp"))
     monkeypatch.setattr(smdc_dtn_router, "LEGACY_TMP_DIR", str(tmp_path / "legacy_tmp"))
+    # The node-identity migration must never adopt (move) a real legacy wallet from the host's temp dir.
+    monkeypatch.setattr(smdc_node_state, "_legacy_cli_tmp_dir", lambda: None)
     monkeypatch.delenv("TEMP", raising=False)
     monkeypatch.delenv("SMDC_DASHBOARD_TOKEN", raising=False)
     monkeypatch.delenv("SMDC_CORS_ORIGIN", raising=False)
@@ -44,6 +47,7 @@ def isolate_smdc_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         _HARDWARE_STATE["pdu_outlets"] = [True, True, True, True, True, True, True, True]
         _HARDWARE_STATE["fan_rpm"] = 2400
         _HARDWARE_STATE["last_bundle_tx"] = 0
+        smdc_dashboard._ACTUATORS.clear()
 
     yield
 

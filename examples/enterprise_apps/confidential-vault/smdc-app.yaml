@@ -2,7 +2,7 @@
 name: "Confidential Data Vault"
 app_id: "confidential-vault"
 version: "1.0.0"
-description: "Zero-trust encrypted database and key storage secured with NIST FIPS 203 ML-KEM and FIPS 204 ML-DSA."
+description: "Simulated reference skeleton of an L0 secrets-vault workload: lifecycle and telemetry wiring only; app.py stores and encrypts nothing."
 author: "Security & Cryptography Operations"
 category: "database"
 runtime: "process"

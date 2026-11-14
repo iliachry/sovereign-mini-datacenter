@@ -2,7 +2,7 @@
 name: "Spatial 3D Digital Twin Engine"
 app_id: "spatial-digital-twin"
 version: "1.0.0"
-description: "Real-time 3D spatial simulation, WebGL rendering, and live sensor digital shadow streamer."
+description: "Simulated reference skeleton of a digital-twin streamer: republishes node telemetry with placeholder render figures; no rendering or WebGL stream."
 author: "Spatial Computing Lab"
 category: "spatial_media"
 runtime: "process"

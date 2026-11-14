@@ -186,7 +186,7 @@ export function createScreenCanvasTexture(title, subtitle, statusText) {
 
   ctx.fillStyle = '#10b981';
   ctx.font = 'bold 18px monospace';
-  ctx.fillText(statusText || 'STATUS: 100% OFF-GRID NOMINAL', 16, 136);
+  ctx.fillText(statusText || 'STATUS: SIMULATED', 16, 136);
 
   // Waveform line
   ctx.strokeStyle = '#38bdf8';

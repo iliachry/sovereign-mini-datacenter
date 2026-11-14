@@ -118,9 +118,13 @@ export function computeRoi({ cloudMonthly, gridRate, nodeCount }) {
   const cloudTotal = cloudMonthly * months * nodeCount;
   const comparisonTotal = cloudTotal + gridEnergyTotal;
 
-  const netSavings = Math.max(0, comparisonTotal - smdcTotal);
+  // Signed on purpose: when the comparison costs less than the SMDC, the saving and the
+  // ROI are negative and are shown as such, never clamped to zero.
+  const netSavings = comparisonTotal - smdcTotal;
   const monthlyNetSavings = cloudMonthly * nodeCount + gridEnergyMonthly - smdcOpexMonthly;
+  // No payback exists when the monthly saving is zero or negative.
   const paybackMonths = monthlyNetSavings > 0 ? totalCapex / monthlyNetSavings : null;
+  const paybackWithinHorizon = paybackMonths !== null && paybackMonths <= months;
   const roiPct = totalCapex > 0 ? (netSavings / totalCapex) * 100 : 0;
   const co2TonnesPerYear = (nodeCount * displacedKwhPerDay * DAYS_PER_YEAR * GRID_CO2_KG_PER_KWH) / KG_PER_TONNE;
 
@@ -136,7 +140,10 @@ export function computeRoi({ cloudMonthly, gridRate, nodeCount }) {
     cloudTotal,
     comparisonTotal,
     netSavings,
+    monthlyNetSavings,
     paybackMonths,
+    paybackWithinHorizon,
+    negative: netSavings < 0,
     roiPct,
     co2TonnesPerYear,
     smdcPct,
@@ -161,10 +168,29 @@ export function formatSizing(r) {
 
 /** Display strings for the ROI results (also used to verify the static placeholders). */
 export function formatRoi(r, gridRate) {
+  // U+2212 minus sign, so a negative amount cannot be read as a hyphenated label.
+  const signedUsd = (v) => `${v < 0 ? '\u2212' : ''}$${fmtInt(Math.abs(v))}`;
+  const signedPct = (v) => `${v < 0 ? '\u2212' : ''}${Math.abs(v).toFixed(1)}%`;
+  let payback;
+  if (r.paybackMonths === null) payback = 'Not reached';
+  else if (!r.paybackWithinHorizon) payback = `${r.paybackMonths.toFixed(1)} Months (beyond ${r.years} yr)`;
+  else payback = `${r.paybackMonths.toFixed(1)} Months`;
+  let verdict;
+  if (r.negative) {
+    verdict =
+      r.paybackMonths === null
+        ? `\u26A0 Negative return: the SMDC costs $${fmtInt(-r.netSavings)} more than cloud + grid energy over ${r.years} yr; payback is not reached within the model horizon (the monthly saving is zero or negative)`
+        : `\u26A0 Negative return over ${r.years} yr: the SMDC costs $${fmtInt(-r.netSavings)} more than cloud + grid energy; payback falls after the ${r.years}-year model horizon`;
+  } else {
+    verdict = `\u2713 The SMDC costs $${fmtInt(r.netSavings)} less than cloud + grid energy over ${r.years} yr`;
+  }
   return {
-    payback: r.paybackMonths === null ? 'N/A' : `${r.paybackMonths.toFixed(1)} Months`,
-    savings: `$${fmtInt(r.netSavings)}`,
-    roi: `${r.roiPct.toFixed(1)}%`,
+    negative: r.negative,
+    payback,
+    paybackReached: r.paybackWithinHorizon,
+    savings: signedUsd(r.netSavings),
+    roi: signedPct(r.roiPct),
+    verdict,
     co2: `${r.co2TonnesPerYear.toFixed(1)} Tons`,
     barSmdc: `$${(r.smdcTotal / 1000).toFixed(1)}k`,
     barComparison: `$${(r.comparisonTotal / 1000).toFixed(1)}k`,
@@ -308,6 +334,18 @@ export function updateInvestorCalculator() {
   setText('roi-res-savings', out.savings);
   setText('roi-res-roi', out.roi);
   setText('roi-res-co2', out.co2);
+  setText('roi-res-verdict', out.verdict);
+
+  // A negative return is shown in the warning colour, not in the colours of a saving.
+  const WARN = 'var(--accent-rose)';
+  const setColor = (id, color) => {
+    const el = document.getElementById(id);
+    if (el) el.style.color = color;
+  };
+  setColor('roi-res-payback', out.paybackReached ? 'var(--accent-emerald)' : WARN);
+  setColor('roi-res-savings', out.negative ? WARN : 'var(--accent-sky)');
+  setColor('roi-res-roi', out.negative ? WARN : 'var(--accent-amber)');
+  setColor('roi-res-verdict', out.negative ? WARN : 'var(--accent-emerald)');
 
   // Visual Bar
   const barSmdc = document.getElementById('roi-bar-smdc');
@@ -330,13 +368,15 @@ export function exportInvestorTCOCSV() {
       ['Payback Period', out.payback],
       [`${r.years}-Year Net Savings`, out.savings],
       [`${r.years}-Year ROI`, out.roi],
+      ['Result', out.verdict],
+      ['Monthly Net Saving', `${r.monthlyNetSavings < 0 ? '\u2212' : ''}$${fmtInt(Math.abs(r.monthlyNetSavings))}`],
       [`SMDC ${r.years}-Year Cost (list price + control plane subscription)`, `$${fmtInt(r.smdcTotal)}`],
       [`Cloud ${r.years}-Year Spend`, `$${fmtInt(r.cloudTotal)}`],
       [`Grid Energy Displaced by Solar (${r.years} yr)`, `$${fmtInt(r.gridEnergyTotal)}`],
       ['Grid / Diesel Electricity Rate', `$${input.gridRate.toFixed(2)} / kWh`],
       ['Solar Energy Displacing Grid (per node)', `${r.displacedKwhPerDay.toFixed(1)} kWh/day`],
       ['CO2 Avoided per Year', `${r.co2TonnesPerYear.toFixed(1)} t (at ${GRID_CO2_KG_PER_KWH} kg CO2/kWh)`],
-      ['Data Sovereignty Compliance', '100% On-Premise'],
+      ['Data Residency (model assumption)', 'On-premise; no cloud service in the modelled stack'],
       ['Solar Coverage of Reference Rack Load', `${Math.floor(r.solarCoveragePct)}%`],
     ],
     'smdc_investor_tco_model.csv'
@@ -344,7 +384,14 @@ export function exportInvestorTCOCSV() {
   showToast('📊 Investor TCO Model CSV Exported');
 }
 
-// --- 3. Interactive Cyber Terminal (smdc) ---
+// --- 3. Simulated smdc Terminal (demo only) ---
+// Nothing here talks to a node: the browser cannot run the smdc CLI. Every block below is
+// canned, illustrative output and is labelled as such. No audit result, compliance score or
+// "verified" status is ever printed, because nothing was checked.
+const TERMINAL_BANNER =
+  'Sovereign Mini Datacenter demo terminal (simulated; not connected to a node).\n';
+const DEMO_TAG = '<span class="term-line-amber">[DEMO: illustrative values, not read from a node]</span>';
+
 export function handleTerminalInput(e) {
   if (e.key !== 'Enter') return;
   const input = document.getElementById('term-cmd-input');
@@ -371,55 +418,66 @@ export function handleTerminalInput(e) {
 
   const lower = cmd.toLowerCase();
   if (lower === 'help') {
-    print(`Available SMDC CLI Commands:
-  • <span class="term-line-cyan">smdc status</span>             Inspect container health, solar harvest, and space link
-  • <span class="term-line-cyan">smdc economy wallet</span>     Display node Post-Quantum & Ed25519 wallet balances
-  • <span class="term-line-cyan">smdc economy market</span>     Query solar-aware compute & relay price quotes
-  • <span class="term-line-cyan">smdc space passes</span>       Predict upcoming LEO satellite contact passes
-  • <span class="term-line-cyan">smdc space send</span>         Queue DTN BPv7 bundle for space transmission
-  • <span class="term-line-cyan">smdc audit</span>              Run NIST Zero Trust & PQC compliance audit
-  • <span class="term-line-cyan">smdc mesh</span>               Inspect multi-node WireGuard mesh peers
+    print(`Simulated commands (canned sample output; run the real <span class="term-line-cyan">smdc</span> CLI on a node for actual data):
+  • <span class="term-line-cyan">smdc status</span>             Sample of the status summary layout
+  • <span class="term-line-cyan">smdc economy wallet</span>     Sample of the node wallet view
+  • <span class="term-line-cyan">smdc economy market</span>     Sample of the solar-aware price quote
+  • <span class="term-line-cyan">smdc space passes</span>       Sample of the simulated contact-pass table
+  • <span class="term-line-cyan">smdc space send</span>         Plays the bundle-transmission animation
+  • <span class="term-line-cyan">smdc audit</span>              Explains the real host hardening audit (prints no results here)
+  • <span class="term-line-cyan">smdc mesh</span>               Reference three-site topology (design example)
   • <span class="term-line-cyan">clear</span>                   Clear terminal screen`);
   } else if (lower === 'clear') {
-    screen.textContent = 'Sovereign Mini Datacenter Interactive Terminal (smdc v1.4.0).\n';
+    screen.textContent = TERMINAL_BANNER;
   } else if (lower.includes('status')) {
-    print(`<span class="term-line-cyan">[SYSTEM STATUS]</span>
-  Solar PV:       2,660 W (250V MPPT, 3,280 W Array)
-  LiFePO4 Bank:   88.5% (52.8V, 10.24 kWh Reserve)
-  Coolant Loop:   31.2°C (Host loop, 1x 360mm Rad, Pump: PWM 60%)
-  AI Inference:   Ollama nomic-embed-text (0.42ms/token)
-  Space Link:     IN CONTACT (57.1° EL, SNR: 14.2 dB)
-  Load Shedding:  L0 (Full Compute Operations Authorized)`);
+    print(`${DEMO_TAG}
+<span class="term-line-cyan">[SYSTEM STATUS: SAMPLE]</span>
+  Solar PV:       2,660 W (3,280 W array)
+  LiFePO4 Bank:   88.5% (52.8V, 10.24 kWh)
+  Coolant Loop:   31.2°C (host loop, 1x 360mm radiator)
+  Space Link:     simulated orbit model (no radio attached)
+  Load Shedding:  L0`);
   } else if (lower.includes('economy') && lower.includes('wallet')) {
-    print(`<span class="term-line-purple">[NODE WALLET]</span>
-  Address (Ed25519):   sov_89f7a24c8b910e12d
-  Address (ML-DSA-87): sov_pqc_99e14a72d3f901bc
-  Balance:             1,000.00 SOV Credits
-  Active Channels:     2 Open Channels (Streaming Compute)`);
+    print(`${DEMO_TAG}
+<span class="term-line-purple">[NODE WALLET: SAMPLE]</span>
+  Address (Ed25519):   sov_&lt;sample-address&gt;
+  Address (ML-DSA-87): sov_pqc_&lt;sample-address&gt;
+  Balance:             1,000.00 test credits (minted locally with --mint; no monetary value)`);
   } else if (lower.includes('economy') && lower.includes('market')) {
-    print(`<span class="term-line-amber">[MARKET PRICING ORACLE]</span>
-  Solar Harvest:  2,660 W (>1,000 W Threshold)
-  Battery SoC:    88.5% (>75% Threshold)
-  Solar Discount: 50.0% OFF (Surplus Solar Compute Rate)
-  LLM Inference:  0.0025 SOV / 1k tokens
-  Space DTN Relay:0.0050 SOV / MB`);
+    print(`${DEMO_TAG}
+<span class="term-line-amber">[PRICE QUOTE: SAMPLE]</span>
+  Solar Harvest:  2,660 W (above the 1,000 W surplus threshold)
+  Battery SoC:    88.5% (above the 75% surplus threshold)
+  Solar Discount: 50.0% (surplus-solar rate)
+  LLM Inference:  0.0025 credits / 1k tokens
+  Space DTN Relay:0.0050 credits / MB`);
   } else if (lower.includes('space') && lower.includes('passes')) {
-    print(`<span class="term-line-cyan">[UPCOMING CONTACT PASSES]</span>
+    print(`${DEMO_TAG}
+<span class="term-line-cyan">[CONTACT PASSES: SAMPLE]</span>
   1. SOVEREIGN-LEO-1  AOS: +02m 14s  Max EL: 68.4°  Duration: 8m 42s
-  2. STARLINK-RELAY   AOS: +48m 10s  Max EL: 42.1°  Duration: 6m 15s`);
+  2. STARLINK-RELAY   AOS: +48m 10s  Max EL: 42.1°  Duration: 6m 15s
+  The real command predicts passes from a simulated orbit model; it tracks no real satellite.`);
   } else if (lower.includes('space') && lower.includes('send')) {
     triggerSpaceTransmission();
-    print(`<span class="term-line-accent">[DTN BPv7 BUNDLE TRANSMITTED]</span>
-  Bundle ID:      dtn://sovereign-node-alpha/telemetry/0x4a92
-  Payload:        Telemetry snapshot (4.8 KB)
-  Destination:    dtn://ground-station-alpha.earth/relay
-  Status:         SPOOLED & TRANSMITTING VIA PHASED ARRAY 🚀`);
+    print(`${DEMO_TAG}
+<span class="term-line-accent">[DTN BUNDLE: ANIMATION ONLY]</span>
+  Nothing was transmitted. On a node, <span class="term-line-cyan">smdc space send</span> stores a BPv7 bundle in the
+  local store-and-forward spool; delivery needs a radio link, which this project only simulates.`);
   } else if (lower.includes('audit')) {
-    print(`<span class="term-line-accent">[COMPLIANCE & SECURITY AUDIT]</span>
-  NIST SP 800-207 Zero Trust:  PASSED (Mutual WireGuard + PQC)
-  NIST FIPS 203 ML-KEM-1024:   ACTIVE (Key Encapsulation)
-  NIST FIPS 204 ML-DSA-87:     ACTIVE (Digital Signatures)
-  Overall Compliance Score:    100% GREEN (CIS Hardened)`);
+    print(`<span class="term-line-amber">[DEMO: NO AUDIT WAS RUN]</span>
+  This browser terminal is a simulation. It cannot inspect a machine, so it prints
+  no check results and no compliance score.
+  The real audit is <span class="term-line-cyan">smdc audit</span>, run on a Linux node. It executes
+  software/security/audit.sh (kernel hardening sysctls, host firewall, Docker socket
+  exposure, .env secrets permissions and placeholders) and reports each check for
+  that host. On other platforms it reports that nothing was checked.`);
+  } else if (lower.includes('mesh')) {
+    print(`${DEMO_TAG}
+<span class="term-line-cyan">[REFERENCE TOPOLOGY: DESIGN EXAMPLE]</span>
+  smdc-node-01  Athens core          100.64.0.1
+  smdc-node-02  Alpine off-grid      100.64.0.2
+  smdc-node-03  Aegean island        100.64.0.3
+  These peers are an illustrative three-site design; none is discovered or probed.`);
   } else {
     printText(`Command not recognized: '${cmd}'. Type 'help' for options.`, null, '#ef4444');
   }

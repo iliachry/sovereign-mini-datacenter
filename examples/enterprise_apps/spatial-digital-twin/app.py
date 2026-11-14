@@ -1,7 +1,8 @@
 """Spatial 3D Digital Twin Engine for Sovereign Mini Datacenter (SMDC).
 
-Demonstrates real-time telemetry streaming into interactive 3D spatial twins
-with WebGL assets and dynamic power management.
+Simulated reference skeleton: republishes the node's battery and coolant telemetry with
+placeholder render figures (fixed constants). It renders nothing and serves no WebGL or
+WebSocket stream.
 """
 
 from __future__ import annotations
@@ -16,11 +17,11 @@ logger = logging.getLogger("spatial-digital-twin")
 
 
 def main() -> None:
-    logger.info("Starting Spatial 3D Digital Twin Engine...")
+    logger.info("Starting Spatial 3D Digital Twin Engine skeleton (simulated: nothing is rendered)...")
     client = SMDCClient()
     lifecycle = AppLifecycleHandler("spatial-digital-twin", client=client)
 
-    logger.info("Initializing WebGL Digital Shadow stream...")
+    logger.info("No WebGL stream is opened; publishing placeholder render figures.")
 
     while lifecycle.is_running:
         # True only while an in-process EnterpriseManager has paused this app.
@@ -38,6 +39,7 @@ def main() -> None:
         client.emit_telemetry(
             "spatial-digital-twin",
             {
+                "simulated": True,
                 "rendered_fps": 60.0,
                 "connected_viewers": 3,
                 "active_meshes": 142,
@@ -47,7 +49,7 @@ def main() -> None:
         )
 
         logger.info(
-            "Digital Twin Stream Active | Connected Viewers: 3 | Coolant: %.1f°C | Battery: %.1f%%",
+            "Digital twin skeleton (placeholder figures) | Viewers: 3 | Coolant: %.1f°C | Battery: %.1f%%",
             temp_coolant,
             soc,
         )

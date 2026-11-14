@@ -2,16 +2,16 @@
 
 ![Sovereign Mini Datacenter 3D Render](cad/render.jpg)
 
-**Sovereign Mini Datacenter** is a self-powered, solar-backed micro-datacenter stack with air-cooled AI nodes and a liquid-cooled host, designed for **complete data and computational sovereignty**. Run your own private AI with semantic RAG, Git hosting, project management, encrypted file cloud, email server, password vault, and zero-trust mesh VPN — fully off-grid capable.
+**Sovereign Mini Datacenter** is a self-powered, solar-backed micro-datacenter stack with air-cooled AI nodes and a liquid-cooled host, designed for **complete data and computational sovereignty**. Run your own private AI with semantic RAG, Git hosting, project management, file cloud, email server, password vault, and private WireGuard mesh VPN — fully off-grid capable.
 
 Developed by **[Metatopia Studio](https://metatopia.gr)** · Author & Lead Architect: **[Ilias Chrysovergis](https://iliachry.gr)** · License: MIT · © 2026
 
 [![CI & Quality Gates](https://github.com/iliachry/sovereign-mini-datacenter/actions/workflows/ci.yml/badge.svg)](https://github.com/iliachry/sovereign-mini-datacenter/actions/workflows/ci.yml)
-[![Quality Gate](https://img.shields.io/badge/Quality%20Gate-Strict%20Enforcement%20(91.2%25%20Cov)-10b981?style=flat&logo=githubactions)](https://github.com/iliachry/sovereign-mini-datacenter/actions/workflows/ci.yml)
+[![Quality Gate](https://img.shields.io/badge/Quality%20Gate-Strict%20Enforcement%20(91.8%25%20Cov)-10b981?style=flat&logo=githubactions)](https://github.com/iliachry/sovereign-mini-datacenter/actions/workflows/ci.yml)
 [![Enterprise Onboarding](https://img.shields.io/badge/Enterprise-Workload%20Coupling%20Framework-8b5cf6?style=flat)](ENTERPRISE_ONBOARDING.md)
 [![Commercialization](https://img.shields.io/badge/Commercialization-Investment%20Thesis-f59e0b?style=flat)](COMMERCIALIZATION.md)
-[![Benchmarks](https://img.shields.io/badge/Benchmarks-Empirical%20AI%20%26%20Power-06b6d4?style=flat)](BENCHMARKS.md)
-[![Compliance](https://img.shields.io/badge/Compliance-SOC%202%20%26%20PQC%20Ready-ec4899?style=flat)](COMPLIANCE.md)
+[![Benchmarks](https://img.shields.io/badge/Benchmarks-Measured%20vs%20Design%20Targets-06b6d4?style=flat)](BENCHMARKS.md)
+[![Compliance](https://img.shields.io/badge/Security-Control%20Mapping%20(not%20certified)-ec4899?style=flat)](COMPLIANCE.md)
 [![OpenTofu / Terraform](https://img.shields.io/badge/IaC-OpenTofu%20%26%20Terraform-844fba?style=flat&logo=opentofu)](terraform/README.md)
 [![3D WebGL Viewer](https://img.shields.io/badge/3D%20CAD%20Viewer-Live%20Demo-10b981?style=flat&logo=three.js)](https://iliachry.gr/sovereign-mini-datacenter/)
 [![AI Agents Guide](https://img.shields.io/badge/AI%20Agents-Engineering%20Playbook-6366f1?style=flat)](AGENTS.md)
@@ -24,10 +24,10 @@ Developed by **[Metatopia Studio](https://metatopia.gr)** · Author & Lead Archi
 | Resource | Scope & Key Takeaways | Link |
 | :--- | :--- | :---: |
 | **🏢 Enterprise Onboarding & SDK** | Vendor-neutral manifest (`smdc-app.yaml`), zero-dependency SDK, power tiers ($L_0 \to L_4$), and PQC packaging | [**`ENTERPRISE_ONBOARDING.md`**](ENTERPRISE_ONBOARDING.md) |
-| **📈 Commercial Strategy & TCO Model** | Market Sizing (\$60.4B TAM), Unit Economics, 5-Year Financials, **7.0 Mo Payback & 67.8% TCO Savings** vs. AWS | [**`COMMERCIALIZATION.md`**](COMMERCIALIZATION.md) |
+| **📈 Commercial Strategy & TCO Model** | Market Sizing (\$60.4B TAM), Unit Economics, 5-Year Financials, **7.0 Mo Payback & 67.8% TCO Savings** in the TCO-table scenario (vs. a cloud + diesel alternative with \$12,000 capex and about \$3,000/month of running costs); the website calculator's default scenario (\$2,500/month of cloud spend plus grid energy at \$0.35/kWh, no capex on the alternative side) gives 13.0 months | [**`COMMERCIALIZATION.md`**](COMMERCIALIZATION.md) |
 | **🏗️ Terraform & OpenTofu IaC** | Bare-metal Talos Linux, Proxmox VE GPU passthrough, WireGuard mesh, and automated Helm bootstrapping | [**`terraform/README.md`**](terraform/README.md) |
-| **⚡ Performance Reference Figures** | Reference figures for local LLM token throughput, Qdrant retrieval latency and load-shedding response (not reproducible from this repository; see the provenance note) | [**`BENCHMARKS.md`**](BENCHMARKS.md) |
-| **🛡️ Enterprise Compliance & PQC Security** | SOC 2 Type II, ISO 27001, NIST 800-207 Zero Trust, Post-Quantum Cryptography (ML-KEM/Kyber-1024), TPM 2.0 | [**`COMPLIANCE.md`**](COMPLIANCE.md) |
+| **⚡ Benchmarks: Measured vs. Design Targets** | Measured on a development machine (Mac mini M4, 2026-11-14): 18.9 to 19.5 tokens/s for `qwen2.5-coder:7b` on Ollama, about 2,100 DTN bundles/s into the spool, and the load-shedding software path in simulation. No run on the DGX Spark reference hardware is documented, and Qdrant latency has not been measured; hardware reaction times and link figures are labelled design targets | [**`BENCHMARKS.md`**](BENCHMARKS.md) |
+| **🛡️ Security Controls & Compliance Mapping** | Self-assessment, not a certification: which controls ship today (edge TLS, optional WireGuard VPN, encrypted backups, ML-DSA signatures) and which are planned (mutual TLS, TPM-sealed keys, Secure Boot, encrypted DTN bundles), mapped to SOC 2, ISO 27001 and NIST 800-53 | [**`COMPLIANCE.md`**](COMPLIANCE.md) |
 | **🌐 Interactive Digital Twin & ROI Simulator** | 3D WebGL CAD visualizer, live subsystem explorer, and **interactive investor TCO calculator** | [**Live 3D WebGL Viewer**](https://iliachry.gr/sovereign-mini-datacenter/) |
 | **🏛️ Autonomous Sovereign Mesh Architecture** | 7-Layer protocol stacks, multi-spectral communication fabric, delay-tolerant space networking (RFC 9171) | [**`ARCHITECTURE.md`**](ARCHITECTURE.md) |
 
@@ -66,13 +66,13 @@ graph TD
     subgraph ComputeStack["⚡ Sovereign Edge Compute & AI Cluster"]
         Spark1["Primary: NVIDIA DGX Spark 128GB<br/>(Ollama LLM Engine • GB10 Superchip)"]:::compute
         Spark2["Secondary: NVIDIA DGX Spark 128GB<br/>(Qdrant Semantic Vector Search)"]:::compute
-        Sentinel["Sentinel Copilot Agent<br/>(Telemetry & Dynamic Load Shedding)"]:::secure
+        Sentinel["Sentinel Copilot Agent<br/>(Polls power exporter • publishes operating mode)"]:::secure
         Economy["Autonomous Compute Economy<br/>(State Channels • Solar Price Oracle)"]:::secure
     end
 
-    subgraph SecurityMesh["🛡️ Quantum-Safe WireGuard Mesh"]
-        PQC["NIST FIPS 203 ML-KEM-1024<br/>NIST FIPS 204 ML-DSA-87"]:::secure
-        WireGuard["WireGuard Zero-Trust Mesh"]:::secure
+    subgraph SecurityMesh["🛡️ Security & Mesh Networking"]
+        PQC["ML-DSA-87 signatures: wallets, app packages<br/>ML-KEM: library and self-test only"]:::secure
+        WireGuard["WireGuard Mesh VPN (Headscale, optional)"]:::secure
         LoRaMesh["Sub-GHz LoRa Meshtastic Mesh"]:::secure
     end
 
@@ -85,10 +85,9 @@ graph TD
     Solar --> MPPT --> Battery
     Battery --> Spark1
     Battery --> Spark2
-    Cooling -.->|"Thermal Telemetry"| Sentinel
-    MPPT -.->|"VE.Direct Telemetry"| Sentinel
-    Sentinel -->|"L0-L4 Load Shedding"| Spark1
-    Sentinel -->|"Price Adjustments"| Economy
+    Cooling -.->|"Thermal Telemetry"| OpsConsole
+    MPPT -.->|"Power exporter /metrics (SoC, PV power)"| Sentinel
+    Sentinel -->|"Operating mode (mode file / event)"| Spark1
 
     Spark1 <-->|"ConnectX-7 QSFP / 10GbE"| Spark2
     Spark1 -->|"BPSec Signed Bundles"| DTNRouter
@@ -97,7 +96,7 @@ graph TD
 
     PQC --> WireGuard
     WireGuard <--> Spark1
-    LoRaMesh <--> Sentinel
+    LoRaMesh -.->|"Emergency packets to DTN spool (no radio driver yet)"| DTNRouter
 
     WebTwin <-->|"Live SSE & Control REST"| OpsConsole
     MCP <-->|"JSON-RPC 2.0 stdio"| Spark1
@@ -117,7 +116,7 @@ sovereign-mini-datacenter/
 │       ├── events.py            # In-process thread-safe pub/sub event bus
 │       ├── log.py               # Structured JSON & colored logging
 │       ├── hal/                 # Hardware Abstraction Layer (GPU, Power, Storage, Thermal)
-│       ├── agents/              # Autonomous AI Agents (Sentinel, Indexer, CodeReviewer)
+│       ├── agents/              # Agent workers (Sentinel mode publisher, Indexer, CodeReviewer)
 │       ├── enterprise/          # Enterprise Workload Onboarding & Coupling Framework
 │       │   ├── schema.py        # Declarative manifest dataclass & validation (smdc-app.yaml)
 │       │   ├── registry.py      # App discovery, registry persistence & scaffolding
@@ -132,10 +131,10 @@ sovereign-mini-datacenter/
 │       └── web/                 # Real-time Web Operations Dashboard & REST API
 ├── examples/                    # Turnkey Enterprise Reference Applications
 │   └── enterprise_apps/         # Starter templates for rapid edge onboarding
-│       ├── iot-edge-gateway/    # L0 Critical Sub-GHz sensor telemetry aggregator
-│       ├── edge-vision-ai/      # L2 Background GPU-accelerated TensorRT computer vision
-│       ├── spatial-digital-twin/# L1 Standard Three.js WebGL spatial simulation
-│       └── confidential-vault/  # L0 Critical NIST FIPS 203/204 zero-trust secrets vault
+│       ├── iot-edge-gateway/    # L0 critical IoT gateway skeleton (simulated sensors)
+│       ├── edge-vision-ai/      # L2 background vision skeleton (simulated inference, no GPU code)
+│       ├── spatial-digital-twin/# L1 standard digital-twin skeleton (placeholder figures)
+│       └── confidential-vault/  # L0 critical secrets-vault skeleton (stores and encrypts nothing)
 ├── software/
 │   ├── docker-compose.yml       # Sovereign Core 12-service production stack
 │   ├── Dockerfile.smdc          # Multi-arch container image (linux/amd64, linux/arm64)
@@ -144,9 +143,9 @@ sovereign-mini-datacenter/
 │   ├── prometheus.yml           # Prometheus scrape configuration (Node, Space, ESP32, LoRa)
 │   ├── agents/                  # AI Knowledge Indexer & Code Reviewer daemons
 │   ├── mesh/                    # WireGuard mesh & LoRa Meshtastic packet gateway
-│   ├── vpn/                     # Zero-Trust Mesh VPN (Headscale)
+│   ├── vpn/                     # WireGuard Mesh VPN (Headscale)
 │   ├── backup/                  # Encrypted Backup & Recovery (Restic)
-│   ├── telemetry/               # Solar/BMS Telemetry & Load-Shedding Sentinel
+│   ├── telemetry/               # Power exporter (Prometheus) & load_shedder.sh host script
 │   ├── space/                   # Space & Satellite Communications (DTN / BPv7)
 │   ├── mailcow/                 # Sovereign Email Stack
 │   └── grafana/
@@ -166,7 +165,7 @@ sovereign-mini-datacenter/
 │   ├── MANUFACTURING_GUIDE.md   # Laser cut, CNC bend, and assembly instructions
 │   └── render.jpg               # Photorealistic 3D product render
 ├── docs/                        # Interactive Three.js WebGL Digital Twin (ES Modules) & GitHub Pages
-├── tests/                       # 844 automated unit & integration tests (91.2% coverage)
+├── tests/                       # 999 automated unit & integration tests (91.8% coverage)
 └── .github/
     └── workflows/
         ├── ci.yml               # Complete CI pipeline + Pytest + GitHub Pages deploy
@@ -177,7 +176,7 @@ sovereign-mini-datacenter/
 
 ## 🐍 Python CLI Package (`smdc`)
 
-Manage the datacenter, live telemetry, space communications, autonomous AI agents, and security audits directly from your terminal:
+Manage the datacenter, live telemetry, space communications, autonomous AI agents, and the host hardening audit directly from your terminal:
 
 ```bash
 pip install sovereign-dc
@@ -192,8 +191,13 @@ smdc status
 # Launch real-time Web Operations Dashboard & REST API
 smdc dashboard --port 8080
 
-# Inspect or generate node cryptographic wallet (Ed25519 & NIST PQC ML-DSA-87)
+# Inspect the node wallet (Ed25519 & NIST PQC ML-DSA-87). One wallet and one ledger per node:
+# the CLI, the dashboard and the MCP server report the same address and balance. A new
+# node starts at 0 credits; no command mints implicitly.
 smdc economy wallet
+
+# Mint LOCAL TEST credits to the node wallet (issued by this node for itself: no external value)
+smdc economy mint 100 --memo "local test"
 
 # Query dynamic solar-aware compute & relay price quotes
 smdc economy market --soc 85 --solar 1200
@@ -201,7 +205,7 @@ smdc economy market --soc 85 --solar 1200
 # Transfer compute credits between sovereign nodes
 smdc economy send <recipient_address> 25.0 --memo "LLM_INFERENCE_BATCH"
 
-# Run automated security compliance & CIS benchmark audit
+# Run the host hardening audit (Linux: kernel settings, Docker exposure, firewall, .env hygiene)
 smdc audit
 
 # Post-quantum cryptographic operations (NIST FIPS 203/204)
@@ -211,18 +215,18 @@ smdc security pqc --help
 smdc mesh chaos --help
 
 # Autonomous AI Agent operations
-smdc agent status                                    # Inspect running agent daemons & Ollama status
-smdc agent ask "How do I throttle background jobs?" # Ask Sentinel Copilot directly
+smdc agent status                                    # Check that Ollama and Qdrant are reachable
+smdc agent ask "How do I throttle background jobs?" # Send a prompt to the local Ollama model
 smdc agent review patch.diff                         # AI code review on local git diff
-smdc agent index /data/docs                          # Trigger semantic RAG vector indexing
+smdc agent index /data/docs                          # Index a directory into Qdrant (same file set as the indexer worker)
 
 # Enterprise Workload Onboarding & Lifecycle Management
 smdc app list                                        # List all registered enterprise apps & runtime state
 smdc app init "IoT Edge" --app-id iot-edge --category iot --target-dir ./iot-edge # Scaffold new app repo
 smdc app validate ./iot-edge                         # Validate smdc-app.yaml schema and resource quotas
 smdc app register ./iot-edge                         # Register app on local sovereign node
-smdc app start iot-edge                              # Launch enterprise workload process
-smdc app status iot-edge                             # Query live health probe, PID, power and custom metrics
+smdc app start iot-edge                              # Mark the app running (state tracking; no process is launched)
+smdc app status iot-edge                             # Show tracked state (resource figures are manifest estimates)
 smdc app package ./iot-edge --output iot-edge.smdc-app # Package & sign with NIST FIPS 204 ML-DSA-87
 
 # Inspect multi-node global mesh cluster topology
@@ -234,7 +238,7 @@ smdc space passes --hours 12
 # Inspect real-time space link budget, SNR, and Doppler shift
 smdc space status
 
-# Queue an encrypted bundle for space transmission on next orbital pass
+# Queue a bundle in the DTN spool for the next contact pass (the payload is not encrypted)
 smdc space send dtn://ground-station-alpha.earth/telemetry "STATUS_OK" --priority 2
 
 # Inspect DTN store-and-forward spool queue
@@ -244,12 +248,15 @@ smdc space queue
 smdc deploy --all
 ```
 
-> **Dashboard access (`smdc dashboard`)**: the server binds `127.0.0.1` unless `--host` or `SMDC_DASHBOARD_HOST` says otherwise. Set `SMDC_DASHBOARD_TOKEN` before exposing it: control POSTs then require `Authorization: Bearer <token>`, and so do the JSON and SSE read endpoints for any non-local client (the SSE stream also accepts `?token=`); without a token, remote clients cannot control the node but can still read `/api/status`. Browser pages from other origins get no CORS access unless they are loopback origins or listed in `SMDC_CORS_ORIGIN` (comma-separated origins, or `*`), for example `SMDC_CORS_ORIGIN=https://iliachry.gr` to let the hosted 3D twin shadow a node opened as `?node=<node url>&token=<token>`.
+> **Dashboard access (`smdc dashboard`)**: the server binds `127.0.0.1` unless `--host` or `SMDC_DASHBOARD_HOST` says otherwise. Set `SMDC_DASHBOARD_TOKEN` before exposing it: control POSTs then require `Authorization: Bearer <token>`, and so do the JSON and SSE read endpoints for any non-local client (the SSE stream also accepts `?token=`); without a token, control POSTs are accepted only from a local, non-proxied client (loopback TCP peer and no `X-Forwarded-For` / `Forwarded` / `X-Real-IP` / `Via` header), so neither a remote client nor one relayed by a same-host reverse proxy can control the node, but both can still read `/api/status`. The rack-door and PDU-outlet controls change a **digital shadow** only: this package ships no door or PDU driver, so their responses and the `hardware` section of `/api/status` say `"actuated": false, "simulated": true`, and in hardware mode (`HAL_MODE=hardware`) they are refused with HTTP 501 until an integration registers an actuator backend (`sovereign_dc.web.dashboard.register_actuator`). `hardware.fan_rpm` is an estimate from coolant temperature and load (`"fan_rpm_estimated": true`), not a tachometer reading, and a quantity the telemetry source did not report is `null`, never a nominal value. Browser pages from other origins get no CORS access unless they are loopback origins or listed in `SMDC_CORS_ORIGIN` (comma-separated origins, or `*`), for example `SMDC_CORS_ORIGIN=https://iliachry.gr` to let the hosted 3D twin shadow a node opened as `?node=<node url>&token=<token>`.
 
 > **State and configuration**
 > - **`SMDC_STATE_DIR`** (default `~/.smdc`, mode 0700) holds wallets, ledgers, node keys and, by default, the DTN spool `dtn_spool.db` (override: `DTN_DB_PATH`), the technician alert log `sovereign_logs/technician_notifications.jsonl` (override the directory: `SOVEREIGN_LOG_DIR`) and the sentinel mode file `sovereign_mode` (override: `SOVEREIGN_MODE_FILE`). Nothing defaults to shared `/tmp` any more. A spool left by an older release at `/tmp/dtn_spool.db` keeps being used until `<state dir>/dtn_spool.db` exists, but only if it is a regular file owned by you and not group/world-writable; move it into the state directory to keep it across reboots.
 > - **DTN submission** (`POST /api/control/dtn-transmit`): `destination`, `payload` (text) or `payload_b64` (base64 binary), `ttl` (seconds; default 7 days, capped at 30), `priority` (0 bulk, 1 normal, 2 expedited, 3 critical) and optional `source` endpoint ID.
 > - **Knowledge indexer**: `DOCS_WATCH_DIR` (directory to index), `DOCS_INCLUDE_GLOB` (comma-separated globs relative to it; empty = everything, the agents overlay uses `*/files/**` for Nextcloud user files), `DOCS_EXCLUDE_DIRS` (directory names never entered; default `appdata_*,files_trashbin,files_versions,files_external,cache,uploads,.*`) and `DOCS_MAX_FILE_BYTES` (default 5 MiB; larger files are skipped). Qdrant point ids are UUIDs; points stored under the integer ids of earlier releases are replaced when their document is re-indexed.
+> - **Sentinel**: `SENTINEL_POLL_INTERVAL_SECONDS` (seconds between polls of the power exporter; default 30, minimum 1; an invalid value is ignored with a warning). The agents overlay passes it through from `.env`.
+> - **Mesh topology**: `CLUSTER_CONFIG_PATH` names the cluster YAML that `load_peers()` in `mesh_sync.py` reads; unset, it looks for `cluster_config.yaml` next to `mesh_sync.py` (the repository ships one at `software/mesh/cluster_config.yaml`) and otherwise uses the built-in three-site reference topology.
+> - **SQLite state files** (ledgers, DTN spool) are created with mode 0600; an existing file owned by you with a wider mode is tightened to 0600 the next time it is opened.
 > - **Standalone overlay**: to run one overlay against a core stack that is already up, add the attach file: `docker compose --project-directory software -f software/docker-compose.attach.yml -f software/agents/docker-compose.agents.yml up -d` (add `-p <name>` if the core stack does not use the default project name `software`).
 
 
@@ -258,22 +265,25 @@ smdc deploy --all
 ## 🏛️ Advanced Capabilities & Pillars
 
 ### 1. 🤖 Autonomous Local AI Agents (`software/agents/`)
-* **Nextcloud Knowledge Indexer:** Daemon that monitors folders, extracts text from documents, embeds them via Ollama (`nomic-embed-text`), and stores vectors in Qdrant for semantic RAG in Open-WebUI.
-* **GitLab Automated Code Reviewer:** Webhook worker that analyzes Merge Request diffs with local LLMs (`qwen2.5-coder`) and posts inline security and quality reviews.
-* **Datacenter Sentinel Copilot:** AI assistant that schedules heavy GPU training workloads during peak solar hours and throttles jobs during battery preservation mode.
+* **Nextcloud Knowledge Indexer:** Worker that polls `DOCS_WATCH_DIR` every 30 s, reads plain-text files (`.md`, `.txt`, `.csv`, `.json`, `.py`, `.sh`; it does not extract text from PDF or Office documents), splits them into chunks, embeds each chunk via Ollama (`nomic-embed-text`) and stores the vectors in the Qdrant collection `sovereign_knowledge`. It defers indexing while the sentinel mode is `ECO_PRESERVATION` or `CRITICAL_SHEDDING`.
+* **GitLab Automated Code Reviewer:** Polling worker (every 60 s; there is no webhook) that lists open Merge Requests through the GitLab API, sends the first 4,000 characters of each diff to a local model (`qwen2.5-coder`) and posts one summary note per MR revision (not inline comments). Without `GITLAB_API_TOKEN` it reviews nothing.
+* **Datacenter Sentinel Copilot:** Rule-based worker (no LLM) that polls the power exporter every `SENTINEL_POLL_INTERVAL_SECONDS` (default 30), maps battery state of charge, PV power and a clear-sky time-of-day estimate (not a weather forecast) to an operating mode (`NORMAL`, `SOLAR_SURPLUS_COMPUTE`, `ECO_PRESERVATION`), writes that mode to the shared mode file and publishes a `load_shedding.changed` event on the in-process event bus. It does not schedule, throttle or stop workloads itself: the knowledge indexer reads the mode file and defers indexing, and an `EnterpriseManager` running in the same process marks deferrable apps paused (state tracking only).
 
 ### 2. 🔌 ESP32 Microcontroller Hardware Bridge (`firmware/`)
 * C++ Arduino and ESPHome firmware reading physical **Victron VE.Direct** serial streams (checksum-validated) and **DS18B20 1-Wire** coolant temperature probes, broadcasting via HTTP `/metrics` (and MQTT in the ESPHome flavour). RS485 Modbus BMS reading is not implemented.
 
-### 3. 🛡️ Security Hardening & Zero-Trust Sentinel (`software/security/`)
+### 3. 🛡️ Security Hardening & Intrusion Detection (`software/security/`)
 * **CrowdSec Intrusion Detection:** CrowdSec reads the Traefik access log and raises decisions for brute-force scanners and malicious IP ranges. No bouncer is wired yet, so it detects but does not block.
-* **`smdc audit` Scanner:** Evaluates host kernel sysctl parameters, Docker socket isolation, TLS configurations, and firewall rules.
+* **Access-log rotation (host job):** Traefik writes its access log to the `sovereign_traefik_logs` volume whether or not CrowdSec is deployed, and does not rotate it. Install the logrotate rule once on the Docker host, or the file grows until the disk is full: `sudo install -m 0644 software/security/traefik-access-log.logrotate /etc/logrotate.d/sovereign-traefik` (it rotates daily or above 100 MB, keeps 14 files and sends Traefik `USR1` to reopen the log; the file's header explains how to test it).
+* **`smdc audit` Scanner:** Reports host kernel sysctl parameters, Docker socket exposure, privileged containers, host firewall state and `.env` file hygiene (Linux only; it does not check TLS configuration and changes nothing).
+* **What is and is not implemented:** [`COMPLIANCE.md`](COMPLIANCE.md) lists every security control with its status. In short: HTTPS at the edge, an optional WireGuard VPN, encrypted backups and ML-DSA signatures exist; mutual TLS, single sign-on, TPM-sealed disk keys, Secure Boot and encrypted DTN bundles are planned and not implemented. The project holds no SOC 2, ISO 27001 or FIPS certification.
 
 ### 4. 🧮 Interactive 3D Sizing & Cost Configurator
 * Live WebGL sizing calculator on **[https://iliachry.gr/sovereign-mini-datacenter/](https://iliachry.gr/sovereign-mini-datacenter/)** simulating daily kWh draw, solar harvest, zero-sun battery autonomy, and dynamic BOM cost with one-click CSV export.
 
 ### 5. 🌐 Multi-Node Sovereign Mesh (`software/mesh/`)
-* Inter-datacenter cluster synchronization over WireGuard mesh and BPv7 space bundle relays.
+* **Peer reachability monitor (`mesh_sync.py`):** loads the peer list from the cluster YAML and probes each peer's exporter (`http://<wireguard_ip>:9101/metrics`) once per `MESH_POLL_INTERVAL_SECONDS`, logging which peers answer. It transfers no data: state, repository and backup synchronisation between sites is not implemented.
+* **LoRa gateway (`lora/`):** Meshtastic packet gateway configuration (no radio driver ships with this repository).
 
 ### 6. 💰 Autonomous Monetary & Compute Economy Layer (`src/sovereign_dc/economy/`)
 * **Post-Quantum Cryptographic Wallets:** Deterministic address derivation and signing using Ed25519 and NIST FIPS 204 ML-DSA-87.
@@ -284,8 +294,8 @@ smdc deploy --all
 ### 7. 🏢 Generic Enterprise Workload Coupling Framework (`src/sovereign_dc/enterprise/`)
 * **Declarative Manifests (`smdc-app.yaml`):** Standardized specification defining CPU/GPU/storage quotas, network bindings, persistent NVMe volumes, and power shedding tiers ($L_0 \to L_4$).
 * **Zero-Dependency SDK (`sovereign_dc.enterprise.sdk`):** Lightweight client library for querying node telemetry, publishing custom application metrics, listening for power throttling signals, and spooling space DTN bundles.
-* **Post-Quantum Cryptography Packaging:** Turnkey bundling of edge applications into verified `.smdc-app` archives signed with lattice-based NIST FIPS 204 ML-DSA-87 signatures.
-* **Reference Archetypes (`examples/enterprise_apps/`):** Pre-built templates for IoT edge gateways, GPU vision AI inference, spatial digital twins, zero-trust confidential databases, and O-RAN Near-RT RIC controllers. See [**`ENTERPRISE_ONBOARDING.md`**](ENTERPRISE_ONBOARDING.md) for full developer documentation.
+* **Post-Quantum Cryptography Packaging:** Bundling of edge applications into `.smdc-app` archives signed with ML-DSA-87 (the FIPS 204 algorithm, from a pure-Python library that is not FIPS-validated).
+* **Reference Archetypes (`examples/enterprise_apps/`):** Simulated reference skeletons (manifest plus an `app.py` that shows the SDK wiring and publishes placeholder data; none of them reads a sensor, runs a model, encrypts data or controls a radio) for IoT edge gateways, GPU vision AI inference, spatial digital twins, confidential databases, and O-RAN Near-RT RIC controllers. See [**`ENTERPRISE_ONBOARDING.md`**](ENTERPRISE_ONBOARDING.md) for full developer documentation.
 
 ### 8. 📡 5G RAN & UAV Metaverse Simulation Stack (`src/sovereign_dc/metaverse/`)
 * **Physics-Based Electromagnetic Ray-Tracing:** 3GPP UMi & Sionna 3D multipath propagation at 3.5 GHz ($23\text{ dBm}$ TX, $+8\text{ dBi}$ gain) with up to 5th-order reflections and Kriging spatial interpolation.
@@ -310,13 +320,15 @@ cp env.example .env && nano .env
 ### 2. Deploy via Modular CLI
 
 ```bash
-# Option A: Deploy everything (Core + VPN + Backup + Telemetry + Mailcow)
+# Option A: Core stack plus every overlay: Headscale VPN, Restic backup, telemetry exporter,
+#           space/DTN node, AI agents and CrowdSec (detection only). Mailcow is a separate
+#           stack and is not deployed (--with-mailcow prints its manual steps).
 sudo bash setup.sh --all
 
 # Option B: Deploy Core Stack only
 sudo bash setup.sh
 
-# Option C: Deploy Core Stack with Zero-Trust VPN and Automated Backup
+# Option C: Deploy Core Stack with Mesh VPN and Automated Backup
 sudo bash setup.sh --with-vpn --with-backup
 
 # Option D: Dry-run configuration test
@@ -336,10 +348,10 @@ All web services are securely routed over **HTTPS** via Traefik with automatic L
 | 🧠 **Qdrant** | Internal (`:6333`) | High-performance vector database for document embeddings |
 | 🦊 **GitLab CE** | `https://gitlab.yourdomain.com` | Self-hosted Git repositories & CI/CD pipelines |
 | 📋 **OpenProject** | `https://projects.yourdomain.com` | Project tracking, Gantt charts, and task management |
-| ☁️ **Nextcloud** | `https://cloud.yourdomain.com` | End-to-end encrypted file sync, calendar, and office suite |
+| ☁️ **Nextcloud** | `https://cloud.yourdomain.com` | File sync (HTTPS in transit), calendar, and office suite |
 | 🔐 **Vaultwarden** | `https://vault.yourdomain.com` | Bitwarden-compatible password manager |
 | 📬 **Mailcow** | `https://mail.yourdomain.com` | Sovereign email stack (SOGo Webmail + Postfix/Dovecot) |
-| 🛡️ **Headscale VPN** | `https://vpn.yourdomain.com` | Self-hosted Zero-Trust WireGuard Mesh control plane |
+| 🛡️ **Headscale VPN** | `https://vpn.yourdomain.com` | Self-hosted WireGuard mesh VPN control plane |
 | 📊 **Grafana** | `https://grafana.yourdomain.com` | Infrastructure, container, power & thermal dashboards |
 | 📈 **Prometheus** | `https://metrics.yourdomain.com` | Time-series metrics aggregator (HTTP Basic Auth protected) |
 | 🔀 **Traefik** | `https://traefik.yourdomain.com` | Reverse proxy edge router & dashboard |
@@ -367,28 +379,38 @@ See [`software/vpn/README.md`](software/vpn/README.md) for full configuration de
 
 ## 💾 Encrypted Backup & Disaster Recovery (Restic)
 
-- **Local & Remote Targets:** Snapshots saved locally to `/var/backups/sovereign` (cold NVMe) and optionally synced to off-site S3/MinIO.
-- **Deduplicated & Encrypted:** AES-256 encryption with automated bit-rot verification.
+- **Repository:** restic snapshots in `RESTIC_REPOSITORY` (default `/var/backups/sovereign`); use a remote backend (`s3:`, `sftp:`, `rest:`) or copy the repository off-site, because a repository on the node's own disk does not survive the loss of the node.
+- **Deduplicated & Encrypted:** restic encrypts the repository with AES-256; `restore.sh check` (`restic check`) verifies the archive only.
+- **Databases are backed up as native dumps, never as copies of live directories:** `pg_dump` for OpenProject, `gitlab-backup create` for GitLab and the SQLite online backup (`sqlite3 ... ".backup"`) for Vaultwarden, Nextcloud, Headscale, Grafana, Open WebUI, CrowdSec and the DTN spool. If any dump fails, the run stops before restic is called and no snapshot is taken.
+- **Host requirements:** root on the Docker host, `docker`, `sqlite3` and `restic`; `RESTIC_PASSWORD` must be set in `software/.env` (there is no default).
+- **With `--with-backup`:** the `sovereign_backup` container only uploads; the dumps still come from the host. Schedule `backup.sh --dump-only` there (root crontab or systemd timer), otherwise every container run fails and uploads nothing.
 
 ```bash
-# Run an immediate backup
-sudo bash software/backup/backup.sh
+# Run an immediate backup on the host (dump every database, then restic)
+sudo sh software/backup/backup.sh
+
+# Host dump phase only: schedule this before the sovereign_backup container's run (--with-backup)
+sudo sh software/backup/backup.sh --dump-only
+
+# Prove that the dumps in the latest snapshot load (SQLite integrity_check, pg_restore --list, GitLab archive listing)
+sudo bash software/backup/restore.sh --verify
 
 # List available snapshots
 sudo bash software/backup/restore.sh list
 
-# Disaster recovery restore
+# Disaster recovery: extract into an EMPTY directory (never a live volume), then print the per-service restore steps
 sudo bash software/backup/restore.sh restore-latest /mnt/restore_target
+sudo bash software/backup/restore.sh plan /mnt/restore_target
 ```
 
-See [`software/backup/README.md`](software/backup/README.md) for automated cron scheduling and restore procedures.
+See [`software/backup/README.md`](software/backup/README.md) for what a snapshot contains, cron scheduling and the per-service restore procedures. `restore.sh --verify` is not a substitute for a restore rehearsal on a spare node.
 
 ---
 
 ## ☀️ Power, Solar & BMS Telemetry
 
 - **Real-time Metrics:** Collects solar PV generation, LiFePO4 battery pack SoC %, DC bus voltage, current, and coolant temperatures.
-- **Load-Shedder (one pass per run, from cron or a systemd timer):** If battery SoC drops below 20% or coolant exceeds 60°C, `software/telemetry/load_shedder.sh` records a shed decision. By default (`LOAD_SHED_ACTION=log`) it only logs it and touches nothing; with `LOAD_SHED_ACTION=pause` it runs `docker pause` on `LOAD_SHED_CONTAINER` (default `sovereign_ollama`) and unpauses it once SoC is back to 40% or more and the coolant is at or below 60°C.
+- **Load-Shedder (one pass per run, from cron or a systemd timer):** If battery SoC drops below 20% or coolant exceeds 60°C, `software/telemetry/load_shedder.sh` records a shed decision. With `LOAD_SHED_ACTION=pause` it runs `docker pause` on `LOAD_SHED_CONTAINER` (default `sovereign_ollama`) and records the cause(s). It unpauses only after every cause recorded at pause time has verifiably cleared: SoC back to 40% or more for a low-battery pause; a present coolant reading at or below 55°C for an overheating pause. A missing reading holds the pause. The default, `LOAD_SHED_ACTION=log`, only logs the decision and never pauses or resumes anything.
 
 ---
 
@@ -401,8 +423,12 @@ Run the complete Sovereign Mini Datacenter stack on any standard laptop without 
 ./software/demo.sh                # Linux / macOS / WSL
 smdc demo --steps 5               # Cross-platform CLI
 
-# Run empirical performance benchmarks (AI, Space DTN & unified memory)
+# Run the local benchmarks (synthetic CPU vectors, DTN spool, memory, load-shedding software path)
 smdc benchmark --all --export benchmark_results.json
+
+# Measure the load-shedding software path in simulation on this machine (median / p95 over N runs):
+# telemetry sample -> sentinel mode decision -> deferrable apps marked paused. No hardware actuation.
+smdc benchmark --shed --shed-iterations 200
 
 # Measure real LLM token throughput against a running Ollama server
 smdc benchmark --ai --live --model qwen2.5-coder:7b
@@ -489,7 +515,7 @@ See [`terraform/README.md`](terraform/README.md) for full module documentation a
 ---
 
 ## 🛡️ Quality Gates & Automated Tests
-The project enforces strict automated Quality Gates covering Ruff linting, Ruff formatting, Mypy static typing, Docker Compose multi-stack integrity, and Pytest coverage with 844 automated tests ($\ge 85\%$ strict threshold, achieving **91.2%** coverage):
+The project enforces strict automated Quality Gates covering Ruff linting, Ruff formatting, Mypy static typing, Docker Compose multi-stack integrity, and Pytest coverage with 999 automated tests ($\ge 85\%$ strict threshold, achieving **91.8%** coverage):
 
 ```bash
 # Run all quality gates locally

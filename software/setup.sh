@@ -50,7 +50,7 @@ Usage: $(basename "$0") [OPTIONS]
 
 Options:
     --all              Deploy the core stack plus every overlay below (not Mailcow)
-    --with-vpn         Include Headscale Zero-Trust VPN
+    --with-vpn         Include Headscale WireGuard mesh VPN (no ACL policy shipped)
     --with-backup      Include Restic backup daemon
     --with-telemetry   Include Prometheus power & thermal exporter
     --with-space       Include Space Communications DTN & Orbit Tracking node
@@ -179,6 +179,7 @@ if [[ "$DEPLOY_ALL" == "true" || "$DEPLOY_VPN" == "true" ]]; then
     COMPOSE_FILES+=("-f" "${PROJECT_DIR}/vpn/docker-compose.vpn.yml")
 fi
 if [[ "$DEPLOY_ALL" == "true" || "$DEPLOY_BACKUP" == "true" ]]; then
+    DEPLOY_BACKUP=true
     COMPOSE_FILES+=("-f" "${PROJECT_DIR}/backup/docker-compose.backup.yml")
 fi
 if [[ "$DEPLOY_ALL" == "true" || "$DEPLOY_TELEMETRY" == "true" ]]; then
@@ -238,5 +239,12 @@ check_openproject_pgdata_volume
 log_info "Starting sovereign datacenter container stacks..."
 docker compose --env-file "$ENV_FILE" "${COMPOSE_FILES[@]}" up -d --remove-orphans
 log_ok "Containers started. Check their health with: docker compose --project-directory ${PROJECT_DIR} ps"
+
+if [[ "$DEPLOY_BACKUP" == "true" ]]; then
+    log_warn "The sovereign_backup container uploads database DUMPS, and only the host can make them."
+    log_warn "Until this runs on a schedule (root crontab / systemd timer), every backup run fails and nothing is uploaded:"
+    log_warn "  sudo sh ${PROJECT_DIR}/backup/backup.sh --dump-only"
+    log_warn "Details and restore steps: ${PROJECT_DIR}/backup/README.md"
+fi
 
 if [[ "$SHOW_MAILCOW" == "true" ]]; then print_mailcow_steps; fi

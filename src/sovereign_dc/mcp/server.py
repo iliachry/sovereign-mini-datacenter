@@ -11,6 +11,7 @@ import sys
 from typing import Any, TextIO
 
 from sovereign_dc import __version__
+from sovereign_dc.jsonutil import dumps_strict
 from sovereign_dc.mcp.prompts import get_mcp_prompts
 from sovereign_dc.mcp.resources import get_mcp_resources
 from sovereign_dc.mcp.tools import get_mcp_tools
@@ -132,7 +133,7 @@ class MCPServer:
                         "content": [
                             {
                                 "type": "text",
-                                "text": json.dumps(result_data, indent=2)
+                                "text": dumps_strict(result_data, indent=2)
                                 if isinstance(result_data, (dict, list))
                                 else str(result_data),
                             }
@@ -278,13 +279,13 @@ class MCPServer:
                     # ValueError covers JSONDecodeError and oversized integer literals;
                     # RecursionError a pathologically nested document. Neither may end the loop.
                     err_response = self._error_response(None, -32700, f"Parse error: {err}")
-                    out_stream.write(json.dumps(err_response) + "\n")
+                    out_stream.write(dumps_strict(err_response) + "\n")
                     out_stream.flush()
                     continue
 
                 resp: dict[str, Any] | None = self.handle_request(request)
                 if resp is not None:
-                    out_stream.write(json.dumps(resp) + "\n")
+                    out_stream.write(dumps_strict(resp) + "\n")
                     out_stream.flush()
 
             except (KeyboardInterrupt, SystemExit):

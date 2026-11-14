@@ -9,6 +9,7 @@ Provides a single-source-of-truth configuration dataclass with layered loading:
 from __future__ import annotations
 
 import logging
+import math
 import os
 import stat
 import tempfile
@@ -23,7 +24,7 @@ DTN_SPOOL_FILENAME = "dtn_spool.db"
 LOG_DIRNAME = "sovereign_logs"
 MODE_FILENAME = "sovereign_mode"
 # Shared temp directory in which older releases kept their state files by default.
-LEGACY_TMP_DIR = "/tmp"
+LEGACY_TMP_DIR = "/tmp"  # noqa: S108 - only read (after an ownership/mode check) to find a legacy file; never a default
 
 _FALLBACK_STATE_DIR: str | None = None
 
@@ -187,6 +188,8 @@ class SovereignConfig:
     code_review_model: str = "qwen2.5-coder:7b"
 
     # ── Paths ─────────────────────────────────────────────────────────────
+    # Read from DOCS_WATCH_DIR, the variable the standalone knowledge indexer reads; it is
+    # the default directory of `smdc agent index`.
     docs_watch_dir: str = "/data/documents"
     log_dir: str = ""
     cluster_config_path: str = "cluster_config.yaml"
@@ -196,8 +199,12 @@ class SovereignConfig:
     shedding_l2_soc: float = 30.0
     shedding_l3_soc: float = 20.0
     shedding_l4_soc: float = 10.0
-    sentinel_poll_interval: int = 30
-    mesh_poll_interval: int = 60
+    # Seconds between sentinel telemetry polls. Read from SENTINEL_POLL_INTERVAL_SECONDS, the
+    # variable the standalone sentinel agent reads (SENTINEL_POLL_INTERVAL also works here).
+    sentinel_poll_interval: float = 30.0
+    # Seconds between mesh peer health sweeps. Read from MESH_POLL_INTERVAL_SECONDS, the
+    # variable the mesh sync daemon reads (MESH_POLL_INTERVAL also works here); at least 1.
+    mesh_poll_interval: float = 60.0
 
     # ── Derived / Runtime ─────────────────────────────────────────────────
     _loaded_from: list[str] = field(default_factory=list, repr=False)
@@ -213,6 +220,11 @@ class SovereignConfig:
             self.dtn_db_path = default_dtn_db_path()
         if not self.log_dir:
             self.log_dir = default_log_dir()
+        try:
+            mesh_interval = float(self.mesh_poll_interval)
+        except (TypeError, ValueError):
+            mesh_interval = math.nan
+        self.mesh_poll_interval = max(1.0, mesh_interval) if math.isfinite(mesh_interval) else 60.0
 
     @classmethod
     def from_env(cls) -> SovereignConfig:
@@ -228,16 +240,9 @@ class SovereignConfig:
         for f in fields(cls):
             if f.name.startswith("_"):
                 continue
-            env_key = f.name.upper()
-            # Check canonical name first, then legacy aliases
-            val = os.environ.get(env_key)
-            if val is None and env_key in env_map:
-                for alias in env_map[env_key]:
-                    val = os.environ.get(alias)
-                    if val is not None:
-                        break
+            env_name, val = _lookup_env(f.name.upper(), env_map)
             if val is not None:
-                kwargs[f.name] = _coerce(val, f.type)
+                _assign_coerced(kwargs, f.name, val, f.type, f"environment variable {env_name}")
 
         cfg = cls(**kwargs)
         cfg._loaded_from = ["env"]
@@ -280,17 +285,11 @@ class SovereignConfig:
                 continue
             # Layer 1: YAML value
             if f.name in yaml_values:
-                kwargs[f.name] = _coerce(yaml_values[f.name], f.type)
+                _assign_coerced(kwargs, f.name, yaml_values[f.name], f.type, f"{yaml_path} key {f.name}")
             # Layer 2: Environment variable override
-            env_key = f.name.upper()
-            val = os.environ.get(env_key)
-            if val is None and env_key in env_map:
-                for alias in env_map[env_key]:
-                    val = os.environ.get(alias)
-                    if val is not None:
-                        break
+            env_name, val = _lookup_env(f.name.upper(), env_map)
             if val is not None:
-                kwargs[f.name] = _coerce(val, f.type)
+                _assign_coerced(kwargs, f.name, val, f.type, f"environment variable {env_name}")
 
         sources.append("env")
         cfg = cls(**kwargs)
@@ -332,11 +331,42 @@ def _build_env_map() -> dict[str, list[str]]:
         "CODE_REVIEW_MODEL": ["OLLAMA_CODE_MODEL"],
         "NODE_ID": ["NODE_ID"],
         "NODE_ROLE": ["NODE_ROLE"],
+        "SENTINEL_POLL_INTERVAL": ["SENTINEL_POLL_INTERVAL_SECONDS"],
+        "MESH_POLL_INTERVAL": ["MESH_POLL_INTERVAL_SECONDS"],
     }
 
 
+def _lookup_env(env_key: str, env_map: dict[str, list[str]]) -> tuple[str, str | None]:
+    """Returns ``(variable name, value)`` for a field: the canonical name first, then its aliases."""
+    val = os.environ.get(env_key)
+    if val is not None:
+        return env_key, val
+    for alias in env_map.get(env_key, []):
+        val = os.environ.get(alias)
+        if val is not None:
+            return alias, val
+    return env_key, None
+
+
+def _assign_coerced(kwargs: dict[str, Any], name: str, value: Any, type_hint: str | type, source: str) -> None:
+    """Stores ``value`` coerced to the field type in ``kwargs[name]``.
+
+    A value that cannot be converted (``EXPORTER_PORT=abc``) is ignored with a warning that
+    names its source, leaving whatever a lower-precedence layer (or the default) provided:
+    one mistyped setting must not make every command fail at configuration load.
+    """
+    try:
+        kwargs[name] = _coerce(value, type_hint)
+    except (TypeError, ValueError):
+        logger.warning("Ignoring %s: %r is not a valid %s; keeping the previous value", source, value, type_hint)
+
+
 def _coerce(value: Any, type_hint: str | type) -> Any:
-    """Coerce a string or raw value to the declared field type."""
+    """Coerce a string or raw value to the declared field type.
+
+    Raises:
+        ValueError: if a string cannot be parsed as the declared numeric type.
+    """
     hint = str(type_hint)
     if isinstance(value, str):
         if hint in ("int", "<class 'int'>"):

@@ -14,7 +14,6 @@ import os
 import random
 import tempfile
 import time
-import uuid
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
@@ -154,16 +153,18 @@ class MeshChaosSimulator:
     def simulate_terrestrial_sever_dtn_fallback(self) -> ChaosResult:
         """Simulates complete fiber/Starlink uplink severance on an edge node.
 
-        Verifies that outbound telemetry bundles automatically spool into local NVMe
-        DTN store-and-forward queue for orbital space pass contact.
+        Verifies that outbound telemetry bundles spool into a DTN store-and-forward queue
+        (a throwaway SQLite spool in a temporary directory, not the node's own spool).
         """
         t0 = time.perf_counter()
-        spool_db = os.path.join(tempfile.gettempdir(), f"smdc_chaos_dtn_{uuid.uuid4().hex[:8]}.db")
-        router = DTNRouter(db_path=spool_db)
-
-        # Enqueue emergency telemetry bundles under disconnected conditions
         bundles_queued = 0
-        try:
+        # The spool lives in a private temporary directory that is removed (database and
+        # its SQLite -wal/-shm side files included) when the scenario ends, pass or fail.
+        with tempfile.TemporaryDirectory(prefix="smdc-chaos-") as spool_dir:
+            spool_db = os.path.join(spool_dir, "dtn_spool.db")
+            router = DTNRouter(db_path=spool_db)
+
+            # Enqueue emergency telemetry bundles under disconnected conditions
             for i in range(10):
                 bundle = Bundle(
                     source_eid="dtn://smdc-node-03-island.sovereign.space",
@@ -176,12 +177,6 @@ class MeshChaosSimulator:
 
             stats = router.get_queue_stats()
             spool_success = stats["queued_bundle_count"] == 10 and bundles_queued == 10
-        finally:
-            if os.path.exists(spool_db):
-                try:
-                    os.remove(spool_db)
-                except Exception:
-                    pass
 
         elapsed = (time.perf_counter() - t0) * 1000.0
         return ChaosResult(
@@ -190,6 +185,7 @@ class MeshChaosSimulator:
             success=spool_success,
             details={
                 "spool_db": spool_db,
+                "spool_removed": not os.path.exists(spool_dir),
                 "bundles_enqueued": bundles_queued,
                 "stats": stats,
             },

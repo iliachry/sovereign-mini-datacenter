@@ -70,7 +70,7 @@ def test_cmd_audit(capsys):
     with patch("sys.platform", "win32"):
         rc = cli.cmd_audit(Namespace())
     out = capsys.readouterr().out
-    assert "Security Compliance Audit" in out
+    assert "Host Hardening Audit" in out
     assert rc == 2
     assert "no checks were run" in out
     assert "PASS" not in out

@@ -66,7 +66,7 @@ pie title "SAM Breakdown by Target Vertical ($6.4B)"
 | **🛡️ Tactical Defense & Dual-Use** | Battlefield communication denial, cloud interception risk, harsh forward operating bases (FOB). | Air-gapped local LLM copilot, LoRa Meshtastic emergency fallback, Space DTN orbital relay, zero thermal runaway (LiFePO4). | \$150k – \$2.5M (Swarm kits) |
 | **⚡ Remote Energy & Mining** | Zero fiber connectivity at remote solar farms, offshore wind turbines, and open-pit mines. | Autonomous predictive maintenance AI, satellite burst sync, solar-first power with battery load shedding. | \$75k – \$500k |
 | **🚢 Maritime & Offshore** | Satellite bandwidth costs (\$10k+/mo), high latency for maritime AI processing. | On-premise oceanographic telemetry indexing, burst satellite DTN sync during contact passes, salt-resistant aluminum rack. | \$50k – \$300k |
-| **🏛️ Sovereign Embassies & Family Offices** | Subpoena risk via CLOUD Act, espionage, power grid instability in unstable regions. | 100% sovereign data residency, local password vault (Vaultwarden), air-gapped private Git/Nextcloud, PQC encryption. | \$35k – \$200k |
+| **🏛️ Sovereign Embassies & Family Offices** | Subpoena risk via CLOUD Act, espionage, power grid instability in unstable regions. | 100% sovereign data residency, local password vault (Vaultwarden), offline-capable private Git/Nextcloud, post-quantum signatures on software packages (post-quantum encryption of links is planned). | \$35k – \$200k |
 
 ---
 
@@ -88,7 +88,7 @@ flowchart TD
    - **SMDC-Core-9U**: \$31,500 per unit (BOM cost: \$24,563 $\implies$ \$6,937 gross profit per node, a 22.0% gross margin). The BOM is the itemised total in [`hardware/COMPONENTS.md`](hardware/COMPONENTS.md): \$10,663 for the non-compute lines (host, power electronics, battery, array, protection, cabling, cooling, telemetry, network and enclosure) plus 2 × \$6,950 for the DGX Spark nodes (the price NVIDIA lists on its marketplace page, checked on 2026-11-14). Apart from the DGX Spark price, the unit costs are estimates. The BOM excludes assembly labour, shipping, taxes and the site-specific PV mounting structure and conduit, so the realised margin is lower.
    - **SMDC-Rugged-IP67 (Mobile Tactical)**: \$48,900 per unit (MIL-STD-810H vibration and shock damping), priced at the same 1.551× premium over the Core unit as in the original price list (\$38,000 against \$24,500; 1.551 × \$31,500 = \$48,857, rounded to \$48,900). No separate BOM is itemised for this variant.
 2. **Sovereign Control Plane (Recurring SaaS ARR)**:
-   - Zero-trust mesh orchestration, federated Qdrant vector index synchronization, orbital pass scheduling, and remote telemetry monitoring at \$199/node/month.
+   - WireGuard mesh orchestration, federated Qdrant vector index synchronization, orbital pass scheduling, and remote telemetry monitoring at \$199/node/month.
 3. **Custom Engineering & Dual-Use Defense Deployments**:
    - Government and defense integration contracts, post-quantum cryptographic hardening, and air-gapped installation services (\$75,000 – \$250,000 per engagement).
 
@@ -125,7 +125,9 @@ $$
 $$
 
 > [!TIP]
-> **Key Investor Metric**: The customer recovers the additional hardware investment in **about 7.0 months**, saving **\$81,336 (67.8%)** over a 3-year operating lifecycle while gaining 100% data sovereignty and battery-backed resilience to grid blackouts.
+> **Key Investor Metric (TCO-table scenario)**: Against the cloud + diesel alternative above (\$12,000 capex and about \$3,000/month of running costs), the customer recovers the additional hardware investment in **about 7.0 months**, saving **\$81,336 (67.8%)** over a 3-year operating lifecycle while gaining 100% data sovereignty and battery-backed resilience to grid blackouts.
+
+**Two payback figures, two scenarios.** The 7.0 months above is specific to this table: the alternative carries \$12,000 of its own capex (so only the \$19,500 difference has to be recovered) and \$108,000 of recurring costs over 3 years (\$3,000/month). The [interactive calculator](https://iliachry.gr/sovereign-mini-datacenter/) on the project website opens on a more conservative default: \$2,500/month of cloud spend plus the grid energy the array displaces at \$0.35/kWh, with no capex on the alternative side, so the full \$31,500 has to be recovered from about \$2,420/month of net savings, which gives **13.0 months**. Move its sliders to model any other case; neither figure is a measured customer result.
 
 ---
 
@@ -190,10 +192,11 @@ mindmap
       100% Open Source Core Stack
       Local Qdrant RAG + Ollama Engine
       Zero Outbound API Dependencies
-    Post-Quantum Security
-      Hardware TPM 2.0 Root of Trust
-      FIPS 203 ML-KEM Kyber Key Encapsulation
-      Full LUKS2 Disk-at-Rest Encryption
+    Security Roadmap
+      ML-DSA package and wallet signatures, shipped
+      TPM 2.0 root of trust, planned
+      ML-KEM key exchange on links, planned
+      LUKS2 on the Talos path, node-UUID key
 ```
 
 1. **Energy-Aware Autonomous Workload Scheduler**: Unlike standard Kubernetes clusters that crash during power drops, SMDC dynamically negotiates GPU batch priorities based on real-time solar irradiance and battery BMS State-of-Charge.
@@ -210,10 +213,12 @@ Slide 02: The Problem ──────── Energy Crises, Cloud Lock-In & Di
 Slide 03: The Solution ─────── Turnkey 9U Micro-Datacenter: Solar, Battery, Local AI
 Slide 04: Product Demo ─────── Live 3D WebGL Digital Twin & Physical Hardware Specs
 Slide 05: Market Size ──────── $60.4B TAM / $6.4B SAM (Dual-Use Defense, Remote Industry)
-Slide 06: Unit Economics ───── 67.8% 3-Year TCO Savings ($81.3k saved per node, 7.0 mo payback)
+Slide 06: Unit Economics ───── 67.8% 3-Year TCO Savings ($81.3k saved per node, 7.0 mo payback vs. the
+                               $12k-capex cloud + diesel alternative of the TCO table; the website
+                               calculator's $2,500/mo cloud-only default gives 13.0 mo)
 Slide 07: Business Model ───── Turnkey Hardware ($31.5k) + Sovereign SaaS ($199/node/mo)
-Slide 08: Traction & Code ──── 844 Automated Tests, 91.2% Coverage, Ready-to-Deploy Stacks
-Slide 09: Technology Moat ──── Space DTN (RFC 9171), Energy Load-Shedder, PQC Zero-Trust
+Slide 08: Traction & Code ──── 999 Automated Tests, 91.8% Coverage, Ready-to-Deploy Stacks
+Slide 09: Technology Moat ──── Space DTN (RFC 9171), Energy Load-Shedder, PQC Signatures
 Slide 10: Financials ───────── $1.78M Y1 -> $23.95M Y3 -> $161.25M Y5 (5.1% EBITDA in Y5, scenario)
 Slide 11: Team & Advisory ──── Metatopia Studio: DeepTech Systems, AI & Embedded Engineers
 Slide 12: The Ask ──────────── $2.5M Seed Round to scale batch manufacturing & certifications

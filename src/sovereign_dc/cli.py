@@ -1,6 +1,6 @@
 """
 Sovereign Mini Datacenter CLI (smdc)
-Includes Space Communications, Delay-Tolerant Networking, Security Audits & Multi-Node Mesh.
+Includes Space Communications, Delay-Tolerant Networking, Host Hardening Audit & Multi-Node Mesh.
 """
 
 import argparse
@@ -48,38 +48,6 @@ def get_project_root():
     return cwd
 
 
-def _economy_state_path(filename: str) -> str:
-    """Default home for the CLI wallet and ledger: the private state dir, not shared /tmp.
-
-    A file already created by an earlier release in the temp directory keeps being used so
-    an existing wallet and its balance are not orphaned.
-    """
-    import tempfile
-
-    from sovereign_dc.mcp.tools import _get_mcp_state_dir
-
-    preferred = os.path.join(_get_mcp_state_dir(), filename)
-    legacy = os.path.join(tempfile.gettempdir(), filename)
-    if not os.path.exists(preferred) and _is_own_private_file(legacy):
-        return legacy
-    return preferred
-
-
-def _is_own_private_file(path: str) -> bool:
-    """True for a regular file owned by this user that nobody else can write (never a planted one)."""
-    import stat
-
-    try:
-        st = os.lstat(path)
-    except OSError:
-        return False
-    if not stat.S_ISREG(st.st_mode):
-        return False
-    if hasattr(os, "getuid") and (st.st_uid != os.getuid() or st.st_mode & 0o022):
-        return False
-    return True
-
-
 def _arg(args: Any, name: str, default: Any) -> Any:
     """Returns a parsed CLI value, using the default only when it is absent (0 is a real value)."""
     value = getattr(args, name, None)
@@ -112,37 +80,49 @@ def cmd_status(args):
         print(f"  {RED}Docker daemon unavailable: {e}{RESET}")
 
     # 2. Power & Thermal Telemetry
+    from sovereign_dc.config import get_config
+
+    cfg = get_config()
+    power_url = cfg.power_exporter_url
+    space_url = f"http://localhost:{cfg.space_exporter_port}/metrics"
     print(f"\n{BOLD}[2] Power & Thermal Telemetry:{RESET}")
     try:
-        req = urllib.request.Request("http://localhost:9101/metrics", headers={"User-Agent": "smdc-cli"})
-        with urllib.request.urlopen(req, timeout=2) as response:
-            content = response.read().decode("utf-8")
-            metrics = {}
-            for line in content.split("\n"):
-                if line and not line.startswith("#"):
-                    parts = line.split()
-                    if len(parts) == 2:
-                        metrics[parts[0]] = float(parts[1])
+        from sovereign_dc.hal.power import TelemetryUnavailable, fetch_exporter_metrics, optional_metric
 
-            soc = metrics.get("sovereign_battery_soc_percent", 0.0)
-            volts = metrics.get("sovereign_battery_voltage_volts", 0.0)
-            solar = metrics.get("sovereign_solar_pv_power_watts", 0.0)
-            load = metrics.get("sovereign_system_power_draw_watts", 0.0)
-            temp = metrics.get("sovereign_temp_coolant_celsius", 0.0)
-            shedding = metrics.get("sovereign_load_shedding_active", 0.0)
+        try:
+            power_metrics: dict[str, float] | None = fetch_exporter_metrics(power_url)
+        except TelemetryUnavailable as unavailable:
+            power_metrics = None
+            print(f"  {YELLOW}Power telemetry exporter is up but has no measurements: {unavailable}{RESET}")
+        if power_metrics is not None:
+            readings = power_metrics
 
-            print(f"  • Battery Bank:    {GREEN}{soc:.1f}%{RESET} ({volts:.1f} V)")
-            print(f"  • Solar PV Input:  {CYAN}{solar:.0f} W{RESET}")
-            print(f"  • System AC Load:  {YELLOW}{load:.0f} W{RESET}")
-            print(f"  • Coolant Temp:    {GREEN}{temp:.1f} °C{RESET}")
-            print(f"  • Sentinel Status: {'⚡ ' + RED + 'LOAD SHEDDING' if shedding else GREEN + 'NORMAL'}{RESET}")
+            def shown(name: str, digits: int, unit: str) -> str:
+                # A missing or non-finite sample is "n/a", never a made-up number.
+                value = optional_metric(readings, name)
+                return "n/a" if value is None else f"{value:.{digits}f}{unit}"
+
+            shedding = optional_metric(readings, "sovereign_load_shedding_active")
+            simulated = (optional_metric(readings, "sovereign_telemetry_simulated") or 0.0) > 0
+            soc_text = shown("sovereign_battery_soc_percent", 1, "%")
+            volts_text = shown("sovereign_battery_voltage_volts", 1, " V")
+            print(f"  • Battery Bank:    {GREEN}{soc_text}{RESET} ({volts_text})")
+            print(f"  • Solar PV Input:  {CYAN}{shown('sovereign_solar_pv_power_watts', 0, ' W')}{RESET}")
+            print(f"  • System AC Load:  {YELLOW}{shown('sovereign_system_power_draw_watts', 0, ' W')}{RESET}")
+            print(f"  • Coolant Temp:    {GREEN}{shown('sovereign_temp_coolant_celsius', 1, ' °C')}{RESET}")
+            if shedding is None:
+                print(f"  • Sentinel Status: {YELLOW}n/a{RESET}")
+            else:
+                print(f"  • Sentinel Status: {'⚡ ' + RED + 'LOAD SHEDDING' if shedding else GREEN + 'NORMAL'}{RESET}")
+            if simulated:
+                print(f"  {YELLOW}(simulated telemetry: the exporter is not reading hardware){RESET}")
     except Exception:
-        print(f"  {YELLOW}Power telemetry exporter offline at :9101 (Run 'smdc telemetry' to start){RESET}")
+        print(f"  {YELLOW}Power telemetry exporter offline at {power_url} (Run 'smdc telemetry' to start){RESET}")
 
     # 3. Space & Satellite Telemetry
     print(f"\n{BOLD}[3] Space & Satellite Communications (DTN / BPv7):{RESET}")
     try:
-        req = urllib.request.Request("http://localhost:9102/metrics", headers={"User-Agent": "smdc-cli"})
+        req = urllib.request.Request(space_url, headers={"User-Agent": "smdc-cli"})
         with urllib.request.urlopen(req, timeout=2) as response:
             content = response.read().decode("utf-8")
             metrics = {}
@@ -192,7 +172,7 @@ def cmd_audit(args):
     Returns the audit script's exit code. The audit inspects Linux kernel, Docker and firewall
     state, so on other platforms it reports that nothing was checked instead of printing results.
     """
-    print(f"\n{BOLD}{CYAN}=== Sovereign Mini Datacenter — Security Compliance Audit ==={RESET}\n")
+    print(f"\n{BOLD}{CYAN}=== Sovereign Mini Datacenter — Host Hardening Audit ==={RESET}\n")
     candidates = [
         os.path.join(get_project_root(), "software", "security", "audit.sh"),
         os.path.join(os.path.dirname(os.path.abspath(__file__)), "security", "audit.sh"),
@@ -675,15 +655,29 @@ Review the following code/diff and provide actionable feedback, security finding
 
 def cmd_agent_index(args):
     """Indexes documents from a target directory into Qdrant for semantic RAG."""
-    path = args.directory
-    if not os.path.exists(path):
+    path = getattr(args, "directory", None)
+    if not path:
+        from sovereign_dc.config import get_config
+
+        path = get_config().docs_watch_dir
+    if not os.path.isdir(path):
         print(f"{RED}Error: Target directory '{path}' does not exist.{RESET}")
         return 1
 
     try:
-        from sovereign_dc.agents.knowledge_indexer import ensure_qdrant_collection, is_oversized, process_file
+        from sovereign_dc.agents.knowledge_indexer import (
+            ensure_qdrant_collection,
+            is_oversized,
+            list_documents,
+            process_file,
+        )
     except ImportError:
-        from software.agents.knowledge_indexer import ensure_qdrant_collection, is_oversized, process_file
+        from software.agents.knowledge_indexer import (
+            ensure_qdrant_collection,
+            is_oversized,
+            list_documents,
+            process_file,
+        )
 
     print(f"{BOLD}{CYAN}Indexing documents from {path} into Qdrant vector database...{RESET}")
     if ensure_qdrant_collection() is False:
@@ -692,16 +686,20 @@ def cmd_agent_index(args):
     indexed_count = 0
     failed: list[str] = []
     skipped: list[str] = []
-    for root, _, files in os.walk(path):
-        for f in sorted(files):
-            if f.endswith((".md", ".txt", ".yaml", ".json", ".py", ".sh")):
-                full_path = os.path.join(root, f)
-                if is_oversized(full_path):
-                    skipped.append(full_path)
-                elif process_file(full_path) is True:
-                    indexed_count += 1
-                else:
-                    failed.append(full_path)
+    # The indexer's own listing: same suffixes, DOCS_EXCLUDE_DIRS pruning and DOCS_INCLUDE_GLOB
+    # filter as the background worker, so both index exactly the same set of documents.
+    walk_errors: list[OSError] = []
+    for full_path in list_documents(path, walk_errors):
+        if is_oversized(full_path):
+            skipped.append(full_path)
+        elif process_file(full_path) is True:
+            indexed_count += 1
+        else:
+            failed.append(full_path)
+    # A directory that could not be listed may hide documents: that is a failure, not "0 documents".
+    failed.extend(
+        f"{walk_error.filename or path} (could not be listed: {walk_error.strerror})" for walk_error in walk_errors
+    )
     for full_path in skipped:
         print(f"  {YELLOW}⚠ Skipped (larger than DOCS_MAX_FILE_BYTES): {full_path}{RESET}")
     for full_path in failed:
@@ -966,10 +964,14 @@ def cmd_benchmark(args):
         "benchmarks": benchmarks_data,
     }
 
-    run_all = args.all or not (args.ai or args.dtn or args.system)
+    shed_requested = bool(getattr(args, "shed", False))
+    if _arg(args, "shed_iterations", 1) < 1:
+        print(f"{RED}✖ --shed-iterations must be at least 1.{RESET}")
+        return 2
+    run_all = args.all or not (args.ai or args.dtn or args.system or shed_requested)
 
     if run_all or args.ai:
-        print(f"{BOLD}[1/3] Running synthetic CPU vector micro-benchmark (no model inference)...{RESET}")
+        print(f"{BOLD}[1/4] Running synthetic CPU vector micro-benchmark (no model inference)...{RESET}")
         t0 = time.time()
         chunks_processed = 500
         # Synthetic dense 768-dim vector embedding calculation
@@ -1005,22 +1007,23 @@ def cmd_benchmark(args):
             )
 
     if run_all or args.dtn:
-        print(f"\n{BOLD}[2/3] Running RFC 9171 Space DTN Spool Benchmark...{RESET}")
-        t0 = time.time()
-        num_bundles = 200
+        print(f"\n{BOLD}[2/4] Running RFC 9171 Space DTN Spool Benchmark...{RESET}")
         import tempfile
 
-        bench_dir = tempfile.mkdtemp(prefix="smdc-bench-")
-        spool_path = os.path.join(bench_dir, "smdc_bench_spool.db")
-        router = DTNRouter(db_path=spool_path)
-        for i in range(num_bundles):
-            b = Bundle(
-                source_eid="dtn://smdc-node-01.space",
-                destination_eid=f"dtn://ground-station-{i}.earth/telemetry",
-                payload=f'{{"metric": "solar_yield", "seq": {i}, "val": 1240.5}}'.encode(),
-            )
-            router.queue_bundle(b)
-        t_dtn = time.time() - t0
+        num_bundles = 200
+        # The benchmark spool lives in a temporary directory that is removed afterwards
+        # (database and SQLite side files included), also when ingestion fails.
+        with tempfile.TemporaryDirectory(prefix="smdc-bench-") as bench_dir:
+            t0 = time.time()
+            router = DTNRouter(db_path=os.path.join(bench_dir, "smdc_bench_spool.db"))
+            for i in range(num_bundles):
+                b = Bundle(
+                    source_eid="dtn://smdc-node-01.space",
+                    destination_eid=f"dtn://ground-station-{i}.earth/telemetry",
+                    payload=f'{{"metric": "solar_yield", "seq": {i}, "val": 1240.5}}'.encode(),
+                )
+                router.queue_bundle(b)
+            t_dtn = time.time() - t0
         dtn_rate = num_bundles / max(0.0001, t_dtn)
         print(
             f"  • DTN Bundle Ingestion:       {GREEN}{dtn_rate:.1f} bundles/sec{RESET} ({num_bundles} bundles in {t_dtn * 1000:.1f} ms)"
@@ -1032,7 +1035,7 @@ def cmd_benchmark(args):
         }
 
     if run_all or args.system:
-        print(f"\n{BOLD}[3/3] Running Unified Memory & Compute Benchmark...{RESET}")
+        print(f"\n{BOLD}[3/4] Running Unified Memory & Compute Benchmark...{RESET}")
         t0 = time.time()
         size_mb = 32
         data = bytearray(size_mb * 1024 * 1024)
@@ -1047,6 +1050,29 @@ def cmd_benchmark(args):
             "bandwidth_gbs": round(mem_bw, 2),
             "duration_ms": round(t_mem * 1000, 2),
         }
+
+    if run_all or shed_requested:
+        from sovereign_dc.shed_benchmark import DEFAULT_ITERATIONS, measure_shed_latency
+
+        iterations = _arg(args, "shed_iterations", DEFAULT_ITERATIONS)
+        print(f"\n{BOLD}[4/4] Running load-shedding software-path latency benchmark (simulation)...{RESET}")
+        shed = measure_shed_latency(iterations=iterations)
+        print(
+            f"  {YELLOW}Simulated on this machine: {shed['machine']}. No polling interval, no HTTP scrape, "
+            f"no GPU/cgroup/relay actuation is included.{RESET}"
+        )
+        labels = {
+            "sample_to_mode_decision": "Sample -> sentinel mode decision",
+            "sample_to_apps_paused": f"Sample -> {shed['deferrable_apps']} deferrable apps marked PAUSED",
+            "sample_to_mode_published": "Sample -> event dispatched + mode file written",
+        }
+        for key, label in labels.items():
+            stage = shed["stages"][key]
+            print(
+                f"  • {label + ':':<48} {GREEN}median {stage['median_ms']:.4f} ms{RESET}, "
+                f"p95 {stage['p95_ms']:.4f} ms (n={shed['iterations']})"
+            )
+        benchmarks_data["load_shedding"] = shed
 
     print(f"\n{GREEN}✅ Benchmark suite execution complete.{RESET}\n")
 
@@ -1222,30 +1248,93 @@ def cmd_security_pqc(args):
     return 0
 
 
-def cmd_economy_wallet(args):
-    """Inspects or generates node cryptographic wallet and balances."""
+def _economy_paths(args: Any) -> tuple[str, str]:
+    """``(wallet_path, ledger_path)`` for an economy command.
 
-    from sovereign_dc.economy.ledger import Ledger
+    The node's one wallet and ledger (``sovereign_dc.economy.node_state``, shared with the
+    dashboard and the MCP server) unless ``--wallet-file`` / ``--db-path`` name other files.
+    A wallet/ledger set left by an older release is adopted first.
+    """
+    from sovereign_dc.economy.node_state import migrate_legacy_node_state, node_state_paths
+
+    migrate_legacy_node_state()
+    paths = node_state_paths()
+    return (
+        getattr(args, "wallet_file", None) or paths.wallet,
+        getattr(args, "db_path", None) or paths.ledger,
+    )
+
+
+def _economy_wallet(args: Any, wallet_path: str, *, pqc: bool = False) -> Any:
+    """Loads the wallet an economy command acts on, creating it (with a zero balance) if absent."""
+    from sovereign_dc.config import get_config
+    from sovereign_dc.economy.node_state import load_node_pqc_wallet, load_node_wallet
     from sovereign_dc.economy.wallet import AddressType, NodeWallet
 
-    wallet_path = getattr(args, "wallet_file", None) or _economy_state_path("smdc_default_wallet.json")
-    db_path = getattr(args, "db_path", None) or _economy_state_path("smdc_economy_ledger.db")
-    ledger = Ledger(db_path=db_path)
+    node_id = getattr(args, "node_id", None)
+    if not getattr(args, "wallet_file", None):
+        return load_node_pqc_wallet(node_id) if pqc else load_node_wallet(node_id)
+    if os.path.exists(wallet_path):
+        return NodeWallet.load_from_file(wallet_path)
+    wallet = NodeWallet.create(
+        node_id=node_id or get_config().node_id,
+        algorithm=AddressType.ML_DSA_87 if pqc else AddressType.ED25519,
+    )
+    wallet.save_to_file(wallet_path)
+    return wallet
 
-    if getattr(args, "create", False) or not os.path.exists(wallet_path):
-        algo = AddressType.ML_DSA_87 if getattr(args, "pqc", False) else AddressType.ED25519
-        node_id = getattr(args, "node_id", None) or "smdc-node-01"
-        wallet = NodeWallet.create(node_id=node_id, algorithm=algo)
-        wallet.save_to_file(wallet_path)
-        ledger.mint(wallet.address, 100.0, memo="BOOTSTRAP_GENESIS")
-        print(f"\n{GREEN}✅ Created new sovereign node wallet!{RESET}\n")
-    else:
-        wallet = NodeWallet.load_from_file(wallet_path)
+
+def _mint_local_test_credits(wallet: Any, ledger: Any, raw_amount: Any, memo: str) -> int:
+    """Mints local test credits and says what they are; returns the process exit code."""
+    from sovereign_dc.economy.node_state import LOCAL_TEST_CREDIT_NOTICE, mint_local_test_credits
+
+    try:
+        tx = mint_local_test_credits(raw_amount, memo, wallet=wallet, ledger=ledger)
+    except ValueError as e:
+        print(f"\n{RED}❌ Invalid mint amount {raw_amount!r}: {e}.{RESET}\n")
+        return 1
+    print(
+        f"\n💰 Minted {GREEN}{_format_credits(tx.amount)} LOCAL TEST credits{RESET} "
+        f"to wallet {CYAN}{wallet.address}{RESET} (memo: {tx.memo})"
+    )
+    print(f"   {YELLOW}{LOCAL_TEST_CREDIT_NOTICE}{RESET}")
+    print(f"   New balance: {GREEN}{_format_credits(ledger.get_balance(wallet.address))} SMDC-Credits{RESET}\n")
+    return 0
+
+
+def cmd_economy_wallet(args):
+    """Shows the node wallet and its balance (the same identity the dashboard and MCP report).
+
+    Nothing is minted implicitly: a new wallet has a zero balance. ``--mint`` (like
+    ``smdc economy mint``) issues local test credits explicitly.
+    """
+    from sovereign_dc.economy.ledger import Ledger
+
+    wallet_path, db_path = _economy_paths(args)
+    pqc = bool(getattr(args, "pqc", False))
+    custom_wallet = bool(getattr(args, "wallet_file", None))
+    if not custom_wallet and pqc:
+        from sovereign_dc.economy.node_state import node_state_paths
+
+        wallet_path = node_state_paths().pqc_wallet
+    existed = os.path.exists(wallet_path)
+    if getattr(args, "create", False) and existed:
+        print(
+            f"\n{RED}✖ A wallet already exists at {wallet_path}; it was not overwritten "
+            f"(replacing it would orphan its balance). Move the file away to create a new one.{RESET}\n"
+        )
+        return 1
+
+    wallet = _economy_wallet(args, wallet_path, pqc=pqc)
+    ledger = Ledger(db_path=db_path)
+    if not existed:
+        print(f"\n{GREEN}✅ Created new sovereign node wallet (balance 0: nothing is minted implicitly).{RESET}\n")
 
     mint_amt = getattr(args, "mint", None)
-    if mint_amt is not None and mint_amt > 0:
-        ledger.mint(wallet.address, mint_amt, memo="MANUAL_MINT")
-        print(f"💰 Minted {GREEN}{mint_amt:.2f} credits{RESET} to wallet {CYAN}{wallet.address}{RESET}")
+    if mint_amt is not None:
+        rc = _mint_local_test_credits(wallet, ledger, mint_amt, "")
+        if rc != 0:
+            return rc
 
     balance = ledger.get_balance(wallet.address)
     nonce = ledger.get_nonce(wallet.address)
@@ -1255,9 +1344,20 @@ def cmd_economy_wallet(args):
     print(f"  • Wallet Address:  {CYAN}{wallet.address}{RESET}")
     print(f"  • Algorithm:       {MAGENTA}{wallet.keypair.algorithm.value}{RESET}")
     print(f"  • Public Key:      {wallet.keypair.public_key_hex[:32]}... ({len(wallet.keypair.public_key_hex)} chars)")
-    print(f"  • Balance:         {GREEN}{balance:.2f} SMDC-Credits{RESET}")
+    print(f"  • Balance:         {GREEN}{_format_credits(balance)} SMDC-Credits{RESET} (local test credits)")
     print(f"  • Sequence Nonce:  {nonce}")
-    print(f"  • Storage Path:    {wallet_path}\n")
+    print(f"  • Storage Path:    {wallet_path}")
+    print(f"  • Ledger:          {db_path}\n")
+    return 0
+
+
+def cmd_economy_mint(args):
+    """Mints local test credits to the node wallet: the only way a balance comes into being."""
+    from sovereign_dc.economy.ledger import Ledger
+
+    wallet_path, db_path = _economy_paths(args)
+    wallet = _economy_wallet(args, wallet_path)
+    return _mint_local_test_credits(wallet, Ledger(db_path=db_path), args.amount, getattr(args, "memo", "") or "")
 
 
 def _format_credits(amount: float) -> str:
@@ -1271,18 +1371,11 @@ def cmd_economy_send(args):
     """Transfers compute credits to a peer node with cryptographic signature."""
 
     from sovereign_dc.economy.ledger import Ledger, credits_to_micro
-    from sovereign_dc.economy.wallet import NodeWallet
 
-    wallet_path = getattr(args, "wallet_file", None) or _economy_state_path("smdc_default_wallet.json")
-    db_path = getattr(args, "db_path", None) or _economy_state_path("smdc_economy_ledger.db")
-    if not os.path.exists(wallet_path):
-        wallet = NodeWallet.create(node_id="smdc-node-01")
-        wallet.save_to_file(wallet_path)
-        ledger = Ledger(db_path=db_path)
-        ledger.mint(wallet.address, 100.0, memo="BOOTSTRAP_GENESIS")
-    else:
-        wallet = NodeWallet.load_from_file(wallet_path)
-        ledger = Ledger(db_path=db_path)
+    wallet_path, db_path = _economy_paths(args)
+    # A wallet created here starts at zero: fund it with 'smdc economy mint' (local test credits).
+    wallet = _economy_wallet(args, wallet_path)
+    ledger = Ledger(db_path=db_path)
 
     recipient = args.recipient
     memo = getattr(args, "memo", "") or "M2M_TRANSFER"
@@ -1341,7 +1434,7 @@ def cmd_economy_history(args):
 
     from sovereign_dc.economy.ledger import Ledger
 
-    db_path = getattr(args, "db_path", None) or _economy_state_path("smdc_economy_ledger.db")
+    db_path = _economy_paths(args)[1]
     ledger = Ledger(db_path=db_path)
     limit = max(0, _arg(args, "limit", 15))
     txs = ledger.get_history(limit=limit)
@@ -1353,7 +1446,9 @@ def cmd_economy_history(args):
 
     for tx in txs:
         arrow = f"{CYAN}{tx.sender[:12]}...{RESET} -> {GREEN}{tx.recipient[:12]}...{RESET}"
-        print(f"  • [{tx.timestamp[:19]}] {arrow} | {BOLD}{tx.amount:6.2f} credits{RESET} | Memo: {tx.memo}")
+        print(
+            f"  • [{tx.timestamp[:19]}] {arrow} | {BOLD}{_format_credits(tx.amount)} credits{RESET} | Memo: {tx.memo}"
+        )
     print()
 
 
@@ -1361,7 +1456,7 @@ def cmd_economy_verify(args):
     """Verifies the ledger chain and its head anchor; --anchor (re)anchors a verified chain."""
     from sovereign_dc.economy.ledger import Ledger
 
-    db_path = getattr(args, "db_path", None) or _economy_state_path("smdc_economy_ledger.db")
+    db_path = _economy_paths(args)[1]
     if not os.path.isfile(db_path):
         print(f"\n{RED}✖ No ledger found at {db_path}.{RESET}\n")
         return 1
@@ -1389,7 +1484,7 @@ def cmd_economy_verify(args):
 
 def cmd_economy(args):
     """Main entry point for economy commands."""
-    cmd_economy_wallet(args)
+    return cmd_economy_wallet(args)
 
 
 def cmd_dashboard(args):
@@ -2142,10 +2237,14 @@ def cmd_sim_benchmark(args):
 
 
 def cmd_sim_slices(args):
-    """Displays 5G Network Slicing QoS status and bandwidth isolation."""
+    """Displays the configuration of the simulated 5G slices (a fresh simulator: no traffic has run)."""
     from sovereign_dc.metaverse.slicing import NetworkSlicingManager
 
-    print(f"\n{BOLD}{CYAN}=== 5G Network Slicing & Traffic Isolation Subsystem ==={RESET}\n")
+    print(f"\n{BOLD}{CYAN}=== 5G Network Slicing & Traffic Isolation Subsystem (simulated) ==={RESET}\n")
+    print(
+        f"  {YELLOW}Fresh simulator in this CLI process: slice configuration and targets only, no traffic has run."
+        f"\n  A running dashboard keeps its own state (GET /api/metaverse/slices).{RESET}\n"
+    )
     mgr = NetworkSlicingManager()
     summary = mgr.get_summary()
 
@@ -2162,9 +2261,8 @@ def cmd_sim_slices(args):
         print(f"  {s_name:<8} | {bw:<12} | {tgt_lat:<16} | {avg_lat:<14} | {rel:<14} | {conns:<14}")
 
     print(f"\n  {BOLD}Bandwidth Isolation Formula:{RESET} T_tx = (D * 8) / B_slice * 1000 ms")
-    print("  • URLLC Priority Mini-Slot Scheduling: Active")
-    print("  • eMBB 256-QAM 4x4 MIMO: Active")
-    print("  • mMTC NOMA Scalability: 12,000+ IoT/km² verified\n")
+    print("  • Modelled: URLLC priority mini-slot scheduling, eMBB 256-QAM 4x4 MIMO, mMTC NOMA (12,000 IoT/km² target)")
+    print("  • Nothing here is measured on a radio.\n")
 
 
 def cmd_sim_sla(args):
@@ -2236,7 +2334,7 @@ def main():
     p_bootstrap.set_defaults(func=cmd_bootstrap)
 
     # Audit
-    p_audit = subparsers.add_parser("audit", help="Run automated security compliance and CIS benchmarks")
+    p_audit = subparsers.add_parser("audit", help="Run the host hardening audit (kernel, Docker and firewall checks)")
     p_audit.set_defaults(func=cmd_audit)
 
     # Benchmark
@@ -2245,6 +2343,15 @@ def main():
     p_bench.add_argument("--ai", action="store_true", help="Benchmark AI token throughput and embedding rate")
     p_bench.add_argument("--dtn", action="store_true", help="Benchmark Space DTN bundle spool ingestion")
     p_bench.add_argument("--system", action="store_true", help="Benchmark unified memory bandwidth")
+    p_bench.add_argument(
+        "--shed",
+        action="store_true",
+        help="Measure, in simulation on this machine, the load-shedding software path "
+        "(telemetry sample -> sentinel mode decision -> deferrable apps paused); no hardware actuation",
+    )
+    p_bench.add_argument(
+        "--shed-iterations", type=int, default=200, help="Iterations for --shed (default: 200; median/p95 are reported)"
+    )
     p_bench.add_argument(
         "--live",
         action="store_true",
@@ -2279,9 +2386,9 @@ def main():
     p_mesh.set_defaults(func=cmd_mesh)
 
     # Security Subcommand Suite
-    p_sec = subparsers.add_parser("security", help="Security auditing, CIS benchmarks & Post-Quantum Cryptography")
+    p_sec = subparsers.add_parser("security", help="Host hardening audit & Post-Quantum Cryptography")
     sec_subs = p_sec.add_subparsers(dest="sec_command", help="Security actions")
-    p_sec_audit = sec_subs.add_parser("audit", help="Run automated CIS benchmarks and security hardening audit")
+    p_sec_audit = sec_subs.add_parser("audit", help="Run the host hardening audit (kernel, Docker and firewall checks)")
     p_sec_audit.set_defaults(func=cmd_audit)
     p_sec_pqc = sec_subs.add_parser("pqc", help="Benchmark NIST FIPS 204 ML-DSA and FIPS 203 ML-KEM engines")
     p_sec_pqc.set_defaults(func=cmd_security_pqc)
@@ -2297,7 +2404,9 @@ def main():
     p_deploy.add_argument("--with-telemetry", action="store_true", help="Deploy solar & BMS telemetry exporter")
     p_deploy.add_argument("--with-space", action="store_true", help="Deploy Space Communications DTN node")
     p_deploy.add_argument("--with-agents", action="store_true", help="Deploy Autonomous AI Agents")
-    p_deploy.add_argument("--with-security", action="store_true", help="Deploy CrowdSec Intrusion Prevention")
+    p_deploy.add_argument(
+        "--with-security", action="store_true", help="Deploy CrowdSec intrusion detection (no bouncer)"
+    )
     p_deploy.add_argument("--dry-run", action="store_true", help="Validate compose configuration without starting")
     p_deploy.set_defaults(func=cmd_deploy)
 
@@ -2329,7 +2438,12 @@ def main():
     p_ag_review.set_defaults(func=cmd_agent_review)
 
     p_ag_index = agent_subs.add_parser("index", help="Index document directory into Qdrant vector database")
-    p_ag_index.add_argument("directory", help="Path to document directory to chunk and vectorize")
+    p_ag_index.add_argument(
+        "directory",
+        nargs="?",
+        help="Document directory to chunk and vectorize (default: DOCS_WATCH_DIR, else /data/documents). "
+        "Honours DOCS_EXCLUDE_DIRS, DOCS_INCLUDE_GLOB and DOCS_MAX_FILE_BYTES like the indexer worker",
+    )
     p_ag_index.set_defaults(func=cmd_agent_index)
 
     # Space Subcommand Suite
@@ -2371,13 +2485,32 @@ def main():
     econ_subs = p_econ.add_subparsers(dest="economy_command", help="Economy actions")
 
     p_ec_wallet = econ_subs.add_parser("wallet", help="Inspect or generate node cryptographic wallet and balance")
-    p_ec_wallet.add_argument("--create", action="store_true", help="Create a new cryptographic wallet")
-    p_ec_wallet.add_argument("--pqc", action="store_true", help="Use NIST FIPS 204 ML-DSA-87 post-quantum algorithm")
-    p_ec_wallet.add_argument("--mint", type=float, help="Mint test compute credits to wallet")
-    p_ec_wallet.add_argument("--node-id", type=str, default="smdc-node-01", help="Node identifier")
+    p_ec_wallet.add_argument(
+        "--create", action="store_true", help="Create the wallet; fails if it already exists (never overwrites)"
+    )
+    p_ec_wallet.add_argument(
+        "--pqc", action="store_true", help="Show the node's NIST FIPS 204 ML-DSA-87 post-quantum wallet"
+    )
+    p_ec_wallet.add_argument(
+        "--mint", type=str, help="Mint local test credits (no external value) to the wallet; see 'economy mint'"
+    )
+    p_ec_wallet.add_argument("--node-id", type=str, help="Node identifier for a newly created wallet")
     p_ec_wallet.add_argument("--wallet-file", type=str, help="Custom wallet JSON file path")
     p_ec_wallet.add_argument("--db-path", type=str, help="Custom ledger SQLite database path")
     p_ec_wallet.set_defaults(func=cmd_economy_wallet)
+
+    p_ec_mint = econ_subs.add_parser(
+        "mint",
+        help="Mint LOCAL TEST credits to the node wallet (locally issued, no external value)",
+        description="Mints local test credits to the node wallet in the node ledger. A new ledger "
+        "starts at zero and nothing else mints: this explicit command is the only source of a "
+        "balance. The credits are issued by this node for itself and have no external value.",
+    )
+    p_ec_mint.add_argument("amount", type=str, help="Credits to mint (> 0, at most 6 decimal places)")
+    p_ec_mint.add_argument("--memo", type=str, default="", help="Transaction memo (default: LOCAL_TEST_CREDIT)")
+    p_ec_mint.add_argument("--wallet-file", type=str, help="Custom wallet JSON file path")
+    p_ec_mint.add_argument("--db-path", type=str, help="Custom ledger SQLite database path")
+    p_ec_mint.set_defaults(func=cmd_economy_mint)
 
     p_ec_send = econ_subs.add_parser("send", help="Send signed compute credits to peer node")
     p_ec_send.add_argument("recipient", help="Recipient wallet address (e.g. sov_...)")

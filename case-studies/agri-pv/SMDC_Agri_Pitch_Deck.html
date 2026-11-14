@@ -510,7 +510,7 @@
           <span class="flow-step-title">🛑 Inverter Tripping</span>
         </div>
         <div class="flow-step-desc">
-          DSOs force <strong>20%–45% curtailment</strong> to prevent grid collapse.
+          DSOs can force curtailment. <strong>20%–45%</strong> is an illustrative scenario range, not a sourced statistic.
         </div>
       </div>
 
@@ -548,15 +548,15 @@
     <div class="grid-3">
       <div class="stat-box">
         <div class="stat-value red">42%</div>
-        <div class="stat-label">Peak Midday Solar Curtailed</div>
+        <div class="stat-label">Peak Midday Solar Curtailed (illustrative scenario assumption, not a measurement or sourced statistic)</div>
       </div>
       <div class="stat-box">
         <div class="stat-value amber">2 – 5 Yrs</div>
-        <div class="stat-label">Grid Interconnection Queue</div>
+        <div class="stat-label">Grid Interconnection Queue (illustrative assumption)</div>
       </div>
       <div class="stat-box">
         <div class="stat-value cyan">0 kW</div>
-        <div class="stat-label">DSO Export Limit in Weak Feeders</div>
+        <div class="stat-label">DSO Export Limit in Weak Feeders (zero-export connections)</div>
       </div>
     </div>
   </div>
@@ -611,7 +611,7 @@
           <span class="flow-step-title">Dynamic Absorption</span>
         </div>
         <div class="flow-step-desc">
-          Compute power on 2× DGX Spark throttles dynamically from <strong>90W to 480W</strong>.
+          Compute on 2× DGX Spark is adjustable from <strong>90W to 480W</strong>: a 390W span per node.
         </div>
       </div>
 
@@ -623,7 +623,7 @@
           <span class="flow-step-title">Value Creation</span>
         </div>
         <div class="flow-step-desc">
-          <strong>0% curtailment</strong> + high-margin AI tokens (€0.25–€0.75/kWh).
+          <strong>Less curtailment</strong> while surplus fits the load range and battery headroom; AI tokens (€0.25–€0.75/kWh, scenario).
         </div>
       </div>
     </div>
@@ -631,11 +631,11 @@
     <!-- Virtual Battery Value Comparison -->
     <div class="card highlight-green">
       <div style="display: flex; justify-content: space-between; align-items: center;">
-        <span style="font-size: 12px; font-weight: 700; color: #ffffff;">💡 Why Compute Outperforms Chemical Batteries (BESS) Alone:</span>
-        <span class="tag tag-green">Zero Degradation · Immediate Digital Revenue</span>
+        <span style="font-size: 12px; font-weight: 700; color: #ffffff;">💡 Why Add Compute to a Chemical Battery (BESS):</span>
+        <span class="tag tag-green">No Cycle Wear · Digital Revenue</span>
       </div>
       <p style="font-size: 10.5px; line-height: 1.4; color: #cbd5e1; margin-top: 4px;">
-        Chemical batteries suffer from high upfront CapEx, finite charge cycle degradation, and fire risk. <strong>SMDC-Agri</strong> absorbs stranded power behind the meter into computing work—yielding <strong>10× higher economic productivity per kWh</strong> while guaranteeing 100% compliance with DSO zero-export limits.
+        A battery stops absorbing when it is full; a compute load keeps turning surplus into work. <strong>SMDC-Agri</strong> absorbs surplus behind the meter <strong>only while</strong> the surplus is within the controllable load range (390W per node, 480W peak) and the 10.24 kWh battery has headroom. <strong>Beyond that, energy is curtailed or exported</strong>: zero-export compliance still needs the PV inverter's own export limiter, and absorbing more needs more nodes.
       </p>
     </div>
 
@@ -643,19 +643,19 @@
     <div class="grid-4">
       <div class="stat-box">
         <div class="stat-value">45–110 ms</div>
-        <div class="stat-label">Shed Actuation (reference values)</div>
+        <div class="stat-label">Shed Actuation (design target, not measured)</div>
       </div>
       <div class="stat-box">
         <div class="stat-value cyan">&lt; 2%</div>
-        <div class="stat-label">Solar Curtailment Rate</div>
+        <div class="stat-label">Curtailment Target (load and battery sized to the surplus)</div>
       </div>
       <div class="stat-box">
         <div class="stat-value amber">&gt; 95%</div>
-        <div class="stat-label">Self-Consumption Rate</div>
+        <div class="stat-label">Self-Consumption Target (same condition)</div>
       </div>
       <div class="stat-box">
         <div class="stat-value green">4.2 Yrs</div>
-        <div class="stat-label">Payback Period (vs. 8.5 Yrs)</div>
+        <div class="stat-label">Scenario Payback (vs. 8.5 Yrs; not measured)</div>
       </div>
     </div>
   </div>
@@ -705,7 +705,7 @@
             <span class="tag tag-cyan">Priority Shedding</span>
           </div>
           <p style="font-size: 10px; color: #cbd5e1; line-height: 1.35;">
-            Hardware priority enforcement: guarantees <strong>L₀ Life Support</strong> (irrigation, ventilation) while dynamically throttling <strong>L₂–L₄ AI compute</strong>.
+            Priority tiers: <strong>L₀ Life Support</strong> (irrigation, ventilation) is shed last, while <strong>L₂–L₄ AI compute</strong> is throttled first.
           </p>
         </div>
 
@@ -715,7 +715,7 @@
             <span class="tag tag-amber">Zero-CapEx Validation</span>
           </div>
           <p style="font-size: 10px; color: #cbd5e1; line-height: 1.35;">
-            Hardware-in-the-Loop (HIL) emulation on 2× NVIDIA DGX Spark (GB10, 128 GB unified memory each) with real PanePower I-V curves, simulating feeder voltage sags and load shedding (reference actuation: 45 ms GPU power cap, 110 ms relay shed).
+            Hardware-in-the-Loop (HIL) emulation on 2× NVIDIA DGX Spark (GB10, 128 GB unified memory each) with real PanePower I-V curves, simulating feeder voltage sags and load shedding (design-target actuation: 45 ms GPU power cap, 110 ms relay shed; not measured).
           </p>
         </div>
       </div>
@@ -729,11 +729,11 @@
       </div>
       <div class="stat-box">
         <div class="stat-value cyan">90W ➔ 480W</div>
-        <div class="stat-label">Dynamic Load Range (2× DGX Spark)</div>
+        <div class="stat-label">Controllable Load Range per Node (2× DGX Spark)</div>
       </div>
       <div class="stat-box">
-        <div class="stat-value amber">100%</div>
-        <div class="stat-label">Air-Gapped Sovereign Security</div>
+        <div class="stat-value amber">On-Site</div>
+        <div class="stat-label">Data Processing &amp; Storage</div>
       </div>
     </div>
   </div>
@@ -783,7 +783,7 @@
       <div class="card highlight-amber">
         <h3 style="font-size: 11px; color: #fbbf24; margin-bottom: 2px;">💧 3. Autonomous Life-Support</h3>
         <p style="font-size: 9.5px; color: #cbd5e1; line-height: 1.35;">
-          Guarantees un-sheddable power for nutrient dosing, water pumps, and ventilation fans during all weather conditions.
+          Keeps nutrient dosing, water pumps and ventilation fans in the last-shed tier. Runtime without sun is limited by the 10.24 kWh battery.
         </p>
       </div>
     </div>
@@ -801,7 +801,7 @@
   <div class="slide-header">
     <div class="slide-title-group">
       <h2>Off-Grid Resilience &amp; <span class="accent">Multi-Spectral Comms</span></h2>
-      <p class="subtitle">Autonomous operation in remote rural regions with zero reliance on public cellular or commercial fiber networks</p>
+      <p class="subtitle">Designed to keep operating in remote rural regions without public cellular or commercial fiber networks</p>
     </div>
     <div class="slide-badge">5. Resilience &amp; Comms</div>
   </div>
@@ -827,7 +827,7 @@
           <span class="flow-step-title">Sub-GHz LoRa Mesh</span>
         </div>
         <div class="flow-step-desc">
-          <strong>868 MHz · 15km range</strong> · Zero SIM fees. Connects soil sensors, actuators &amp; DSO curtailment signals.
+          <strong>868 MHz</strong> · 15 km range is an illustrative line-of-sight assumption, not measured · Zero SIM fees. Connects soil sensors, actuators &amp; DSO curtailment signals.
         </div>
       </div>
 
@@ -854,9 +854,9 @@
       </div>
 
       <div class="card highlight-cyan">
-        <h3 style="font-size: 12px; color: #38bdf8; margin-bottom: 3px;">🔐 Air-Gapped Data &amp; Operational Sovereignty</h3>
+        <h3 style="font-size: 12px; color: #38bdf8; margin-bottom: 3px;">🔐 On-Site Data &amp; Operational Sovereignty</h3>
         <p style="font-size: 10.5px; color: #cbd5e1; line-height: 1.4;">
-          Post-Quantum Cryptography (NIST FIPS 203/204) secures mesh communications. Agricultural yields, proprietary recipes, and sensor logs never leave the farmer's physical perimeter.
+          Agricultural yields, proprietary recipes and sensor logs are processed and stored on site. Software packages are signed with ML-DSA (FIPS 204 algorithm); post-quantum protection of mesh links is planned, not implemented.
         </p>
       </div>
     </div>
@@ -889,8 +889,8 @@
 <div class="slide">
   <div class="slide-header">
     <div class="slide-title-group">
-      <h2>Quantified Techno-Economics: <span class="accent">~4-Year Payback</span></h2>
-      <p class="subtitle">Turning regulatory gridlocks into a high-margin dual-revenue commercial deployment model</p>
+      <h2>Techno-Economic Scenario: <span class="accent">~4-Year Payback Target</span></h2>
+      <p class="subtitle">Scenario figures, not measurements: they hold only if compute load and battery are sized to the surplus; beyond that, energy is curtailed or exported</p>
     </div>
     <div class="slide-badge">6. Business Case</div>
   </div>
@@ -909,14 +909,14 @@
         <tr>
           <td><strong>Grid Connection Status</strong></td>
           <td>Denied or delayed by DSO (overvoltage risk)</td>
-          <td style="color: #38bdf8;"><strong>Approved</strong> (Zero-Export / Dynamic Limit compliant)</td>
-          <td>Fast-tracks project licensing</td>
+          <td style="color: #38bdf8;"><strong>Aim: approval</strong> under a zero-export or dynamic limit (DSO decision; needs a certified export limiter)</td>
+          <td>May shorten project licensing</td>
         </tr>
         <tr>
           <td><strong>Peak Solar Curtailment</strong></td>
-          <td>25% – 45% peak midday energy wasted</td>
-          <td style="color: #34d399;"><strong>&lt; 2%</strong> (Absorbed by local AI compute)</td>
-          <td><strong>+35% energy recovery</strong></td>
+          <td>25% – 45% peak midday energy wasted (illustrative assumption)</td>
+          <td style="color: #34d399;"><strong>Target &lt; 2%</strong>, if load and battery match the surplus; the rest is curtailed</td>
+          <td><strong>Up to +35% energy recovery (scenario)</strong></td>
         </tr>
         <tr>
           <td><strong>Revenue per Curtailed kWh</strong></td>
@@ -932,9 +932,9 @@
         </tr>
         <tr class="highlight-row">
           <td><strong>Capital Payback Period</strong></td>
-          <td>8.5 – 9.5 Years (curtailment penalty)</td>
-          <td style="color: #34d399;"><strong>3.8 – 4.2 Years</strong> (subsidized by compute)</td>
-          <td><strong>50%+ Faster Capital Payback</strong></td>
+          <td>8.5 – 9.5 Years (curtailment penalty; illustrative assumption)</td>
+          <td style="color: #34d399;"><strong>3.8 – 4.2 Years</strong> (scenario, not measured)</td>
+          <td><strong>Faster payback if the scenario holds</strong></td>
         </tr>
       </tbody>
     </table>
@@ -942,15 +942,15 @@
     <div class="grid-3">
       <div class="stat-box">
         <div class="stat-value green">+€18,400 / yr</div>
-        <div class="stat-label">Added Compute Revenue (250kWp)</div>
+        <div class="stat-label">Illustrative scenario assumption, not a measurement: compute revenue (250kWp, fleet sized to surplus)</div>
       </div>
       <div class="stat-box">
         <div class="stat-value cyan">€0 CapEx</div>
         <div class="stat-label">Validation Hardware Purchase</div>
       </div>
       <div class="stat-box">
-        <div class="stat-value amber">100%</div>
-        <div class="stat-label">BRITE Glass Compatibility</div>
+        <div class="stat-value amber">DC-Coupled</div>
+        <div class="stat-label">PanePower Glass via MPPT Input (to be validated)</div>
       </div>
     </div>
   </div>
@@ -989,7 +989,7 @@
           Validation Stage
         </div>
         <p style="font-size: 11px; line-height: 1.45; color: #cbd5e1; max-width: 95%; margin: 0 auto;">
-          <strong>HIL Validation on DGX Spark:</strong> Load shedding is simulated today (reference actuation 45–110 ms); measuring it on the live testbed is the milestone.
+          <strong>HIL Validation on DGX Spark:</strong> Load shedding is simulated today (design target 45–110 ms); measuring it on the live testbed is the milestone.
         </p>
       </div>
     </div>

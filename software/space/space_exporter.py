@@ -15,7 +15,10 @@ from sovereign_dc.space.orbital.propagator import GroundStation
 from sovereign_dc.space.orbital.tle_updater import get_active_satellites
 from sovereign_dc.space.transceiver.simulated_link import SpaceChannelSimulator
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+# Logging is configured only in run(), the entry point the container CMD invokes: importing
+# this module as a library must not touch the root logger.
+logger = logging.getLogger("SpaceExporter")
+LOG_FORMAT = "%(asctime)s [%(levelname)s] %(message)s"
 
 PORT = int(os.getenv("SPACE_EXPORTER_PORT", "9102"))
 GROUND_LAT = float(os.getenv("GROUND_STATION_LAT", "37.9838"))  # Athens / Southern Europe
@@ -151,12 +154,15 @@ class SpaceMetricsHandler(BaseHTTPRequestHandler):
 
 
 def run() -> None:
-    server = HTTPServer(("0.0.0.0", PORT), SpaceMetricsHandler)
-    logging.info("Sovereign Space Communications Exporter listening on http://0.0.0.0:%s/metrics", PORT)
+    if not logging.getLogger().handlers:
+        logging.basicConfig(level=logging.INFO, format=LOG_FORMAT)
+    # Prometheus scrapes this exporter from another container, so it binds every interface.
+    server = HTTPServer(("0.0.0.0", PORT), SpaceMetricsHandler)  # noqa: S104
+    logger.info("Sovereign Space Communications Exporter listening on http://0.0.0.0:%s/metrics", PORT)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        logging.info("Shutting down space exporter.")
+        logger.info("Shutting down space exporter.")
         server.server_close()
 
 

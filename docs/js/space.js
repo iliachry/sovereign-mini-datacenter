@@ -56,7 +56,7 @@ function createSatelliteHUDLabel() {
 
   ctx.fillStyle = '#38bdf8';
   ctx.font = 'bold 18px monospace';
-  ctx.fillText('550 km · S-BAND ACTIVE', 60, 72);
+  ctx.fillText('550 km · S-BAND (SIMULATED)', 60, 72);
 
   const texture = new THREE.CanvasTexture(canvas);
   const spriteMat = new THREE.SpriteMaterial({ map: texture, transparent: true, opacity: 0.95 });

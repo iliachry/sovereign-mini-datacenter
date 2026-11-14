@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """
 Sovereign Mini Datacenter - Energy-Aware Datacenter Sentinel Copilot
-Optimizes background AI jobs, model fine-tuning, and batch vectorization based on solar yield.
+Polls the power exporter, maps battery state of charge and solar power to an operating
+mode (NORMAL, SOLAR_SURPLUS_COMPUTE, ECO_PRESERVATION), writes that mode to a shared mode
+file and publishes it on the in-process event bus. It schedules, throttles and stops
+nothing itself: other components (e.g. knowledge_indexer) read the mode and act on it.
 """
 
 import logging
@@ -26,7 +29,38 @@ MODE_FILE = os.getenv("SOVEREIGN_MODE_FILE", "")
 # forecast. Default 0 = the site is assumed to be on the Greenwich meridian; set it to
 # site_longitude_deg / 15 (e.g. 1.58 for Athens).
 SOLAR_UTC_OFFSET_HOURS = float(os.getenv("SOLAR_UTC_OFFSET_HOURS", "0") or 0.0)
-POLL_INTERVAL_SECONDS = 30
+DEFAULT_POLL_INTERVAL_SECONDS = 30.0
+MIN_POLL_INTERVAL_SECONDS = 1.0
+
+
+def poll_interval_seconds(raw: str | None = None) -> float:
+    """Seconds between telemetry polls: ``SENTINEL_POLL_INTERVAL_SECONDS`` (default 30).
+
+    A value that is not a finite number of at least ``MIN_POLL_INTERVAL_SECONDS`` is
+    rejected with a warning and the default is used, so a typo can neither stop the
+    sentinel nor turn its loop into a busy loop against the power exporter.
+    """
+    value = os.getenv("SENTINEL_POLL_INTERVAL_SECONDS", "") if raw is None else raw
+    if not value.strip():
+        return DEFAULT_POLL_INTERVAL_SECONDS
+    try:
+        seconds = float(value)
+    except ValueError:
+        seconds = math.nan
+    if not math.isfinite(seconds) or seconds < MIN_POLL_INTERVAL_SECONDS:
+        logger.warning(
+            "Ignoring SENTINEL_POLL_INTERVAL_SECONDS=%r (need a number >= %g); using %g s.",
+            value,
+            MIN_POLL_INTERVAL_SECONDS,
+            DEFAULT_POLL_INTERVAL_SECONDS,
+        )
+        return DEFAULT_POLL_INTERVAL_SECONDS
+    return seconds
+
+
+# How often run_copilot() polls the power exporter. A change in battery state is noticed
+# up to this many seconds after it happens.
+POLL_INTERVAL_SECONDS = poll_interval_seconds()
 
 SOC_METRIC = "sovereign_battery_soc_percent"
 SOLAR_METRIC = "sovereign_solar_pv_power_watts"
@@ -177,7 +211,7 @@ def evaluate_mode(metrics: dict[str, float], forecast: float) -> tuple[str, str]
 
 
 def run_copilot() -> None:
-    logger.info("Starting Energy-Aware Datacenter Sentinel Copilot...")
+    logger.info("Starting Energy-Aware Datacenter Sentinel Copilot (poll every %g s)...", POLL_INTERVAL_SECONDS)
     persisted_mode = read_persisted_mode()
     current_mode = persisted_mode or DEFAULT_MODE
     if persisted_mode is not None:
@@ -206,13 +240,10 @@ def run_copilot() -> None:
                 mode_file_synced = True
                 if target_mode == "ECO_PRESERVATION":
                     logger.warning(
-                        "⚡ Sentinel Trigger: %s. Throttling non-essential AI batch jobs to conserve power!", reason
+                        "⚡ Sentinel Trigger: %s. Mode set to ECO_PRESERVATION (mode readers defer batch work).", reason
                     )
                 elif target_mode == "SOLAR_SURPLUS_COMPUTE":
-                    logger.info(
-                        "☀️ Solar Surplus (%s): Unlocking full GPU compute capacity for model training & batch vectorization.",
-                        reason,
-                    )
+                    logger.info("☀️ Solar Surplus (%s): mode set to SOLAR_SURPLUS_COMPUTE.", reason)
                 else:
                     logger.info("Nominal operating conditions (%s).", reason)
 

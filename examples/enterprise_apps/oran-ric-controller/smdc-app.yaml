@@ -2,7 +2,7 @@
 name: "O-RAN Near-RT RIC 5G Slicing Controller"
 app_id: "oran-ric-controller"
 version: "1.0.0"
-description: "Autonomous Near-RT RAN Intelligent Controller (RIC) xApp managing 5G URLLC/eMBB/mMTC traffic slicing and DePIN SLA enforcement."
+description: "Simulated reference skeleton shaped like a Near-RT RIC xApp: drives the in-process 5G slicing simulator (URLLC/eMBB/mMTC); no O-RAN interface or radio."
 author: "Metatopia Telecom Labs"
 category: "distributed"
 runtime: "process"

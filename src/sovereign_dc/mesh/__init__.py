@@ -1,4 +1,4 @@
-"""Sovereign mesh networking, P2P state synchronization, LoRa gateway, and Chaos simulator."""
+"""Mesh peer reachability monitor, Raft consensus simulator, LoRa gateway config and chaos simulator."""
 
 from sovereign_dc.mesh.chaos import ChaosResult, ChaosScenario, MeshChaosSimulator
 from sovereign_dc.mesh.consensus import LogEntry, NodeRole, RaftCluster, RaftNode

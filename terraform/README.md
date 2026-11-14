@@ -6,7 +6,7 @@
 
 ## 1. Architectural Overview
 
-The Terraform/OpenTofu architecture provides modular, vendor-agnostic infrastructure provisioning without relying on centralized cloud providers (AWS, GCP, Azure). It automates everything from bare-metal OS deployment to Kubernetes cluster bootstrapping and Helm workload orchestration.
+The Terraform/OpenTofu modules provision infrastructure without a public cloud provider (AWS, GCP, Azure). The `baremetal-talos` environment configures Talos Linux on nodes that are already booted in maintenance mode, bootstraps Kubernetes and deploys the Helm chart; cluster add-ons (storage provisioner, ingress controller, NVIDIA device plugin) are prerequisites you install yourself (section 4). The `proxmox-dev` environment only creates the virtual machines. The `wireguard-mesh` and `libvirt-edge-node` modules are standalone: neither environment instantiates them.
 
 ```mermaid
 flowchart TD
@@ -14,7 +14,7 @@ flowchart TD
         TF_ROOT["Root Environments<br/>(baremetal-talos / proxmox-dev)"]
         M_TALOS["Module: talos-cluster<br/>(Machine Secrets, LUKS2, optional NVIDIA Extensions)"]
         M_PVE["Module: proxmox-edge-node<br/>(PCIe GPU Passthrough & 10GbE vLANs)"]
-        M_WG["Module: wireguard-mesh<br/>(Zero-Trust P2P Overlay 10.42.0.0/16)"]
+        M_WG["Module: wireguard-mesh<br/>(generates full-mesh wg0.conf files, 10.42.0.0/16;<br/>standalone, used by no environment)"]
         M_HELM["Module: k8s-sovereign-stack<br/>(Helm Deployment of Sovereign Stack)"]
     end
 
@@ -25,15 +25,15 @@ flowchart TD
     end
 
     subgraph "Kubernetes Workloads (sovereign Namespace)"
-        OLLAMA["Local LLM Inference<br/>(Ollama / Qwen2.5 / DeepSeek)"]
+        OLLAMA["Local LLM Inference<br/>(Ollama, default model qwen2.5-coder:7b)"]
         QDRANT["Semantic Vector DB<br/>(Qdrant RAG)"]
         TELEMETRY["Power Telemetry Exporter<br/>(simulated data by default)"]
-        SPACE_DTN["Space DTN BPv7 Router<br/>(RFC 9171 SGP4 Spool, opt-in: space.enabled)"]
+        SPACE_DTN["Space DTN BPv7 Router<br/>(RFC 9171 store-and-forward spool, opt-in: space.enabled)"]
     end
 
     TF_ROOT --> M_TALOS
     TF_ROOT --> M_PVE
-    TF_ROOT --> M_WG
+    TF_ROOT -.->|"not wired: call it from your own root module"| M_WG
     TF_ROOT --> M_HELM
 
     M_TALOS -->|"Apply OS Config & LUKS2"| NODE_CP
@@ -65,12 +65,12 @@ terraform/
 │   │   ├── variables.tf                # CPU cores, RAM, datastore, PCI ID / resource mapping
 │   │   ├── outputs.tf                  # VM IDs, MAC addresses
 │   │   └── versions.tf
-│   ├── libvirt-edge-node/              # Local KVM / Libvirt development cluster
+│   ├── libvirt-edge-node/              # Local KVM / Libvirt development VM (standalone)
 │   │   ├── main.tf                     # Libvirt domain & qcow2 volume resources
 │   │   ├── variables.tf                # vCPU, memory, storage pool options
 │   │   ├── outputs.tf                  # Domain IDs and DHCP leases
 │   │   └── versions.tf
-│   ├── wireguard-mesh/                 # Zero-trust peer-to-peer WireGuard mesh
+│   ├── wireguard-mesh/                 # Full-mesh WireGuard configuration generator (standalone)
 │   │   ├── main.tf                     # Keypair generation and mesh configuration logic
 │   │   ├── variables.tf                # Subnet (10.42.0.0/16), node endpoints & ports
 │   │   ├── outputs.tf                  # Config files per node & public key map
@@ -82,7 +82,7 @@ terraform/
 │       ├── outputs.tf                  # Helm release status and namespace
 │       └── versions.tf
 └── environments/
-    ├── baremetal-talos/                # Production bare-metal 3-node cluster deployment
+    ├── baremetal-talos/                # Bare-metal 3-node cluster deployment
     │   ├── main.tf                     # Integrates talos-cluster and k8s-sovereign-stack
     │   ├── variables.tf
     │   ├── terraform.tfvars.example    # Sample IPs, NIC names, install disks, prerequisites
@@ -105,7 +105,7 @@ terraform/
 | **`talos-cluster`** | Bare-metal compute nodes | LUKS2 disk encryption, optional static addressing per node (`interface` + `network_prefix_length` + `gateway`; no bonding), optional NVIDIA drivers for GPU workers via a Talos Image Factory installer image (`gpu_installer_image`) or explicit extension image references (`gpu_extension_images`), Talos API bootstrap and kubeconfig export. |
 | **`proxmox-edge-node`** | Proxmox VE hypervisors | Automated VM creation, PCIe GPU passthrough on the `q35` machine type (by PCI resource mapping `gpu_mapping`, or raw PCI id for `root@pam` password auth only), SCSI SSD storage with TRIM/discard, optional QEMU guest agent (off by default; stock Talos has none). |
 | **`libvirt-edge-node`** | Local Linux / KVM | Headless edge VM testbeds with host-passthrough CPU (dmacvicar/libvirt `0.8.x`). Needs `base_image_path` pointing at a bootable disk image; without it the VM has a blank disk and no boot media. |
-| **`wireguard-mesh`** | Multi-node edge mesh | Asymmetric key generation, one preshared key per node pair, `wg0.conf` generation for a full mesh inside `mesh_subnet` (`10.42.0.0/16`). Each peer is routed only its own `/32` plus explicitly listed extra CIDRs. |
+| **`wireguard-mesh`** | Multi-node edge mesh | Asymmetric key generation, one preshared key per node pair, `wg0.conf` generation for a full mesh inside `mesh_subnet` (`10.42.0.0/16`). Each peer is routed only its own `/32` plus explicitly listed extra CIDRs. The module only generates keys and configuration text (sensitive output `node_configs`): it installs nothing on the nodes, and no environment in this directory calls it. |
 | **`k8s-sovereign-stack`** | Kubernetes ($\ge 1.30$) | Deploys [`kubernetes/helm/sovereign-stack`](../kubernetes/helm/sovereign-stack) (Ollama, Qdrant, core services, telemetry) and exposes `storage_class`, `ingress_enabled`, `ingress_class_name`, `enable_gpu` and `gpu_runtime_class_name`. Installs no cluster add-ons; see the prerequisites below. Telemetry is simulated by default (`simulate_telemetry = true`): hardware mode (`false`) requires an ESP32 telemetry bridge or a serial device, which the chart does not wire yet, so it yields no real measurements. |
 
 ---
@@ -205,8 +205,8 @@ The NVIDIA extension images are deliberately not hard-coded: their tags are not 
 
 ---
 
-## 5. Security & Post-Quantum Hardening
+## 5. Security Properties
 
 - **At-Rest Encryption**: With `enable_luks_encryption = true` the `talos-cluster` module encrypts the Talos STATE and EPHEMERAL partitions of the install disk with **LUKS2**, using a key derived from the node's hardware UUID (`nodeID`). This protects data on a disk that is removed from its node (disposal, RMA, a stolen drive). It does **not** protect against theft of the whole node, which unlocks itself at boot, and the node UUID is not a secret. For that threat model switch the key to a TPM-sealed or KMS-backed key in the machine config.
-- **API-Only Zero-Trust Architecture**: Talos Linux nodes operate with no SSH daemons, no shell access, and no mutable root filesystems; all management occurs via mutual-TLS gRPC APIs (`talosctl`).
-- **Mesh Cryptography**: Mesh nodes communicate across isolated WireGuard interfaces configured with unique preshared keys (PSK) and post-quantum compatible packet wrappers.
+- **API-only node management (a Talos Linux property)**: Talos nodes run no SSH daemon, offer no shell and have an immutable root filesystem; they are managed through the Talos API (`talosctl`) over mutual TLS. The module generates the machine secrets and writes `talosconfig` and `kubeconfig` to `./_output/`: protect those files and the Terraform state, which contains the same secrets. This is not a zero-trust architecture; no per-request policy enforcement is configured.
+- **Mesh cryptography (`wireguard-mesh`, standalone)**: the generated configurations give every node its own key pair and every pair of nodes its own preshared key, on top of standard WireGuard (Curve25519, ChaCha20-Poly1305). A preshared key is WireGuard's documented hedge against a future quantum attack on the key exchange, but this is not post-quantum cryptography and the modules contain no post-quantum packet wrapper. The keys are stored in the Terraform state.

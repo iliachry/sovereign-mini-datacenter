@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import subprocess
 import sys
 from argparse import Namespace
@@ -241,23 +242,37 @@ class TestDeployGuards:
 
 
 class TestLegacyEconomyStatePath:
-    def test_planted_world_writable_legacy_file_is_not_trusted(self, tmp_path, monkeypatch):
-        legacy_dir = tmp_path / "tmp"
-        legacy_dir.mkdir()
-        planted = legacy_dir / "smdc_default_wallet.json"
-        planted.write_text("{}")
-        planted.chmod(0o666)
-        monkeypatch.setattr("tempfile.gettempdir", lambda: str(legacy_dir))
-        assert not cli._economy_state_path("smdc_default_wallet.json").startswith(str(legacy_dir))
+    """The CLI wallet an older release left in the temp directory is adopted only if it is ours."""
 
-    def test_own_private_legacy_file_keeps_being_used(self, tmp_path, monkeypatch):
-        legacy_dir = tmp_path / "tmp"
-        legacy_dir.mkdir()
-        mine = legacy_dir / "smdc_default_wallet.json"
-        mine.write_text("{}")
+    @staticmethod
+    def _legacy_wallet(directory):
+        from sovereign_dc.economy.wallet import NodeWallet
+
+        directory.mkdir()
+        wallet = NodeWallet.create(node_id="legacy")
+        path = directory / "smdc_default_wallet.json"
+        wallet.save_to_file(str(path))
+        return wallet, path
+
+    def test_planted_world_writable_legacy_file_is_not_trusted(self, tmp_path, monkeypatch):
+        from sovereign_dc.economy import node_state
+
+        planted_wallet, planted = self._legacy_wallet(tmp_path / "tmp")
+        planted.chmod(0o666)
+        monkeypatch.setattr(node_state, "_legacy_cli_tmp_dir", lambda: str(tmp_path / "tmp"))
+        assert node_state.migrate_legacy_node_state() is None
+        assert node_state.load_node_wallet().address != planted_wallet.address
+        assert planted.exists()
+
+    def test_own_private_legacy_file_is_adopted_as_the_node_wallet(self, tmp_path, monkeypatch):
+        from sovereign_dc.economy import node_state
+
+        mine_wallet, mine = self._legacy_wallet(tmp_path / "tmp")
         mine.chmod(0o600)
-        monkeypatch.setattr("tempfile.gettempdir", lambda: str(legacy_dir))
-        assert cli._economy_state_path("smdc_default_wallet.json") == str(mine)
+        monkeypatch.setattr(node_state, "_legacy_cli_tmp_dir", lambda: str(tmp_path / "tmp"))
+        assert node_state.migrate_legacy_node_state() == "CLI"
+        assert node_state.load_node_wallet().address == mine_wallet.address
+        assert not mine.exists() and os.path.isfile(node_state.node_state_paths().wallet)
 
 
 def test_deploy_placeholder_markers_cover_env_example():
@@ -643,7 +658,8 @@ class TestDtnSubmissionContract:
 class TestCliExitCodes:
     def _wallet(self, tmp_path):
         args = dict(wallet_file=str(tmp_path / "w.json"), db_path=str(tmp_path / "l.db"))
-        cli.cmd_economy_wallet(Namespace(create=True, pqc=False, mint=None, node_id="n1", **args))
+        # Nothing is minted implicitly any more: fund the wallet explicitly.
+        assert cli.cmd_economy_wallet(Namespace(create=True, pqc=False, mint="100", node_id="n1", **args)) == 0
         return args
 
     def test_failed_transfer_exits_non_zero(self, tmp_path, capsys):

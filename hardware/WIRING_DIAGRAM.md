@@ -22,11 +22,11 @@
           │ (Max 250V PV, 35A PV Isc,       │
           │  70A Charge Out)                │
           └──────────────┬──────────────────┘
-                         │ 35mm² Flex DC Cable
+                         │ 35mm² Flex DC Cable, 100A MEGA fuse
                          ▼
           ┌──────────────────────────────────┐
           │   Victron Lynx Distributor (48V) │  ◄─── Main 48V DC Bus
-          │   (4x MEGA fuse 125A / 58V)      │
+          │ (MEGA: 3x 125A/58V, 1x 100A/80V) │
           └───┬──────────────────────┬───────┘
               │                      │
               ▼                      ▼
@@ -63,13 +63,13 @@
 
 ### Battery connection detail
 
-Each pack has its own positive lead with a Class T fuse at the pack, and lands on its own fused position of the Lynx Distributor; the inverter and the MPPT take the other two positions. The two negatives join and pass through the battery monitor shunt before reaching the negative busbar. This matches Phase 2 of `ASSEMBLY_MANUAL.md`.
+Each pack has its own positive lead with a Class T fuse at the pack, and lands on its own fused position of the Lynx Distributor; the inverter and the MPPT take the other two positions. The MPPT position carries a 100A fuse, not 125A, because Victron limits the battery fuse of the 70A controllers to 100A (table below). The two negatives join and pass through the battery monitor shunt before reaching the negative busbar. This matches Phase 2 of `ASSEMBLY_MANUAL.md`.
 
 ```
  [Pack 1 (+)] ──► [Class T fuse 125A] ──35mm²──► [Lynx position 1, MEGA 125A/58V] ─┐
  [Pack 2 (+)] ──► [Class T fuse 125A] ──35mm²──► [Lynx position 2, MEGA 125A/58V] ─┤ Lynx (+) busbar
  [MultiPlus-II DC (+)] ◄──────────────35mm²───── [Lynx position 3, MEGA 125A/58V] ─┤
- [MPPT 250/70 battery (+)] ◄──────────35mm²───── [Lynx position 4, MEGA 125A/58V] ─┘
+ [MPPT 250/70 battery (+)] ◄──────────35mm²───── [Lynx position 4, MEGA 100A/80V] ─┘
 
  [Pack 1 (−)] ──35mm²──┐
  [Pack 2 (−)] ──35mm²──┴─► [Victron SmartShunt 500A/50mV] ──► [Lynx Distributor (−)]
@@ -80,9 +80,31 @@ Each pack has its own positive lead with a Class T fuse at the pack, and lands o
 - Connect the SmartShunt's fused positive sense lead to the battery positive as described in its manual.
 - Cell-level protection (over/under-voltage, over-current, temperature) is provided by the BMS built into each server-rack pack. The SmartShunt only measures.
 
-> **Wire Sizing:** Use minimum 35mm² flexible cable on 48V DC bus runs. AC output wiring: 4mm² to PDU. All connections torqued to manufacturer spec.
+### Fuse and cable per Lynx Distributor position
 
-> **Safety:** Install one 125A Class T fuse (DC rating ≥ 125V, interrupting rating ≥ 20kA) in the positive lead of **each** battery pack (two in total), as close to the pack terminal as practical: a LiFePO4 bank can drive several kA into a short circuit, and the Class T fuse is the device rated to interrupt it. The Lynx Distributor accepts MEGA fuses only, and Victron specifies 58V-rated MEGA fuses for 48V systems ([Lynx Distributor manual](https://www.victronenergy.com/media/pg/Lynx_Distributor/en/system-design.html)); fit a 125A/58V MEGA fuse in each of its four positions and never a 32V one. Earth all metal chassis to ground bus.
+| Lynx position | Device | Fuse fitted | What the device manufacturer prescribes | Branch cable |
+| :---: | :--- | :--- | :--- | :--- |
+| 1 | Battery pack 1 | MEGA 125A/58V in the Lynx, plus a Class T 125A at the pack | The pack datasheet gives the maximum continuous current (100A is typical for a 48V 100Ah server-rack pack); the fuse protects the 35mm² lead and must not be below the pack's rated current. Confirm against the datasheet of the pack you buy. | 35mm² |
+| 2 | Battery pack 2 | MEGA 125A/58V in the Lynx, plus a Class T 125A at the pack | As position 1 | 35mm² |
+| 3 | MultiPlus-II 48/3000/35-32 | MEGA 125A/58V | Recommended DC fuse 125A, recommended cable 35mm² for runs of 0–5m (70mm² for 5–10m), for the 48/3000/35 ([MultiPlus-II manual, installation](https://www.victronenergy.com/media/pg/MultiPlus-II_230V/en/installation.html)) | 35mm², run under 5m |
+| 4 | SmartSolar MPPT 250/70-Tr | MEGA 100A/80V | Battery fuse 80A minimum, 100A maximum for the MPPT 150/70 and 250/70 ([SmartSolar MPPT manual, installation](https://www.victronenergy.com/media/pg/Manual_SmartSolar_MPPT_150-60_up_to_250-70/en/installation.html)). The manual gives no minimum battery-cable cross-section; it asks for flexible multi-stranded copper cable and 2.4 N·m on the terminals, and the controller's power terminals accept at most 35mm² ([datasheet](https://www.victronenergy.com/upload/documents/Datasheet-SmartSolar-charge-controller-MPPT-250-60-and-250-70-EN.pdf)). | 35mm² (the 100A fuse also protects 25mm²; 35mm² is kept so that one cable size is used throughout) |
+
+- The 48V-to-12V converter is **not** on a Lynx position. It has its own inline 10A fuse, described under "12V auxiliary rail" below.
+- A 125A fuse must not be fitted in position 4: it exceeds the 100A maximum that Victron prescribes for the controller, whatever the cable size.
+- Victron's fuse datasheet lists a 58V MEGA range that starts at 125A and an 80V MEGA range that includes 80A and 100A ([Victron fuse datasheet](https://www.victronenergy.com/upload/documents/Datasheet-Midi,-Mega-and-ANL-fuses,-and-fuse-holders-EN-.pdf)). The Lynx Distributor manual asks for MEGA fuses rated 58V for 48V systems; the 80V fuse exceeds that voltage rating and has the same MEGA format. An 80A/80V MEGA fuse is also within Victron's range for the controller; 100A is chosen to leave margin above the 70A rated charge current.
+- The four fuse ratings add up to 475A, below the Lynx Distributor's 1000A busbar rating; Victron requires the sum of the fuses not to exceed the rating of the Lynx module ([Lynx Distributor manual, system design](https://www.victronenergy.com/media/pg/Lynx_Distributor/en/system-design.html)).
+- Manufacturer documents were checked on 2026-11-14. Local wiring regulations take precedence over this table.
+
+> **Wire Sizing:** Use 35mm² flexible copper cable on the 48V DC bus runs listed above, and keep each run under 5m. AC output wiring: 3 × 2.5mm² from the MultiPlus-II AC output through the 16A RCBO to the PDU. Tighten every connection to the torque in the manufacturer's manual (the values are listed in Phase 2 of `ASSEMBLY_MANUAL.md`).
+
+> **Safety:** Install one 125A Class T fuse (DC rating ≥ 125V, interrupting rating ≥ 20kA) in the positive lead of **each** battery pack (two in total), as close to the pack terminal as practical: a LiFePO4 bank can drive several kA into a short circuit, and the Class T fuse is the device rated to interrupt it. The Lynx Distributor accepts MEGA fuses only, and Victron specifies 58V-rated MEGA fuses for 48V systems ([Lynx Distributor manual](https://www.victronenergy.com/media/pg/Lynx_Distributor/en/system-design.html)): fit a 125A/58V MEGA fuse in positions 1 to 3 and a 100A/80V MEGA fuse in position 4 (the MPPT), and never a 32V one.
+
+> **Earthing:**
+>
+> - Bond the enclosure, every metal chassis inside it, the PV module frames and the surge protection device to the earth bar, and the earth bar to the earth rod.
+> - The MultiPlus-II is a safety class I product: its chassis or AC earth terminal must have a permanent earth connection. With no AC input present, its internal ground relay links the output neutral to the chassis, which is what lets the 30mA RCBO on the AC output work; Victron states that a Type A residual-current device can be used on this inverter ([MultiPlus-II manual, installation](https://www.victronenergy.com/media/pg/MultiPlus-II_230V/en/installation.html)).
+> - Do **not** earth the PV array's positive or negative conductor. Victron's manual for this controller states that the PV positive and negative should not be grounded, that only the module frames are grounded, and that the controller has no ground-fault detector ([SmartSolar MPPT manual, installation](https://www.victronenergy.com/media/pg/Manual_SmartSolar_MPPT_150-60_up_to_250-70/en/installation.html)).
+> - The same manual allows a single earth connection on the battery side, near the battery. This design leaves the choice (battery negative earthed at one point, or floating) to the local wiring regulations; if the negative is earthed, earth it at one point only, on the system side of the SmartShunt.
 
 ### 12V auxiliary rail
 
@@ -101,6 +123,8 @@ The coolant pump and the six 120mm fans are 12V devices, and the MikroTik switch
                                                           [5V buck ──► ESP32 telemetry bridge]
 ```
 
+- The converter's supply is fused separately because Victron's 48V-input Orion-Tr models have no internal input fuse and its manual requires an external one ([Orion-Tr isolated converter manual](https://www.victronenergy.com/upload/documents/Manual-Orion-Tr-isolated-DC-DC-converters-EN-FR-NL-ES-IT-DE.pdf)); the manual states no rating. 10A is chosen from the converter's input current: about 5.7A at full output from a 48V bus and about 6.9A at 40V (240W at 87% efficiency), and 10A is within the rating of the 2.5mm² supply wire.
+- Connect the tap with a ring lug on a spare stud at the end of the Lynx positive busbar, and mount the fuse holder within about 150mm of the busbar: the wire between the busbar and the fuse is protected only by the pack fuses, which are far too large for 2.5mm² wire.
 - Load: pump 23W + six fans at 3.6W each (21.6W) + switch 23W + telemetry bridge 1.5W = 69.1W (about 5.7A), against a 20A converter; the sizing is in `COMPONENTS.md`.
 - The converter's input negative connects on the system side of the SmartShunt (the Lynx negative busbar), so the 12V load is included in the measured battery current.
 - The PWM signal for the fans and the pump comes from the system host's fan headers; only the 12V power comes from this rail. Without a PWM signal the fans and the pump run at full speed.

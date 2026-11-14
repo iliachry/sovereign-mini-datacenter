@@ -7,6 +7,7 @@ battery State-of-Charge (SoC), and hardware compute utilization.
 from __future__ import annotations
 
 import enum
+import math
 import uuid
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -86,15 +87,23 @@ class ComputeMarket:
         self._offers: dict[str, ServiceOffer] = {}
 
     @staticmethod
-    def get_dynamic_multiplier(battery_soc: float, solar_power_w: float) -> tuple[float, str]:
+    def get_dynamic_multiplier(battery_soc: float, solar_power_w: float | None) -> tuple[float, str]:
         """Calculates price discount/surge multiplier based on physical energy state.
 
         - Battery SoC > 75% & Solar > 500W: 50% Green Discount (excess power monetization)
         - Battery SoC 40-75%: Nominal pricing (1.0x)
         - Battery SoC 25-40%: Moderate surge (1.5x)
         - Battery SoC < 25%: Heavy preservation surge (3.0x)
+
+        ``solar_power_w`` may be None (the node has no solar measurement): an unknown harvest
+        never earns the surplus discount. A non-finite ``battery_soc`` raises ValueError
+        rather than being priced as a critical or healthy battery.
         """
-        if battery_soc >= 75.0 and solar_power_w >= 500.0:
+        if not isinstance(battery_soc, (int, float)) or not math.isfinite(battery_soc):
+            raise ValueError("battery_soc must be a finite number")
+        if solar_power_w is not None and not math.isfinite(solar_power_w):
+            solar_power_w = None
+        if battery_soc >= 75.0 and solar_power_w is not None and solar_power_w >= 500.0:
             return 0.50, "SOLAR_SURPLUS_DISCOUNT_50%"
         elif battery_soc >= 40.0:
             return 1.00, "NOMINAL_ENERGY_STATE"
@@ -108,7 +117,7 @@ class ComputeMarket:
         service_type: ServiceType,
         quantity: float,
         battery_soc: float = 85.0,
-        solar_power_w: float = 850.0,
+        solar_power_w: float | None = 850.0,
     ) -> PriceQuote:
         """Generates an energy-aware price quote for a service request."""
         if quantity <= 0:

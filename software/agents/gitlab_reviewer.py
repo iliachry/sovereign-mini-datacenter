@@ -13,7 +13,10 @@ import urllib.error
 import urllib.request
 from typing import Any
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [GitLabReviewer] %(message)s")
+# Logging is configured only when this file runs as a script (see the bottom of the file):
+# importing it as a library must not touch the root logger.
+logger = logging.getLogger("GitLabReviewer")
+LOG_FORMAT = "%(asctime)s [GitLabReviewer] %(message)s"
 
 GITLAB_URL = os.getenv("GITLAB_API_URL", "http://gitlab/api/v4")
 GITLAB_TOKEN = os.getenv("GITLAB_API_TOKEN", "")
@@ -61,7 +64,7 @@ def query_ollama(prompt: str) -> str:
                 msg = data.get("choices", [{}])[0].get("message", {})
                 return str(msg.get("content") or msg.get("reasoning_content") or LLM_EMPTY_OUTPUT)
         except Exception as e:
-            logging.error("OpenAI/SGLang review generation failed: %s", e)
+            logger.error("OpenAI/SGLang review generation failed: %s", e)
             return f"{LLM_UNAVAILABLE_PREFIX}: {e}"
 
     url = f"{OLLAMA_URL}/api/generate"
@@ -74,7 +77,7 @@ def query_ollama(prompt: str) -> str:
             data = json.loads(resp.read().decode("utf-8"))
             return str(data.get("response") or LLM_EMPTY_OUTPUT)
     except Exception as e:
-        logging.error("Ollama review generation failed: %s", e)
+        logger.error("Ollama review generation failed: %s", e)
         return f"{LLM_UNAVAILABLE_PREFIX}: {e}"
 
 
@@ -114,11 +117,11 @@ Code Diff:
 
 Provide a concise, constructive markdown review with bullet points and code suggestions.
 """
-    logging.info("Generating review for MR !%s in project %s using %s...", mr_iid, project_id, REVIEW_MODEL)
+    logger.info("Generating review for MR !%s in project %s using %s...", mr_iid, project_id, REVIEW_MODEL)
     review_markdown = query_ollama(prompt)
 
     if is_review_failure(review_markdown):
-        logging.warning(
+        logger.warning(
             "No review generated for MR !%s in project %s (%s); not posting a note.",
             mr_iid,
             project_id,
@@ -144,12 +147,12 @@ Provide a concise, constructive markdown review with bullet points and code sugg
         )
         try:
             with urllib.request.urlopen(req, timeout=10):
-                logging.info("Successfully posted AI review to MR !%s.", mr_iid)
+                logger.info("Successfully posted AI review to MR !%s.", mr_iid)
         except Exception as e:
-            logging.error("Failed to post comment to GitLab: %s", e)
+            logger.error("Failed to post comment to GitLab: %s", e)
             return False
     else:
-        logging.info("Dry-run mode (No GITLAB_API_TOKEN set). Generated review:\n%s", comment)
+        logger.info("Dry-run mode (No GITLAB_API_TOKEN set). Generated review:\n%s", comment)
     return True
 
 
@@ -174,7 +177,7 @@ def get_reviewer_user_id() -> int | None:
         if isinstance(user_id, bool) or not isinstance(user_id, int):
             raise ValueError("response has no integer 'id'")
     except Exception as e:
-        logging.warning("Could not resolve the reviewer's GitLab identity: %s", e)
+        logger.warning("Could not resolve the reviewer's GitLab identity: %s", e)
         return None
     _reviewer_user_id = user_id
     return user_id
@@ -203,7 +206,7 @@ def already_reviewed_on_gitlab(project_id: int, mr_iid: int, head_sha: str) -> b
         return False
     reviewer_id = get_reviewer_user_id()
     if reviewer_id is None:
-        logging.warning(
+        logger.warning(
             "MR !%s (project %s): ignoring review marker(s) because the reviewer identity is unknown.",
             mr_iid,
             project_id,
@@ -211,7 +214,7 @@ def already_reviewed_on_gitlab(project_id: int, mr_iid: int, head_sha: str) -> b
         return False
     if any(_note_author_id(n) == reviewer_id for n in marked):
         return True
-    logging.warning(
+    logger.warning(
         "MR !%s (project %s): ignoring review marker for %s posted by another account.",
         mr_iid,
         project_id,
@@ -253,20 +256,21 @@ def poll_once(reviewed: set[ReviewKey]) -> int:
                 reviewed.add(key)
                 posted += 1
         except Exception as e:
-            logging.warning("GitLab MR !%s (project %s) check: %s", iid, pid, e)
+            logger.warning("GitLab MR !%s (project %s) check: %s", iid, pid, e)
     return posted
 
 
 def run_worker() -> None:
-    logging.info("Starting Autonomous GitLab Reviewer Agent...")
+    logger.info("Starting Autonomous GitLab Reviewer Agent...")
     reviewed: set[ReviewKey] = set()
     while True:
         try:
             poll_once(reviewed)
         except Exception as e:
-            logging.warning("GitLab API check: %s", e)
+            logger.warning("GitLab API check: %s", e)
         time.sleep(POLL_INTERVAL_SECONDS)
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format=LOG_FORMAT)
     run_worker()

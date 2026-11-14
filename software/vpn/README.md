@@ -1,19 +1,19 @@
 # Sovereign Mesh VPN (Headscale)
 
-This module provides a **self-hosted, zero-trust peer-to-peer WireGuard mesh VPN** powered by [Headscale](https://github.com/juanfont/headscale), the open-source control plane for Tailscale.
+This module provides **WireGuard tunnels between enrolled nodes**, coordinated by a self-hosted [Headscale](https://github.com/juanfont/headscale) control server (the open-source implementation of the Tailscale control plane). It is a mesh VPN, not a zero-trust architecture: **no ACL policy is shipped**, so every enrolled node can reach every other enrolled node on every port (see [Access control](#access-control-no-acl-policy-is-shipped)).
 
 ---
 
-## ?? Why Headscale?
+## Why Headscale?
 
-- **Zero-Trust Access:** Connect securely to all sovereign datacenter services without opening public ports.
-- **End-to-End Encryption:** Direct peer-to-peer WireGuard tunnels with NAT traversal (STUN) and relay fallback through the DERP server embedded in Headscale — by default the only relay clients are given.
-- **No Third-Party Cloud:** Zero telemetry, keys and metadata never leave your hardware.
+- **Private access path:** Enrolled devices reach the node over the mesh. The VPN itself needs the Headscale HTTPS endpoint (`DOMAIN_VPN`, through Traefik on 443) and UDP 3478 (STUN) reachable from the internet. Enrolment requires a pre-authenticated key or an operator-approved node key.
+- **WireGuard tunnels between enrolled nodes:** Traffic between two nodes is encrypted by WireGuard from one node to the other (the relay cannot read it); this covers the tunnel, not the applications inside it. Direct peer-to-peer tunnels with NAT traversal (STUN) and relay fallback through the DERP server embedded in Headscale — by default the only relay clients are given.
+- **No third-party control plane:** Node keys, the node list and the relay run on your own server; with the default configuration no relay map is downloaded from Tailscale Inc.
 - **Cross-Platform:** Works natively with official Tailscale client apps on macOS, iOS, Android, Linux, and Windows.
 
 ---
 
-## ?? Quick Setup
+## Quick Setup
 
 ### 1. Launch Headscale
 
@@ -63,6 +63,25 @@ them instead of their local DNS) — ideally one you run on the mesh — or unde
 `dns.override_local_dns` key; on a later release keep it `false` while the list is
 empty.
 
+#### Access control: no ACL policy is shipped
+
+`config/headscale.yaml` has no `policy` section, and without a policy Headscale allows
+all traffic between all enrolled nodes. To restrict it:
+
+1. Write a policy file, for example `software/vpn/config/acl.hujson` (format:
+   [Headscale ACL reference](https://headscale.net/stable/ref/acls/)).
+2. Mount it in `docker-compose.vpn.yml` next to the config file:
+   `- ./vpn/config/acl.hujson:/etc/headscale/acl.hujson:ro`
+3. Point Headscale at it in `config/headscale.yaml` (keys of the pinned 0.23 schema;
+   check them against the Headscale documentation when you upgrade):
+   ```yaml
+   policy:
+     mode: file
+     path: /etc/headscale/acl.hujson
+   ```
+4. `docker restart sovereign_headscale`, then confirm from a client that a connection
+   the policy should deny is refused.
+
 ### 2. Create a User
 
 ```bash
@@ -78,7 +97,7 @@ chmod +x software/vpn/register-node.sh
 
 ---
 
-## ?? Connecting Client Devices
+## Connecting Client Devices
 
 ### Linux / Servers
 ```bash

@@ -20,6 +20,7 @@ import re
 import threading
 import time
 import webbrowser
+from collections.abc import Callable
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler
 from http.server import ThreadingHTTPServer as HTTPServer
@@ -32,6 +33,7 @@ from sovereign_dc.events import get_event_bus
 from sovereign_dc.hal.power import read_power
 from sovereign_dc.hal.storage import detect_storage
 from sovereign_dc.hal.thermal import read_thermal
+from sovereign_dc.jsonutil import dumps_strict
 from sovereign_dc.mesh.consensus import RaftCluster
 from sovereign_dc.security.pqc import PQCAlgorithm, PQCSigner, get_node_pqc_keypair
 from sovereign_dc.space.dtn.bundle import Bundle, BundlePriority
@@ -203,6 +205,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       <div class="card-title"><span>❄️ Liquid Coolant Loop</span><span id="thermal-status" class="code">--</span></div>
       <div class="metric-value" style="color: var(--accent);" id="coolant-temp">-- °C</div>
       <div class="metric-sub" id="rack-air">Inlet: -- °C | Exhaust: -- °C</div>
+      <div class="metric-sub" id="fan-rpm">Fan: -- RPM (estimated, not measured)</div>
       <div class="gauge-bar"><div class="gauge-fill" style="background: var(--accent);" id="temp-bar"></div></div>
     </div>
 
@@ -228,6 +231,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       <div class="card-title"><span>💰 Compute Economy & Wallet</span><span class="code" id="econ-pricing-mode">--</span></div>
       <div class="metric-value" style="color: var(--accent-orange);" id="wallet-balance">-- Credits</div>
       <div class="metric-sub" id="wallet-addr">Wallet: --</div>
+      <div class="metric-sub">Credits are locally issued test credits (no external value).</div>
       <div class="status-row" style="margin-top: 10px;"><span>Dynamic Rate Multiplier</span><span class="code" id="econ-multiplier">1.00x</span></div>
       <div class="status-row"><span>Ledger Transactions</span><span class="code" id="econ-tx-count">0 Recorded</span></div>
     </div>
@@ -239,6 +243,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       <div class="status-row"><span>PQC Digital Signatures</span><span class="code" style="color: var(--accent);">ML-DSA-87 (FIPS 204)</span></div>
       <div class="status-row"><span>PQC Key Encapsulation</span><span class="code" style="color: var(--accent-purple);">ML-KEM-1024 (FIPS 203)</span></div>
       <div class="status-row"><span>Intrusion Detection</span><span class="code">CrowdSec overlay (not probed)</span></div>
+      <div class="status-row"><span>Rack Door / PDU Outlets</span><span class="code" id="hw-shadow">--</span></div>
     </div>
 
     <!-- Card 8: 5G RAN & UAV Metaverse (IEEE IoT Mag 2026) -->
@@ -285,7 +290,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     }
 
     // Every status badge is derived from the /api/status payload; none is a static claim.
-    const BADGE_IDS = ['shedding-mode', 'mppt-status', 'thermal-status', 'space-link-status', 'raft-role', 'pqc-status', 'econ-pricing-mode', 'metaverse-sla-status'];
+    const BADGE_IDS = ['shedding-mode', 'mppt-status', 'thermal-status', 'space-link-status', 'raft-role', 'pqc-status', 'econ-pricing-mode', 'metaverse-sla-status', 'hw-shadow'];
     function setBadge(id, text, color) {
       const el = document.getElementById(id);
       if (!el) return;
@@ -351,10 +356,14 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         document.getElementById('node-id').textContent = `Node ID: ${data.node_id} • ${data.role}`;
         document.getElementById('smdc-version').textContent = data.version;
 
+        // A value the node did not measure arrives as null and is shown as "--", never as a number.
+        const num = (v) => (typeof v === 'number' && Number.isFinite(v)) ? v : null;
+        const fmt = (v, digits) => num(v) === null ? '--' : v.toFixed(digits);
+
         // Battery
         const soc = data.power.battery_soc || 0;
         document.getElementById('battery-soc').textContent = `${soc.toFixed(1)} %`;
-        document.getElementById('battery-voltage').textContent = `Voltage: ${data.power.battery_voltage.toFixed(1)} V | Load: ${data.power.system_load_watts.toFixed(0)} W`;
+        document.getElementById('battery-voltage').textContent = `Voltage: ${fmt(data.power.battery_voltage, 1)} V | Load: ${fmt(data.power.system_load_watts, 0)} W`;
         document.getElementById('soc-bar').style.width = `${Math.min(100, Math.max(0, soc))}%`;
         // load_shedding_active is the exporter's own flag; the L-level is this node's SoC policy tier.
         const shedding = !!data.power.load_shedding_active;
@@ -362,11 +371,13 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         setBadge('shedding-mode', `${shedding ? 'LOAD SHEDDING ACTIVE' : 'NOT SHEDDING'}${level}`, shedding ? 'var(--accent-red)' : 'var(--accent)');
 
         // Solar
-        const solar = data.power.solar_watts || 0;
-        document.getElementById('solar-watts').textContent = `${solar.toFixed(0)} W`;
-        document.getElementById('net-power').textContent = `Net Flow: ${(solar - data.power.system_load_watts).toFixed(0)} W`;
+        const solarKnown = num(data.power.solar_watts) !== null;
+        const solar = solarKnown ? data.power.solar_watts : 0;
+        document.getElementById('solar-watts').textContent = `${fmt(data.power.solar_watts, 0)} W`;
+        document.getElementById('net-power').textContent = `Net Flow: ${fmt(data.power.net_power_watts, 0)} W`;
         document.getElementById('solar-bar').style.width = `${Math.min(100, (solar / 3280) * 100)}%`;
-        setBadge('mppt-status', solar > 0 ? 'MPPT ACTIVE' : 'MPPT IDLE', solar > 0 ? 'var(--accent)' : 'var(--text-muted)');
+        if (!solarKnown) { setBadge('mppt-status', 'NO SOLAR DATA', 'var(--text-muted)'); }
+        else { setBadge('mppt-status', solar > 0 ? 'MPPT ACTIVE' : 'MPPT IDLE', solar > 0 ? 'var(--accent)' : 'var(--text-muted)'); }
 
         // Telemetry provenance: never present simulated values as live
         const simulated = data.power.is_simulated || data.thermal.is_simulated;
@@ -380,7 +391,13 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         // Thermal
         const coolant = data.thermal.coolant_celsius || 0;
         document.getElementById('coolant-temp').textContent = `${coolant.toFixed(1)} °C`;
-        document.getElementById('rack-air').textContent = `Inlet: ${data.thermal.rack_inlet_celsius.toFixed(1)}°C | Exhaust: ${data.thermal.rack_exhaust_celsius.toFixed(1)}°C`;
+        document.getElementById('rack-air').textContent = `Inlet: ${fmt(data.thermal.rack_inlet_celsius, 1)}°C | Exhaust: ${fmt(data.thermal.rack_exhaust_celsius, 1)}°C`;
+        // Fan speed is computed from coolant temperature and load; no tachometer is read.
+        const hw = data.hardware || {};
+        document.getElementById('fan-rpm').textContent = `Fan: ${fmt(hw.fan_rpm, 0)} RPM (${hw.fan_rpm_estimated === false ? 'measured' : 'estimated from coolant temperature and load, not measured'})`;
+        // Door and outlet states are a digital shadow unless the node has an actuator backend.
+        const doorText = hw.door_open ? 'DOOR OPEN' : 'DOOR CLOSED';
+        setBadge('hw-shadow', hw.simulated === false ? `${doorText} (ACTUATED)` : `${doorText} · DIGITAL SHADOW (NOT ACTUATED)`, hw.simulated === false ? 'var(--accent)' : 'var(--accent-orange)');
         document.getElementById('temp-bar').style.width = `${Math.min(100, (coolant / 60) * 100)}%`;
         const overtemp = !!data.thermal.is_overtemp;
         setBadge('thermal-status', overtemp ? 'OVERTEMP' : 'NORMAL', overtemp ? 'var(--accent-red)' : 'var(--accent)');
@@ -629,6 +646,11 @@ def describe_dtn_bundle(bundle: Bundle, ttl_capped: bool = False) -> dict[str, A
 
 
 # Global Digital Shadow Hardware State (Synchronized across all connected 3D Twins)
+#
+# The door and PDU-outlet values below are a *digital shadow*: booleans in this process. This
+# package ships no driver for a door solenoid or a switched PDU, so by default a control POST
+# changes the shadow only and nothing physical moves. The responses and the ``hardware``
+# section of /api/status say so (``actuated: false``, ``simulated: true``).
 _HARDWARE_LOCK = threading.RLock()
 _HARDWARE_STATE: dict[str, Any] = {
     "door_open": False,
@@ -637,26 +659,128 @@ _HARDWARE_STATE: dict[str, Any] = {
     "last_bundle_tx": 0,
 }
 
+# --- Actuator hook ---------------------------------------------------------------------------
+#
+# An integration that really drives hardware registers one callable per control:
+#
+#     from sovereign_dc.web.dashboard import ACTUATOR_RACK_DOOR, register_actuator
+#
+#     def drive_door(request: dict[str, Any]) -> bool:
+#         """request is {"open": bool}; return True only once the solenoid has been driven."""
+#         ...
+#
+#     register_actuator(ACTUATOR_RACK_DOOR, drive_door)
+#
+# Requests: ACTUATOR_RACK_DOOR gets ``{"open": bool}``, ACTUATOR_PDU_OUTLET gets
+# ``{"outlet": int, "state": bool}``. The return value says whether actuation happened; False
+# or an exception means it did not, and the control POST then fails (502) without touching the
+# shadow. Without a registered backend: in simulation mode the POST changes the shadow only
+# (200, ``actuated: false``, ``simulated: true``); in hardware mode it is refused (501).
+ActuatorBackend = Callable[[dict[str, Any]], bool]
+ACTUATOR_RACK_DOOR = "rack_door"
+ACTUATOR_PDU_OUTLET = "pdu_outlet"
+ACTUATOR_NAMES = (ACTUATOR_RACK_DOOR, ACTUATOR_PDU_OUTLET)
+EFFECT_ACTUATED = "actuated"
+EFFECT_SHADOW_ONLY = "digital_shadow_only"
+_ACTUATORS: dict[str, ActuatorBackend] = {}
+
+
+def register_actuator(name: str, backend: ActuatorBackend) -> None:
+    """Registers the backend that physically drives ``name`` (one of ``ACTUATOR_NAMES``)."""
+    if name not in ACTUATOR_NAMES:
+        raise ValueError(f"Unknown actuator {name!r}; expected one of {ACTUATOR_NAMES}")
+    with _HARDWARE_LOCK:
+        _ACTUATORS[name] = backend
+    invalidate_status_cache()
+
+
+def unregister_actuator(name: str) -> None:
+    """Removes the backend for ``name``; its control goes back to shadow-only / refused."""
+    with _HARDWARE_LOCK:
+        _ACTUATORS.pop(name, None)
+    invalidate_status_cache()
+
+
+def registered_actuators() -> dict[str, bool]:
+    """Which controls have a real actuator backend."""
+    with _HARDWARE_LOCK:
+        return {name: name in _ACTUATORS for name in ACTUATOR_NAMES}
+
+
+class ActuationRefused(Exception):
+    """A hardware control could not be carried out; ``status`` is the HTTP status to answer with."""
+
+    def __init__(self, status: int, message: str) -> None:
+        super().__init__(message)
+        self.status = status
+
+
+def _actuate(name: str, request: dict[str, Any]) -> bool:
+    """Carries out a hardware control request; returns True if hardware was actuated.
+
+    Returns False when only the digital shadow may change (simulation mode, no backend).
+    Raises ActuationRefused when nothing may change: hardware mode without a backend (501),
+    or a backend that failed or reported that it did not actuate (502).
+    """
+    with _HARDWARE_LOCK:
+        backend = _ACTUATORS.get(name)
+    if backend is None:
+        if get_config().is_simulation():
+            return False
+        raise ActuationRefused(
+            501,
+            f"No {name} actuator backend is registered on this node: nothing was actuated "
+            "and the reported state was not changed",
+        )
+    try:
+        done = bool(backend(dict(request)))
+    except Exception as err:
+        logger.error("Actuator %s failed: %s", name, err)
+        raise ActuationRefused(502, f"The {name} actuator failed: {err}") from err
+    if not done:
+        raise ActuationRefused(502, f"The {name} actuator reported that it did not actuate")
+    return True
+
+
+def _actuation_fields(actuated: bool) -> dict[str, Any]:
+    """Provenance fields of a hardware control response."""
+    return {
+        "actuated": actuated,
+        "simulated": not actuated,
+        "effect": EFFECT_ACTUATED if actuated else EFFECT_SHADOW_ONLY,
+    }
+
+
+def estimate_fan_rpm(coolant_celsius: float, system_load_watts: float | None) -> int:
+    """Fan speed *estimate* from coolant temperature and system load (no tachometer is read).
+
+    1800 RPM base, plus 80 RPM per degree of coolant above 25 °C, plus up to 800 RPM per
+    600 W of load when the load is known; capped at 4800 RPM.
+    """
+    temp_factor = max(0.0, (coolant_celsius - 25.0) * 80.0)
+    load_factor = (system_load_watts / 600.0) * 800.0 if system_load_watts is not None else 0.0
+    return int(min(4800, max(0.0, 1800 + temp_factor + load_factor)))
+
+
 _METAVERSE_ORCH: Any = None
 _RAFT_CLUSTER: RaftCluster | None = None
 _RAFT_LEADER: str | None = None
 _MAX_POST_BODY_BYTES = 1_048_576  # 1 MiB cap for control POST payloads
 _PASS_WINDOW_HOURS = 6.0
 # Data endpoints that require the operator token from non-local clients when one is configured.
+# Headers a reverse proxy adds when it relays a request: their presence means the loopback
+# TCP peer is the proxy, not the client.
+_PROXY_HEADERS = ("X-Forwarded-For", "Forwarded", "X-Real-IP", "X-Forwarded-Host", "X-Forwarded-Proto", "Via")
 _PROTECTED_GET_PATHS = frozenset(
     {"/api/status", "/api/metaverse/status", "/api/metaverse/slices", "/api/telemetry/stream"}
 )
 
 
 def _get_state_dir() -> str:
-    """Returns a user-private directory (0o700) for dashboard wallet & ledger state.
+    """Returns the node's user-private state directory (0o700); see ``config.get_state_dir``."""
+    from sovereign_dc.config import get_state_dir
 
-    Shares the MCP server's resolution so a pre-existing world-accessible temp directory
-    is never trusted as the home of wallet key material.
-    """
-    from sovereign_dc.mcp.tools import _get_mcp_state_dir
-
-    return _get_mcp_state_dir()
+    return get_state_dir()
 
 
 def _get_raft_state() -> tuple[RaftCluster, str]:
@@ -734,9 +858,8 @@ def get_metaverse_orchestrator():
 
 def get_system_status_payload() -> dict[str, Any]:
     """Assembles unified live system status JSON for REST API and dashboard."""
-    from sovereign_dc.economy.ledger import Ledger
     from sovereign_dc.economy.market import ComputeMarket
-    from sovereign_dc.economy.wallet import NodeWallet
+    from sovereign_dc.economy.node_state import get_node_identity
 
     cfg = get_config()
     # Outside simulation mode a failed read raises instead of returning invented values.
@@ -744,16 +867,23 @@ def get_system_status_payload() -> dict[str, Any]:
     thermal = read_thermal(exporter_url=cfg.power_exporter_url, simulation=cfg.is_simulation())
     storage = detect_storage()
 
-    # Dynamic Fan RPM calculation based on thermal state and system load
-    base_rpm = 1800
-    temp_factor = max(0.0, (thermal.coolant_celsius - 25.0) * 80.0)
-    load_factor = (power.system_load_watts / 600.0) * 800.0
+    # Fan speed is an estimate derived from thermal state and system load, not a reading.
     with _HARDWARE_LOCK:
-        _HARDWARE_STATE["fan_rpm"] = int(min(4800, base_rpm + temp_factor + load_factor))
+        _HARDWARE_STATE["fan_rpm"] = estimate_fan_rpm(thermal.coolant_celsius, power.system_load_watts)
+        actuators = registered_actuators()
+        all_actuated = all(actuators.values())
         hw_snapshot = {
             "door_open": _HARDWARE_STATE["door_open"],
             "pdu_outlets": list(_HARDWARE_STATE["pdu_outlets"]),
             "fan_rpm": _HARDWARE_STATE["fan_rpm"],
+            # No tachometer is read: fan_rpm is computed from coolant temperature and load.
+            "fan_rpm_estimated": True,
+            # door_open / pdu_outlets are a digital shadow (in-process state) unless every
+            # control has a registered actuator backend; "actuators" lists which ones do.
+            "simulated": not all_actuated,
+            "actuated": all_actuated,
+            "state_source": "actuator" if all_actuated else "digital_shadow",
+            "actuators": actuators,
             "last_bundle_tx": _HARDWARE_STATE["last_bundle_tx"],
         }
 
@@ -788,22 +918,13 @@ def get_system_status_payload() -> dict[str, Any]:
     else:
         local_role = "not_a_member"
 
-    # Economy and wallet status stored in private state directory
-    state_dir = _get_state_dir()
-    wallet_path = os.path.join(state_dir, "smdc_dashboard_wallet.json")
-    db_path = os.path.join(state_dir, "smdc_dashboard_ledger.db")
+    # The node's one wallet and ledger (shared with the CLI and the MCP server). Nothing is
+    # minted here: a new node reports a zero balance until ``smdc economy mint`` is run.
     with _HARDWARE_LOCK:
-        if not os.path.exists(wallet_path):
-            wallet = NodeWallet.create(node_id=cfg.node_id)
-            wallet.save_to_file(wallet_path)
-            ledger = Ledger(db_path=db_path)
-            ledger.mint(wallet.address, 100.0, memo="DASHBOARD_GENESIS")
-        else:
-            wallet = NodeWallet.load_from_file(wallet_path)
-            ledger = Ledger(db_path=db_path)
-
-        balance_credits = ledger.get_balance(wallet.address)
-        recent_tx_count = len(ledger.get_history(limit=50))
+        identity = get_node_identity(cfg.node_id)
+        wallet = identity.wallet
+        balance_credits = identity.ledger.get_balance(wallet.address)
+        recent_tx_count = len(identity.ledger.get_history(limit=50))
 
     market = ComputeMarket()
     mult, status_desc = market.get_dynamic_multiplier(power.battery_soc, power.solar_watts)
@@ -816,8 +937,10 @@ def get_system_status_payload() -> dict[str, Any]:
         "power": {
             "battery_soc": power.battery_soc,
             "solar_watts": power.solar_watts,
+            # None (JSON null) when the exporter did not report the quantity: never a nominal value.
             "battery_voltage": power.battery_voltage,
             "system_load_watts": power.system_load_watts,
+            "net_power_watts": power.net_power,
             # The exporter's own flag (the bundled exporter raises it below 20 % SoC).
             "load_shedding_active": power.load_shedding_active,
             # This node's configured SoC policy tier (0 nominal .. 4 emergency) for that SoC.
@@ -859,6 +982,9 @@ def get_system_status_payload() -> dict[str, Any]:
             "wallet_address": wallet.address,
             "balance_credits": balance_credits,
             "algorithm": wallet.keypair.algorithm.value,
+            "pqc_wallet_address": identity.pqc_wallet.address,
+            # Balances only come from ``smdc economy mint``: locally issued test credits.
+            "credits_kind": "local_test_credits",
             "energy_multiplier": mult,
             "energy_state": status_desc,
             "recent_transactions_count": recent_tx_count,
@@ -959,13 +1085,18 @@ class DashboardHandler(BaseHTTPRequestHandler):
         return hmac.compare_digest(provided.encode("utf-8"), expected_token.encode("utf-8"))
 
     def _is_local_request(self) -> bool:
-        """True when the request was made on this machine and was not relayed by a proxy."""
+        """True when the request was made on this machine and was not relayed by a proxy.
+
+        The one definition of "local" for both the data GETs and the control POSTs: the TCP
+        peer is loopback and the request carries none of the headers a reverse proxy adds
+        (``_PROXY_HEADERS``). A same-host proxy connects from loopback on behalf of a remote
+        client, so such a request is not local, whatever address the server is bound to.
+        """
         client = getattr(self, "client_address", None)
         peer_host = str(client[0]) if client else ""
         if not _is_loopback_host(peer_host):
             return False
-        # A reverse proxy connects from loopback on behalf of a remote client.
-        return not any(self.headers.get(name) for name in ("X-Forwarded-For", "Forwarded", "X-Real-IP"))
+        return not any(self.headers.get(name) for name in _PROXY_HEADERS)
 
     def _check_get_auth(self, allow_query_token: bool = False) -> bool:
         """Authorizes a data GET (JSON endpoints and the SSE stream).
@@ -980,7 +1111,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         return self._bearer_token_matches(expected_token, allow_query_token=allow_query_token)
 
     def _send_unauthorized(self) -> None:
-        payload = json.dumps({"success": False, "error": "Unauthorized"}).encode("utf-8")
+        payload = dumps_strict({"success": False, "error": "Unauthorized"}).encode("utf-8")
         self.send_response(401)
         self.send_header("Content-Type", "application/json")
         self.send_header("WWW-Authenticate", "Bearer")
@@ -997,25 +1128,27 @@ class DashboardHandler(BaseHTTPRequestHandler):
         """Authorizes a control POST.
 
         With SMDC_DASHBOARD_TOKEN set, a matching bearer token is required. Without a token,
-        control is limited to requests that originate on this machine: the TCP peer must be
-        loopback and any browser ``Origin`` must itself be a loopback origin, so neither a
-        LAN host nor a web page from another site can actuate hardware.
+        control is limited to a genuine local client, by the same rule the data GETs use
+        (``_is_local_request``): the TCP peer must be loopback and the request must not have
+        been relayed by a proxy (no ``X-Forwarded-For`` / ``Forwarded`` / ``X-Real-IP`` ...).
+        Any browser ``Origin`` must itself be a loopback origin. So neither a LAN host, nor a
+        remote client behind a same-host reverse proxy, nor a web page from another site can
+        issue a control request; this holds on every bind address.
         """
         expected_token = os.environ.get("SMDC_DASHBOARD_TOKEN", "").strip()
         if expected_token:
             return self._bearer_token_matches(expected_token)
 
-        client = getattr(self, "client_address", None)
-        peer_host = str(client[0]) if client else ""
-        if not _is_loopback_host(peer_host):
+        if not self._is_local_request():
             return False
         origin = str(self.headers.get("Origin", "") or "")
         if origin and not _is_loopback_host(urlsplit(origin).hostname or ""):
             return False
         return True
 
-    def _send_json(self, status: int, body: dict[str, Any]) -> None:
-        payload = json.dumps(body).encode("utf-8")
+    def _send_json(self, status: int, body: Any) -> None:
+        """Sends ``body`` as strict JSON (no NaN / Infinity tokens; unknown numbers are null)."""
+        payload = dumps_strict(body).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self._send_cors_headers()
@@ -1056,24 +1189,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 return
             self._send_json(200, status_payload)
         elif path == "/api/metaverse/status":
-            orch = get_metaverse_orchestrator()
-            payload = json.dumps(orch.get_latest_status()).encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self._send_cors_headers()
-            self.send_header("Content-Length", str(len(payload)))
-            self.end_headers()
-            self.wfile.write(payload)
+            self._send_json(200, get_metaverse_orchestrator().get_latest_status())
         elif path == "/api/metaverse/slices":
             # The orchestrator's own slicing simulator: the same figures as "metaverse.slices"
             # in /api/status (a fresh manager would always report zero traffic).
-            payload = json.dumps(get_metaverse_orchestrator().slicing.get_summary()).encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self._send_cors_headers()
-            self.send_header("Content-Length", str(len(payload)))
-            self.end_headers()
-            self.wfile.write(payload)
+            self._send_json(200, get_metaverse_orchestrator().slicing.get_summary())
         elif path == "/api/telemetry/stream":
             # Server-Sent Events (SSE) Live Telemetry Stream
             self.send_response(200)
@@ -1089,11 +1209,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
             try:
                 while self.sse_max_events is None or sent < self.sse_max_events:
                     try:
-                        frame = f"data: {json.dumps(get_cached_system_status_payload())}\n\n"
+                        frame = f"data: {dumps_strict(get_cached_system_status_payload())}\n\n"
                     except (BrokenPipeError, ConnectionError):
                         raise
                     except Exception as e:
-                        frame = f"event: unavailable\ndata: {json.dumps({'error': str(e)})}\n\n"
+                        frame = f"event: unavailable\ndata: {dumps_strict({'error': str(e)})}\n\n"
                     self.wfile.write(frame.encode())
                     self.wfile.flush()
                     sent += 1
@@ -1121,7 +1241,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
             else:
                 self._send_json(
                     403,
-                    {"success": False, "error": "Remote control requires SMDC_DASHBOARD_TOKEN to be configured"},
+                    {
+                        "success": False,
+                        "error": "Remote control requires SMDC_DASHBOARD_TOKEN to be configured "
+                        "(without it only a local, non-proxied client may issue control requests)",
+                    },
                 )
             return
 
@@ -1153,6 +1277,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._route_post(req_data)
         except ValueError as e:
             self._send_bad_request(str(e))
+        except ActuationRefused as e:
+            # Nothing moved and the shadow was left as it was.
+            self._send_json(e.status, {"success": False, "actuated": False, "state_changed": False, "error": str(e)})
         finally:
             # A control action may have changed what /api/status reports.
             invalidate_status_cache()
@@ -1161,7 +1288,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         """Dispatches an authorized control POST; raises ValueError on invalid fields."""
         path = urlsplit(self.path).path
         if path == "/api/control/rack-door":
-            # Toggle or explicitly set rack door state
+            # Toggle or explicitly set the rack door state (see the actuator hook above).
             from sovereign_dc.events import Event
 
             with _HARDWARE_LOCK:
@@ -1169,62 +1296,46 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     target_state = _as_bool(req_data["open"], "open")
                 else:
                     target_state = not _HARDWARE_STATE["door_open"]
+                # Raises ActuationRefused (501/502) before anything is changed.
+                actuated = _actuate(ACTUATOR_RACK_DOOR, {"open": target_state})
                 _HARDWARE_STATE["door_open"] = target_state
                 door_open_val = _HARDWARE_STATE["door_open"]
 
+            provenance = _actuation_fields(actuated)
             get_event_bus().publish(
                 Event(
                     event_type="hardware.door.changed",
                     source="dashboard",
-                    payload={"open": door_open_val},
+                    payload={"open": door_open_val, **provenance},
                 )
             )
-
-            res = {"success": True, "door_open": door_open_val}
-            payload = json.dumps(res).encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self._send_cors_headers()
-            self.send_header("Content-Length", str(len(payload)))
-            self.end_headers()
-            self.wfile.write(payload)
+            self._send_json(200, {"success": True, "door_open": door_open_val, **provenance})
 
         elif path == "/api/control/pdu-outlet":
             from sovereign_dc.events import Event
 
             outlet_idx = _as_int(req_data.get("outlet", 0), "outlet")
             requested_state = _as_bool(req_data["state"], "state") if "state" in req_data else None
-            outlet_changed = False
-            outlet_state = False
             with _HARDWARE_LOCK:
-                if 0 <= outlet_idx < len(_HARDWARE_STATE["pdu_outlets"]):
-                    current = _HARDWARE_STATE["pdu_outlets"][outlet_idx]
-                    _HARDWARE_STATE["pdu_outlets"][outlet_idx] = (
-                        (not current) if requested_state is None else requested_state
-                    )
-                    outlet_state = _HARDWARE_STATE["pdu_outlets"][outlet_idx]
-                    outlet_changed = True
+                outlet_count = len(_HARDWARE_STATE["pdu_outlets"])
+                if not 0 <= outlet_idx < outlet_count:
+                    raise ValueError(f"'outlet' must be between 0 and {outlet_count - 1}")
+                current = _HARDWARE_STATE["pdu_outlets"][outlet_idx]
+                outlet_state = (not current) if requested_state is None else requested_state
+                # Raises ActuationRefused (501/502) before anything is changed.
+                actuated = _actuate(ACTUATOR_PDU_OUTLET, {"outlet": outlet_idx, "state": outlet_state})
+                _HARDWARE_STATE["pdu_outlets"][outlet_idx] = outlet_state
                 outlets_snapshot = list(_HARDWARE_STATE["pdu_outlets"])
 
-            if outlet_changed:
-                get_event_bus().publish(
-                    Event(
-                        event_type="hardware.pdu.outlet_changed",
-                        source="dashboard",
-                        payload={"outlet": outlet_idx, "state": outlet_state},
-                    )
+            provenance = _actuation_fields(actuated)
+            get_event_bus().publish(
+                Event(
+                    event_type="hardware.pdu.outlet_changed",
+                    source="dashboard",
+                    payload={"outlet": outlet_idx, "state": outlet_state, **provenance},
                 )
-
-            if not outlet_changed:
-                raise ValueError(f"'outlet' must be between 0 and {len(outlets_snapshot) - 1}")
-            res = {"success": True, "pdu_outlets": outlets_snapshot}
-            payload = json.dumps(res).encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self._send_cors_headers()
-            self.send_header("Content-Length", str(len(payload)))
-            self.end_headers()
-            self.wfile.write(payload)
+            )
+            self._send_json(200, {"success": True, "pdu_outlets": outlets_snapshot, **provenance})
 
         elif path == "/api/control/dtn-transmit":
             # Spool an RFC 9171 bundle (see the DTN submission contract above)
@@ -1252,13 +1363,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 **describe_dtn_bundle(bundle, ttl_capped=submission.ttl_capped),
                 "queued_bundles": router.get_queue_stats().get("queued_bundle_count", 1),
             }
-            payload = json.dumps(res).encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self._send_cors_headers()
-            self.send_header("Content-Length", str(len(payload)))
-            self.end_headers()
-            self.wfile.write(payload)
+            self._send_json(200, res)
 
         elif path == "/api/enterprise/telemetry":
             # Out-of-process enterprise workloads (SMDCClient.emit_telemetry) report metrics here.
@@ -1291,13 +1396,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 "uav_position": orch.uav_position,
                 "latest_trace": traces[-1].to_dict() if traces else None,
             }
-            payload = json.dumps(res).encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self._send_cors_headers()
-            self.send_header("Content-Length", str(len(payload)))
-            self.end_headers()
-            self.wfile.write(payload)
+            self._send_json(200, res)
 
         elif path == "/api/metaverse/emergency-stop":
             # Idempotent: a repeated or concurrent press must never restart the UAV.
@@ -1314,13 +1413,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 "success": True,
                 "emergency_stopped": orch.is_emergency_stopped,
             }
-            payload = json.dumps(res).encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self._send_cors_headers()
-            self.send_header("Content-Length", str(len(payload)))
-            self.end_headers()
-            self.wfile.write(payload)
+            self._send_json(200, res)
 
         else:
             self.send_response(404)
@@ -1334,9 +1427,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
 def run_dashboard_server(port: int = 8080, open_browser: bool = False, host: str | None = None) -> None:
     """Launches the Sovereign Web Operations Dashboard HTTP server.
 
-    Binds to loopback unless ``host`` (or SMDC_DASHBOARD_HOST) says otherwise. When exposed
-    beyond loopback, control POSTs are refused unless SMDC_DASHBOARD_TOKEN is configured;
-    with the token set, remote clients need it for the JSON and SSE data endpoints too.
+    Binds to loopback unless ``host`` (or SMDC_DASHBOARD_HOST) says otherwise. Without
+    SMDC_DASHBOARD_TOKEN, control POSTs are accepted only from a local, non-proxied client
+    (loopback TCP peer, no forwarding headers), on any bind address: every other client,
+    including one relayed by a same-host reverse proxy, is refused. With the token set, every
+    control POST needs it, and so do remote clients of the JSON and SSE data endpoints.
     Cross-origin browser access is limited to loopback origins and SMDC_CORS_ORIGIN.
     """
     bind_host = host or os.environ.get("SMDC_DASHBOARD_HOST", "").strip() or "127.0.0.1"

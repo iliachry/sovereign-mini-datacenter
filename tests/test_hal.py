@@ -90,7 +90,10 @@ class TestPowerReading:
         r = PowerReading(battery_soc=85.0, solar_watts=1200.0)
         assert r.battery_soc == 85.0
         assert r.solar_watts == 1200.0
-        assert r.battery_voltage == 52.8
+        # Unreported quantities are unknown (None), never a nominal constant.
+        assert r.battery_voltage is None
+        assert r.system_load_watts is None
+        assert r.net_power is None
 
     def test_net_power_positive(self):
         r = PowerReading(battery_soc=85.0, solar_watts=1200.0, system_load_watts=300.0)

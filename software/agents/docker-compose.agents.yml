@@ -43,6 +43,9 @@ services:
       # DOCS_INCLUDE_GLOB= (empty) in .env to index everything under it.
       - DOCS_INCLUDE_GLOB=${DOCS_INCLUDE_GLOB-*/files/**}
       - DOCS_MAX_FILE_BYTES=${DOCS_MAX_FILE_BYTES:-5242880}
+      # Passed through only when set in .env (no value here): unset keeps the
+      # indexer's built-in exclude list.
+      - DOCS_EXCLUDE_DIRS
     networks:
       - sovereign_net
     command: ["python3", "knowledge_indexer.py"]
@@ -76,6 +79,9 @@ services:
       - SOVEREIGN_MODE_FILE=/run/sovereign/mode
       - PROMETHEUS_URL=http://prometheus:9090
       - POWER_EXPORTER_URL=http://power-exporter:9101/metrics
+      # Seconds between polls of the power exporter (a change in battery state is
+      # noticed up to this long after it happens). Minimum 1.
+      - SENTINEL_POLL_INTERVAL_SECONDS=${SENTINEL_POLL_INTERVAL_SECONDS:-30}
     networks:
       - sovereign_net
     command: ["python3", "sentinel_copilot.py"]

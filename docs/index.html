@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Sovereign Mini Datacenter — 3D Infrastructure Digital Twin & NOC Console</title>
-  <meta name="description" content="Open-source, self-powered, solar-backed micro-datacenter stack with air-cooled AI nodes, a liquid-cooled host, on-premise AI, space DTN satellite routing, and post-quantum zero-trust mesh.">
+  <meta name="description" content="Open-source, self-powered, solar-backed micro-datacenter stack with air-cooled AI nodes, a liquid-cooled host, on-premise AI, space DTN satellite routing, and a WireGuard mesh VPN with post-quantum package signatures.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,300;0,400;0,600;0,700;1,400&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -139,7 +139,7 @@
   <aside class="overlay inspector-panel glass-panel interactive">
     <div class="panel-header">
       <span>Hardware Inspector</span>
-      <span class="badge" style="color:var(--accent-emerald);">LIVE</span>
+      <span class="badge" style="color:var(--accent-emerald);">SPECS</span>
     </div>
 
     <div class="inspector-card" id="inspector-card">
@@ -270,6 +270,7 @@
             <div class="cost-bar-smdc" id="roi-bar-smdc" style="width: 29%;">SMDC</div>
             <div class="cost-bar-cloud" id="roi-bar-cloud" style="width: 71%;">CLOUD + GRID</div>
           </div>
+          <div id="roi-res-verdict" style="font-family:var(--font-mono); font-size:11px; color:var(--accent-emerald);">✓ The SMDC costs $55,613 less than cloud + grid energy over 3 yr</div>
           <div id="roi-res-energy" style="font-family:var(--font-mono); font-size:11px; color:var(--text-muted);">Includes $4,277 of grid energy displaced by solar over 3 yr (11.2 kWh/day per node at $0.35/kWh)</div>
         </div>
       </div>
@@ -285,12 +286,12 @@
     <div class="terminal-card">
       <div class="modal-header">
         <div class="modal-title">
-          <span>💻 Sovereign CLI Terminal (smdc v1.4.0)</span>
+          <span>💻 smdc CLI Demo Terminal (simulated)</span>
         </div>
         <button class="close-btn modal-close">✕</button>
       </div>
-      <div class="term-screen" id="term-output">Sovereign Mini Datacenter Interactive Terminal.
-Type '<span class="term-line-cyan">help</span>', '<span class="term-line-cyan">smdc status</span>', '<span class="term-line-cyan">smdc economy wallet</span>', '<span class="term-line-cyan">smdc economy market</span>', '<span class="term-line-cyan">smdc space passes</span>', or '<span class="term-line-cyan">smdc audit</span>'.
+      <div class="term-screen" id="term-output">Sovereign Mini Datacenter demo terminal (simulated; not connected to a node).
+Output is canned sample data. Type '<span class="term-line-cyan">help</span>', '<span class="term-line-cyan">smdc status</span>', '<span class="term-line-cyan">smdc economy wallet</span>', '<span class="term-line-cyan">smdc economy market</span>', '<span class="term-line-cyan">smdc space passes</span>', or '<span class="term-line-cyan">smdc audit</span>'.
 </div>
       <div class="term-input-row">
         <span class="term-prompt">smdc$</span>

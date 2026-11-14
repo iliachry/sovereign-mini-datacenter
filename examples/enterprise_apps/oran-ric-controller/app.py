@@ -1,7 +1,8 @@
-"""O-RAN Near-RT RAN Intelligent Controller (RIC) xApp for Sovereign Mini Datacenter.
+"""Simulated reference skeleton shaped like an O-RAN Near-RT RIC xApp for Sovereign Mini Datacenter.
 
-Manages 5G network slicing QoS (URLLC, eMBB, mMTC), enforces DePIN SLA constraints,
-and interfaces directly with the SMDC event bus and hardware telemetry stream.
+Drives the in-process 5G slicing simulator (URLLC, eMBB, mMTC) and publishes its figures
+through the SMDC SDK. It implements no O-RAN interface (E2/A1/O1), controls no radio and
+evaluates no DePIN SLA: the validator is only instantiated to report its validator count.
 """
 
 from __future__ import annotations
@@ -18,14 +19,14 @@ logger = logging.getLogger("oran-ric-controller")
 
 
 def main() -> None:
-    logger.info("Initializing O-RAN Near-RT RIC 5G Slicing Controller (xApp)...")
+    logger.info("Initializing O-RAN Near-RT RIC 5G Slicing Controller skeleton (simulated: no radio is controlled)...")
     client = SMDCClient()
     lifecycle = AppLifecycleHandler("oran-ric-controller", client=client)
 
     slicing_mgr = NetworkSlicingManager()
     sla_validator = DePINSLAValidator()
 
-    logger.info("RIC Slices Active: URLLC (10 Mbps, <1ms), eMBB (127 Mbps, 15ms), mMTC (5 Mbps, 12k devs)")
+    logger.info("Simulated slices: URLLC (10 Mbps, <1ms), eMBB (127 Mbps, 15ms), mMTC (5 Mbps, 12k devs)")
 
     iteration = 0
     while lifecycle.is_running:
@@ -46,6 +47,7 @@ def main() -> None:
         client.emit_telemetry(
             "oran-ric-controller",
             {
+                "simulated": True,
                 "urllc_latency_ms": pkt_urllc.latency_ms,
                 "embb_active_conns": slicing_mgr.slices[SliceType.EMBB].current_active_connections,
                 "mmtc_devices_online": slicing_mgr.slices[SliceType.MMTC].current_active_connections,
@@ -57,7 +59,7 @@ def main() -> None:
 
         if iteration % 3 == 0:
             logger.info(
-                "O-RAN Slices Active | URLLC Latency: %.2f ms | eMBB Conns: %d | mMTC Sensors: %d | Battery: %.1f%%",
+                "Simulated slices | URLLC Latency: %.2f ms | eMBB Conns: %d | mMTC Sensors: %d | Battery: %.1f%%",
                 pkt_urllc.latency_ms,
                 slicing_mgr.slices[SliceType.EMBB].current_active_connections,
                 slicing_mgr.slices[SliceType.MMTC].current_active_connections,
@@ -66,7 +68,7 @@ def main() -> None:
 
         time.sleep(3.0)
 
-    logger.info("O-RAN Near-RT RIC Controller shut down cleanly.")
+    logger.info("O-RAN Near-RT RIC Controller skeleton shut down cleanly.")
 
 
 if __name__ == "__main__":

@@ -1,8 +1,9 @@
 """Post-Quantum Cryptography (PQC) Security Engine.
 
 Implements NIST FIPS 204 (ML-DSA / Dilithium) and FIPS 203 (ML-KEM / Kyber)
-cryptographic operations for RFC 9171 / RFC 9172 (BPSec) DTN bundle
-signing, mesh consensus authentication, and zero-trust key encapsulation.
+cryptographic operations: ML-DSA signatures (used for node wallets and
+application packages) and ML-KEM key encapsulation (library and self-test only;
+no transport in this package is keyed with it).
 
 Backed by pure-Python lattice implementations (`dilithium-py` for FIPS 204 ML-DSA
 and `kyber-py` for FIPS 203 ML-KEM) over Module-LWE / Module-SIS polynomial rings.

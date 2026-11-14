@@ -29,7 +29,11 @@ services:
       - "--log.level=INFO"
       - "--accesslog=true"
       # File access log on a shared volume, read by the CrowdSec overlay.
-      # Traefik does not rotate this file.
+      # Traefik does not rotate this file and has no option to (only its own log has
+      # log.maxSize). Its documented method is an external logrotate plus USR1, on
+      # which Traefik reopens the file: install the host rule
+      # security/traefik-access-log.logrotate, or the volume grows until the disk is
+      # full. No access-log filter is set, so CrowdSec sees every request.
       - "--accesslog.filepath=/var/log/traefik/access.log"
       # Prometheus metrics on an internal-only entrypoint (not published).
       - "--metrics.prometheus=true"
@@ -149,6 +153,10 @@ services:
         gitlab_rails['smtp_tls'] = false
         gitlab_rails['smtp_starttls_auto'] = true
         gitlab_rails['gitlab_email_from'] = "${SMTP_FROM:-gitlab@sovereign.local}"
+        # backup/backup.sh runs `gitlab-backup create` (archives in /var/opt/gitlab/backups)
+        # and restic keeps the history; local archives older than 2 days are pruned
+        # by the next gitlab-backup run.
+        gitlab_rails['backup_keep_time'] = 172800
     volumes:
       - gitlab_config:/etc/gitlab
       - gitlab_logs:/var/log/gitlab

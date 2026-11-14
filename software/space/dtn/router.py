@@ -22,7 +22,7 @@ logger = logging.getLogger("dtn.router")
 
 SPOOL_FILENAME = "dtn_spool.db"
 # Shared temp directory in which older releases kept the spool by default.
-LEGACY_TMP_DIR = "/tmp"
+LEGACY_TMP_DIR = "/tmp"  # noqa: S108 - only read (after an ownership/mode check) to find a legacy spool; never a default
 _SQLITE_SIDECARS = ("-wal", "-shm", "-journal")
 _fallback_state_dir: str | None = None
 
@@ -89,6 +89,35 @@ def default_spool_path() -> str:
     return path
 
 
+def _secure_db_file(db_path: str) -> None:
+    """Makes the SQLite file at ``db_path`` (and its side files) private to the owner (0600).
+
+    A missing database is created empty with mode 0600 before SQLite opens it; SQLite gives
+    the ``-wal``/``-shm``/``-journal`` files it creates later the mode of the main file. An
+    existing database or side file that is a regular file owned by the current user and
+    accessible to group or others is chmod-ed to 0600. Files owned by someone else and
+    symlinks are left alone. Errors are logged, never raised: the caller's open decides.
+    """
+    try:
+        fd = os.open(db_path, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        os.close(fd)
+    except OSError as err:
+        logger.debug("Could not pre-create %s with mode 0600: %s", db_path, err)
+    getuid = getattr(os, "getuid", None)
+    for path in (db_path, *(db_path + suffix for suffix in _SQLITE_SIDECARS)):
+        try:
+            st = os.lstat(path)
+        except OSError:
+            continue
+        if not stat.S_ISREG(st.st_mode) or (getuid is not None and st.st_uid != getuid()):
+            continue
+        if stat.S_IMODE(st.st_mode) & 0o077:
+            try:
+                os.chmod(path, 0o600)
+            except OSError as err:
+                logger.warning("Could not restrict %s to mode 0600: %s", path, err)
+
+
 class DTNRouter:
     """Persistent store-and-forward bundle spool.
 
@@ -107,6 +136,9 @@ class DTNRouter:
         self._memory_conn: sqlite3.Connection | None = None
         if self.db_path == ":memory:":
             self._memory_conn = sqlite3.connect(":memory:", check_same_thread=False)
+        else:
+            os.makedirs(os.path.dirname(os.path.abspath(self.db_path)), exist_ok=True)
+            _secure_db_file(self.db_path)
         self._init_db()
 
     def close(self) -> None:

@@ -29,6 +29,7 @@ services:
       - /var/log:/var/log:ro
       # Written by Traefik in the core stack (--accesslog.filepath). Mounted outside
       # /var/log: a volume cannot be nested under that read-only bind mount.
+      # Rotation is a host job: see security/traefik-access-log.logrotate.
       - traefik_logs:/traefik-logs:ro
       - crowdsec_data:/var/lib/crowdsec/data
       - crowdsec_config:/etc/crowdsec

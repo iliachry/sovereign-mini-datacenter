@@ -1,7 +1,8 @@
 """Industrial IoT Edge Gateway for Sovereign Mini Datacenter (SMDC).
 
-Demonstrates low-overhead sensor telemetry polling, L0 critical priority execution,
-and integration with the SMDC SDK.
+Simulated reference skeleton: publishes random "sensor" values (no LoRa, Modbus or MQTT
+device is read) together with the node's battery and solar telemetry, as an L0 critical
+workload integrated with the SMDC SDK.
 """
 
 from __future__ import annotations
@@ -17,11 +18,11 @@ logger = logging.getLogger("iot-edge-gateway")
 
 
 def main() -> None:
-    logger.info("Initializing Industrial IoT Edge Gateway...")
+    logger.info("Initializing Industrial IoT Edge Gateway skeleton (simulated sensors)...")
     client = SMDCClient()
     lifecycle = AppLifecycleHandler("iot-edge-gateway", client=client)
 
-    logger.info("Connected to SMDC node telemetry bus.")
+    logger.info("SMDC client ready (node telemetry is read through the SDK).")
 
     iteration = 0
     while lifecycle.is_running:
@@ -34,6 +35,7 @@ def main() -> None:
 
         # Ingest simulated industrial sensors (temperature, vibration, pressure)
         sensor_data = {
+            "simulated": True,
             "vibration_rms": round(random.uniform(0.1, 0.45), 3),
             "bearing_temp_c": round(random.uniform(42.0, 58.5), 1),
             "line_pressure_bar": round(random.uniform(5.8, 6.2), 2),
@@ -45,7 +47,7 @@ def main() -> None:
         # Publish to SMDC enterprise event stream
         client.emit_telemetry("iot-edge-gateway", sensor_data)
         logger.info(
-            "Iter #%d | Temp: %.1f°C | Vibration: %.3f RMS | Solar: %.1fW | Battery: %.1f%%",
+            "Iter #%d (simulated sensors) | Temp: %.1f°C | Vibration: %.3f RMS | Solar: %.1fW | Battery: %.1f%%",
             iteration,
             sensor_data["bearing_temp_c"],
             sensor_data["vibration_rms"],

@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from sovereign_dc.mesh import mesh_sync
-from sovereign_dc.mesh.mesh_sync import MeshNode, check_peer_health, load_peers, sync_state_with_peer
+from sovereign_dc.mesh.mesh_sync import MeshNode, check_peer_health, load_peers, log_peer_reachable
 
 
 def test_mesh_node_init():
@@ -47,11 +47,13 @@ def test_check_peer_health_offline():
         assert check_peer_health(node) is False
 
 
-def test_sync_state_with_peer(caplog):
+def test_log_peer_reachable_claims_no_synchronisation(caplog):
     caplog.set_level(logging.INFO)
     node = MeshNode("smdc-node-02", "100.64.0.2", "dtn://remote.space", "Edge")
-    sync_state_with_peer(node)
-    assert "Syncing state with mesh peer 'smdc-node-02'" in caplog.text
+    log_peer_reachable(node)
+    assert "Mesh peer 'smdc-node-02' (100.64.0.2) is reachable." in caplog.text
+    assert all("sync" not in record.getMessage().lower() for record in caplog.records)
+    assert not hasattr(mesh_sync, "sync_state_with_peer")
 
 
 def test_run_mesh_daemon_loop(caplog):
@@ -63,4 +65,5 @@ def test_run_mesh_daemon_loop(caplog):
             with patch("time.sleep", side_effect=StopIteration("End test")):
                 with pytest.raises(StopIteration):
                     mesh_sync.run_mesh_daemon()
-    assert "Starting Sovereign Mesh Daemon" in caplog.text
+    assert "Starting mesh peer reachability monitor" in caplog.text
+    assert "DTN" not in caplog.text

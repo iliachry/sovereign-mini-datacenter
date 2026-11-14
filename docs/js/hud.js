@@ -338,6 +338,11 @@ function updateConnectionBadge(connected) {
   }
 }
 
+/** A finite number, or null for anything else (the node sends null for "not measured"). */
+function finiteOrNull(value) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
 /** 'simulated' if any section says so, 'measured' only if every present section says it is not. */
 function payloadProvenance(data) {
   const flags = [data.power, data.thermal].filter(Boolean).map((section) => section.is_simulated);
@@ -356,18 +361,19 @@ function applyLiveTelemetry(data) {
 
   // 1. Update HUD Ribbon Values
   if (data.power) {
-    const solarWatts = data.power.solar_watts;
-    const soc = data.power.battery_soc;
-    const volt = data.power.battery_voltage;
+    // The node sends null for a quantity it has no measurement of: show "--", never a number.
+    const solarWatts = finiteOrNull(data.power.solar_watts);
+    const soc = finiteOrNull(data.power.battery_soc);
+    const volt = finiteOrNull(data.power.battery_voltage);
 
     const hudSolar = document.getElementById('hud-solar');
-    if (hudSolar) hudSolar.textContent = `${Math.round(solarWatts).toLocaleString('en-US')} W`;
+    if (hudSolar) hudSolar.textContent = solarWatts === null ? '-- W' : `${Math.round(solarWatts).toLocaleString('en-US')} W`;
 
     const hudBat = document.getElementById('hud-battery');
-    if (hudBat) hudBat.textContent = `${soc.toFixed(1)}% (${volt.toFixed(1)}V)`;
+    if (hudBat) hudBat.textContent = `${soc === null ? '--' : soc.toFixed(1)}% (${volt === null ? '--' : volt.toFixed(1)}V)`;
 
     // Map solar wattage to 3D sun elevation
-    if (solarWatts > 0) {
+    if (solarWatts !== null && solarWatts > 0) {
       const estSunDeg = Math.min(90, Math.max(10, Math.round((solarWatts / 3280) * 80 + 10)));
       setSunElevation(estSunDeg);
       const slider = document.getElementById('slider-sun');
@@ -378,14 +384,16 @@ function applyLiveTelemetry(data) {
   }
 
   if (data.thermal) {
-    const coolant = data.thermal.coolant_celsius;
+    const coolant = finiteOrNull(data.thermal.coolant_celsius);
     const hudCoolant = document.getElementById('hud-coolant');
-    if (hudCoolant) hudCoolant.textContent = `${coolant.toFixed(1)}°C`;
+    if (hudCoolant) hudCoolant.textContent = coolant === null ? '--°C' : `${coolant.toFixed(1)}°C`;
 
     // Dynamic Coolant Tube Luminescence Color Shift (Cyan -> Amber -> Red Over-temp)
     const coolantMat = getMaterial('coolantTube');
     if (coolantMat) {
-      if (coolant > 55.0) {
+      if (coolant === null) {
+        coolantMat.emissive.setHex(0x0284c7); // No reading: neutral colour, no over-temp claim
+      } else if (coolant > 55.0) {
         coolantMat.emissive.setHex(0xf43f5e); // Red Over-temp
       } else if (coolant > 48.0) {
         coolantMat.emissive.setHex(0xf59e0b); // Amber Warning
@@ -398,6 +406,8 @@ function applyLiveTelemetry(data) {
   updateSpaceLinkPill(data.space);
 
   if (data.hardware) {
+    // fan_rpm is the node's estimate from coolant temperature and load (fan_rpm_estimated),
+    // not a tachometer reading; it only drives the fan animation speed.
     currentFanRpm = data.hardware.fan_rpm || 2400;
 
     // Synchronize the 3D door mesh and the button with live hardware state
@@ -448,6 +458,20 @@ function updateSimulatedTelemetry() {
 }
 
 // --- Hardware Remote Control REST Endpoints ---
+/**
+ * Toast for an accepted rack-door control. Only `actuated: true` (a registered actuator
+ * backend drove the hardware) is reported as a solenoid action; otherwise the node changed
+ * its digital shadow only and nothing physical moved.
+ */
+function doorToast(json) {
+  if (json.actuated === true) {
+    return json.door_open ? '🚪 Rack Door Solenoid Unlocked (actuated)' : '🔒 Rack Door Solenoid Locked (actuated)';
+  }
+  return json.door_open
+    ? '🚪 Rack door shadow state: OPEN (digital shadow only — no actuator, nothing moved)'
+    : '🔒 Rack door shadow state: CLOSED (digital shadow only — no actuator, nothing moved)';
+}
+
 export async function triggerRemoteDoorToggle() {
   // 1. Play local 3D animation immediately
   const openState = toggleDoor();
@@ -460,10 +484,21 @@ export async function triggerRemoteDoorToggle() {
       const res = await postControl('/api/control/rack-door', { open: openState });
       if (res.ok) {
         const json = await res.json();
-        showToast(json.door_open ? '🚪 Rack Door Solenoid Unlocked' : '🔒 Rack Door Solenoid Locked');
+        showToast(doorToast(json));
         return;
       }
+      // The node did not change anything: undo the local animation so the twin shows the truth.
+      const reverted = toggleDoor();
+      document.getElementById('btn-door')?.classList.toggle('active', reverted);
       if (controlDenied(res)) return;
+      if (res.status === 501 || res.status === 502) {
+        showToast(res.status === 501
+          ? '⛔ Node refused: no rack-door actuator is installed — nothing moved'
+          : '⛔ Rack-door actuator failed — nothing moved');
+        return;
+      }
+      showToast(`⛔ Rack door control failed (HTTP ${res.status}) — nothing changed`);
+      return;
     } catch (e) {
       console.warn('Failed to dispatch rack door control', e);
     }

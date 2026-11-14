@@ -35,18 +35,20 @@
 [LiFePO4 Pack 1 (5.12kWh)] ──► [Class T Fuse 125A] ──(35mm² Red)──► [Lynx position 1, MEGA 125A/58V] ─┐
 [LiFePO4 Pack 2 (5.12kWh)] ──► [Class T Fuse 125A] ──(35mm² Red)──► [Lynx position 2, MEGA 125A/58V] ─┤ Lynx DC Busbar +
 [Victron MultiPlus-II DC +] ◄──────────────────────(35mm² Red)──── [Lynx position 3, MEGA 125A/58V] ─┤
-[Victron MPPT 250/70 Batt +] ◄─────────────────────(35mm² Red)──── [Lynx position 4, MEGA 125A/58V] ─┘
+[Victron MPPT 250/70 Batt +] ◄─────────────────────(35mm² Red)──── [Lynx position 4, MEGA 100A/80V] ─┘
 [LiFePO4 Packs 1 & 2 (-)]  ──(35mm² Blk)──► [Victron SmartShunt] ──► [Lynx DC Busbar -]
 ```
 
 1. **Battery Rack Mounting:** Slide LiFePO4 Battery Pack 2 into **U1–U2** and Pack 1 into **U3–U4**. Secure faceplates with M6 cage nuts.
 2. **Lug Crimping:** Crimp 35mm² (2 AWG) fine-stranded copper cables with tin-plated copper eyelet lugs. Insulate with adhesive heat shrink.
-3. **Torque Specification:**
-   * Battery terminal bolts (M8): **9.0 N·m**.
-   * Victron Lynx Distributor M8 studs: **9.5 N·m**.
-   * Inverter DC input clamps: **4.0 N·m**.
-4. **Fuse Installation:** Mount a Class T fuse holder with a 125A Class T fuse (DC rating ≥ 125V, interrupting rating ≥ 20kA) on each positive battery lead, at the pack. Fit a 125A MEGA fuse rated 58V DC in each of the four Lynx Distributor positions (pack 1, pack 2, MultiPlus-II, MPPT) and keep the fifth as a spare. The Lynx Distributor takes MEGA fuses only; do not fit the 32V type.
-5. **12V Auxiliary Rail:** Tap the Lynx positive busbar through the inline 10A fuse (≥ 80V DC) to the 48V-to-12V DC-DC converter with 2.5mm² wire, connect its input negative to the Lynx negative busbar, and wire its 12V output to the 12V fuse block that feeds the pump, the two fan splitters, the switch's DC jack and the 5V buck module of the ESP32 telemetry bridge.
+3. **Torque Specification** (manufacturer figures, checked on 2026-11-14; the manual supplied with each device takes precedence):
+   * Battery pack terminals: the value in the pack's datasheet (it differs between pack makes and stud sizes).
+   * Victron Lynx Distributor DC connections: **14 N·m** on M8 nuts (the M10 model of the Lynx uses 33 N·m on its M10 nuts); before fitting the fuses, check that the bottom nuts of the middle row are at 10 N·m ([Lynx Distributor manual, installation](https://www.victronenergy.com/media/pg/Lynx_Distributor/en/installation.html)).
+   * MultiPlus-II battery terminals (M8 nuts): **12 N·m** ([MultiPlus-II manual, installation](https://www.victronenergy.com/media/pg/MultiPlus-II_230V/en/installation.html)).
+   * SmartSolar MPPT 250/70-Tr battery and PV screw terminals: **2.4 N·m** ([SmartSolar MPPT manual, installation](https://www.victronenergy.com/media/pg/Manual_SmartSolar_MPPT_150-60_up_to_250-70/en/installation.html)).
+   * SmartShunt 500A bolts (M10): at most **21 N·m** ([SmartShunt manual, installation](https://www.victronenergy.com/media/pg/SmartShunt/en/installation.html)).
+4. **Fuse Installation:** Mount a Class T fuse holder with a 125A Class T fuse (DC rating ≥ 125V, interrupting rating ≥ 20kA) on each positive battery lead, at the pack. Fit a 125A MEGA fuse rated 58V DC in Lynx Distributor positions 1 to 3 (pack 1, pack 2, MultiPlus-II) and keep the fourth 125A fuse as a spare. Fit the **100A** MEGA fuse rated 80V DC in position 4 (MPPT): Victron's manual for the MPPT 250/70 prescribes a battery fuse of 80A minimum and 100A maximum, so a 125A fuse must not be used there ([SmartSolar MPPT manual, installation](https://www.victronenergy.com/media/pg/Manual_SmartSolar_MPPT_150-60_up_to_250-70/en/installation.html)). The Lynx Distributor takes MEGA fuses only; do not fit the 32V type. `WIRING_DIAGRAM.md` has the fuse table for all four positions.
+5. **12V Auxiliary Rail:** Tap the Lynx positive busbar through the inline 10A fuse (≥ 80V DC), mounted within about 150mm of the busbar, to the 48V-to-12V DC-DC converter with 2.5mm² wire, connect its input negative to the Lynx negative busbar, and wire its 12V output to the 12V fuse block that feeds the pump, the two fan splitters, the switch's DC jack and the 5V buck module of the ESP32 telemetry bridge.
 6. **AC Output:** Wire the MultiPlus-II AC output through the 2-pole 16A / 30mA Type A RCBO to the rack PDU inlet with 3 × 2.5mm² cable.
 7. **Battery Monitor:** Wire the Victron SmartShunt 500A/50mV into the common battery negative so that it is the only path between the pack negatives and the Lynx negative busbar, and connect its fused positive sense lead per the SmartShunt manual.
 
@@ -70,7 +72,7 @@
    * Two parallel strings need no string fuses provided the panel's maximum series fuse rating is above one panel Isc; check the panel datasheet.
    * Measure each string's open-circuit voltage and polarity with the multimeter before closing the isolator. The strings are live whenever the panels are lit: cover the panels or work with the MC4 connectors open, and never unplug a connector under load.
    * In VictronConnect set the battery voltage to 48V, the LiFePO4 charge voltages from the battery pack datasheet, and a maximum charge current no higher than the two packs' combined charge limit (the array can deliver about 64A). The MultiPlus-II charger can add up to 35A from grid or generator, about 99A in total into the 200Ah bank (about 0.5C): if the pack datasheet allows less, also lower the MultiPlus-II charge current limit in VEConfigure or VictronConnect so that the two limits together stay within the bank's limit.
-2. **Grounding:** Drive a 2.4m copper ground rod into soil and bond chassis and surge arrestors with 16mm² earth wire (< 10Ω ground resistance).
+2. **Grounding:** Drive a 2.4m copper ground rod into soil and bond the chassis, the PV module frames and the surge arrestor to it with 16mm² earth wire (< 10Ω ground resistance). Connect the MultiPlus-II chassis earth to the same earth bar. Do not earth the PV positive or negative conductor: Victron's manual for the MPPT states that they should not be grounded (see the earthing note in `WIRING_DIAGRAM.md`).
 3. **Phased-Array Mast:** Mount the motorized satellite tracking terminal atop the 9U chassis, ensuring an unobstructed $360^\circ$ azimuth sky view with $>10^\circ$ elevation clearance.
 
 ---

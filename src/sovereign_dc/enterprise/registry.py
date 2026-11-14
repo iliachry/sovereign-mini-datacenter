@@ -387,7 +387,6 @@ from sovereign_dc.enterprise.sdk import AppLifecycleHandler, SMDCClient
 APP_ID = {str(manifest.app_id)!r}
 APP_NAME = {str(manifest.name)!r}
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(APP_ID)
 
 
@@ -425,6 +424,7 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
     main()
 '''
 

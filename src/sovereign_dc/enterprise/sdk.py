@@ -10,15 +10,54 @@ import base64
 import hashlib
 import json
 import logging
+import math
 import os
 import signal
 import time
 from collections.abc import Callable
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, OpenerDirector, Request, build_opener
 
 logger = logging.getLogger("smdc.enterprise.sdk")
+
+
+class _NoRedirectHandler(HTTPRedirectHandler):
+    """Never follows an HTTP redirect.
+
+    urllib's default handler re-sends the request headers, including ``Authorization``, to
+    whatever ``Location`` names, on any host. The SDK's requests carry the node's operator
+    token, so a 3xx answer is surfaced as an ``HTTPError`` (with its ``Location`` header)
+    instead of being followed.
+    """
+
+    def redirect_request(self, req: Any, fp: Any, code: int, msg: str, headers: Any, newurl: str) -> None:
+        return None
+
+
+_OPENER: OpenerDirector = build_opener(_NoRedirectHandler())
+
+
+def urlopen(req: Request, timeout: float | None = None) -> Any:
+    """Opens ``req`` without following redirects (every SDK request goes through here)."""
+    return _OPENER.open(req, timeout=timeout)
+
+
+def _redirect_error(url: str, err: HTTPError) -> str:
+    """Error text for a 3xx answer that was not followed, naming where it pointed."""
+    location = err.headers.get("Location") if err.headers is not None else None
+    return (
+        f"HTTP {err.code} redirect from {url} to {location or '(no Location header)'} was not followed: "
+        "the SDK never forwards a request (or the operator token) to another location"
+    )
+
+
+def _finite_or_none(value: Any) -> float | None:
+    """``value`` as a finite float, or None for anything else (missing, null, text, NaN, bool)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    return number if math.isfinite(number) else None
 
 
 class SMDCClient:
@@ -35,11 +74,15 @@ class SMDCClient:
         ``token`` is the node's dashboard operator token; it defaults to the
         ``SMDC_DASHBOARD_TOKEN`` environment variable and is sent as
         ``Authorization: Bearer <token>``, which the node requires for control POSTs from
-        non-loopback clients. It is sent to ``base_url`` only and is never logged.
+        non-loopback clients. It is sent to ``base_url`` only and is never logged: HTTP
+        redirects are not followed (a 3xx answer is reported as an error naming its
+        ``Location``), so the token cannot be forwarded to another origin.
         """
         self.base_url = (base_url or os.getenv("SMDC_API_URL") or "http://127.0.0.1:8080").rstrip("/")
         self.timeout_sec = timeout_sec
         self._token = (token if token is not None else os.getenv("SMDC_DASHBOARD_TOKEN", "")).strip()
+        # Why the last GET/POST produced no data (e.g. an unfollowed redirect); None after a success.
+        self.last_http_error: str | None = None
 
     def _headers(self, extra: dict[str, str] | None = None) -> dict[str, str]:
         headers = {"User-Agent": "SMDC-Enterprise-SDK/1.0", "Accept": "application/json"}
@@ -50,8 +93,13 @@ class SMDCClient:
         return headers
 
     def _http_get(self, endpoint: str) -> dict[str, Any]:
-        """Perform internal HTTP GET request against SMDC REST API."""
+        """Perform internal HTTP GET request against SMDC REST API.
+
+        Returns the node's JSON object, or ``{}`` when nothing usable came back; the reason is
+        then in ``last_http_error``. A redirect is not followed.
+        """
         url = f"{self.base_url}{endpoint}"
+        self.last_http_error = None
         try:
             req = Request(url, headers=self._headers())
             with urlopen(req, timeout=self.timeout_sec) as response:
@@ -59,7 +107,16 @@ class SMDCClient:
                     res_data = json.loads(response.read().decode("utf-8"))
                     if isinstance(res_data, dict):
                         return res_data
+                self.last_http_error = f"GET {url} returned no JSON object (HTTP {response.status})"
+        except HTTPError as e:
+            if 300 <= e.code < 400:
+                self.last_http_error = _redirect_error(url, e)
+                logger.warning("%s", self.last_http_error)
+            else:
+                self.last_http_error = f"GET {url} failed: HTTP {e.code}"
+                logger.debug("%s", self.last_http_error)
         except (URLError, TimeoutError, Exception) as e:
+            self.last_http_error = f"GET {url} failed: {e}"
             logger.debug("Failed GET %s: %s (falling back to local default telemetry)", url, e)
         return {}
 
@@ -71,11 +128,15 @@ class SMDCClient:
         * the node accepted the request: its JSON object is returned;
         * the node answered with an HTTP error (4xx/5xx, e.g. 400 invalid, 401/403 not
           authorised): ``{"node_rejected": True, "http_status": <code>, "error": <message>}``.
-          The node made a decision, so callers must NOT fall back to an in-process path;
+          The node made a decision, so callers must NOT fall back to an in-process path.
+          A redirect (3xx) is reported the same way, with ``"redirect": True`` and
+          ``"redirect_location"``: it is never followed, so the request body and the operator
+          token are not re-sent anywhere;
         * the node could not be reached (connection refused, DNS, timeout, unusable reply):
           ``{}``, the only case in which callers may fall back.
         """
         url = f"{self.base_url}{endpoint}"
+        self.last_http_error = None
         try:
             data = json.dumps(payload).encode("utf-8")
             req = Request(url, data=data, headers=self._headers({"Content-Type": "application/json"}))
@@ -84,11 +145,24 @@ class SMDCClient:
                     res_data = json.loads(response.read().decode("utf-8"))
                     if isinstance(res_data, dict):
                         return res_data
+                self.last_http_error = f"POST {url} returned no JSON object (HTTP {response.status})"
         except HTTPError as e:
+            if 300 <= e.code < 400:
+                self.last_http_error = _redirect_error(url, e)
+                logger.warning("%s", self.last_http_error)
+                return {
+                    "node_rejected": True,
+                    "http_status": int(e.code),
+                    "error": self.last_http_error,
+                    "redirect": True,
+                    "redirect_location": e.headers.get("Location") if e.headers is not None else None,
+                }
             message = self._http_error_message(e)
+            self.last_http_error = f"POST {url} was rejected: HTTP {e.code} {message}"
             logger.warning("POST %s was rejected by the node: HTTP %s %s", url, e.code, message)
             return {"node_rejected": True, "http_status": int(e.code), "error": message}
         except (URLError, TimeoutError, Exception) as e:
+            self.last_http_error = f"POST {url} failed: {e}"
             logger.debug("Failed POST %s: %s", url, e)
         return {}
 
@@ -107,25 +181,24 @@ class SMDCClient:
     def _flatten_status_payload(data: dict[str, Any]) -> dict[str, Any] | None:
         """Maps the dashboard ``/api/status`` document onto the SDK's flat telemetry schema.
 
-        Returns None when the document carries no usable power section.
+        Returns None when the document carries no usable power section (no finite
+        ``battery_soc``). ``solar_watts``, ``coolant_temp_c`` and ``ambient_temp_c`` are None
+        when the node reports them as unknown (``null``) or not at all.
         """
         power = data.get("power")
         thermal = data.get("thermal")
         if not isinstance(power, dict):
             return None
-        try:
-            flat: dict[str, Any] = {
-                "solar_watts": float(power["solar_watts"]),
-                "battery_soc": float(power["battery_soc"]),
-            }
-        except (KeyError, TypeError, ValueError):
+        battery_soc = _finite_or_none(power.get("battery_soc"))
+        if battery_soc is None:
             return None
+        flat: dict[str, Any] = {
+            "solar_watts": _finite_or_none(power.get("solar_watts")),
+            "battery_soc": battery_soc,
+        }
         thermal = thermal if isinstance(thermal, dict) else {}
         for flat_key, nested_key in (("coolant_temp_c", "coolant_celsius"), ("ambient_temp_c", "rack_inlet_celsius")):
-            try:
-                flat[flat_key] = float(thermal[nested_key])
-            except (KeyError, TypeError, ValueError):
-                flat[flat_key] = None
+            flat[flat_key] = _finite_or_none(thermal.get(nested_key))
         flat["power_state"] = "LOAD_SHEDDING" if power.get("load_shedding_active") else "NOMINAL"
         flat["source"] = "api"
         return flat
@@ -136,7 +209,10 @@ class SMDCClient:
         The same keys are returned whichever path supplies the data:
         ``solar_watts``, ``battery_soc`` (percent), ``coolant_temp_c``, ``ambient_temp_c``
         (rack inlet air), ``power_state`` (``"NOMINAL"`` / ``"LOAD_SHEDDING"`` /
-        ``"UNKNOWN"``) and ``source``:
+        ``"UNKNOWN"``) and ``source``. ``solar_watts``, ``coolant_temp_c`` and
+        ``ambient_temp_c`` are ``None`` when the node has no measurement for them (a missing
+        value is never replaced by a nominal one); ``battery_soc`` is always a number.
+        ``source`` is:
 
         - ``"api"``: read from the node's ``/api/status`` endpoint (the endpoint's own nested
           sections such as ``power`` and ``thermal`` are kept alongside the flat keys);
@@ -166,10 +242,10 @@ class SMDCClient:
             power = read_power(exporter_url, simulation=simulation)
             thermal = read_thermal(exporter_url, simulation=simulation)
             return {
-                "solar_watts": float(power.solar_watts),
+                "solar_watts": power.solar_watts,
                 "battery_soc": float(power.battery_soc),
                 "coolant_temp_c": float(thermal.coolant_celsius),
-                "ambient_temp_c": float(thermal.rack_inlet_celsius),
+                "ambient_temp_c": thermal.rack_inlet_celsius,
                 "power_state": "LOAD_SHEDDING" if power.load_shedding_active else "NOMINAL",
                 "source": "hal",
                 "is_simulated": bool(power.is_simulated),

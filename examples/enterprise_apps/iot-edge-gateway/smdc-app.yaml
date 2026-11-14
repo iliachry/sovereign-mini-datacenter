@@ -2,7 +2,7 @@
 name: "Industrial IoT Edge Gateway"
 app_id: "iot-edge-gateway"
 version: "1.0.0"
-description: "Sub-GHz LoRa / Modbus / MQTT sensor aggregation and telemetry ingestion."
+description: "Simulated reference skeleton of an L0 IoT gateway: publishes random sensor values through the SDK; no LoRa, Modbus or MQTT device is read."
 author: "Enterprise IoT Team"
 category: "iot"
 runtime: "process"

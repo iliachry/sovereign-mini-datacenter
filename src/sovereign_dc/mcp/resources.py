@@ -6,7 +6,6 @@ space DTN bundle queues, and PQC security profiles as standardized MCP resources
 
 from __future__ import annotations
 
-import json
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -17,6 +16,7 @@ from sovereign_dc.hal.gpu import detect_gpus
 from sovereign_dc.hal.power import read_power
 from sovereign_dc.hal.storage import detect_storage
 from sovereign_dc.hal.thermal import read_thermal
+from sovereign_dc.jsonutil import dumps_strict
 
 
 @dataclass
@@ -49,6 +49,7 @@ def read_telemetry_resource() -> str:
             "battery_voltage_volts": power.battery_voltage,
             "solar_pv_watts": power.solar_watts,
             "system_load_watts": power.system_load_watts,
+            "net_power_watts": power.net_power,
             "load_shedding_active": power.load_shedding_active,
             "is_simulated": bool(power.is_simulated),
         },
@@ -67,7 +68,7 @@ def read_telemetry_resource() -> str:
         },
         "gpu_count": len(gpus),
     }
-    return json.dumps(data, indent=2)
+    return dumps_strict(data, indent=2)
 
 
 def read_manifest_resource() -> str:
@@ -91,7 +92,7 @@ def read_manifest_resource() -> str:
             "space_link": "RFC 9171 BPv7 Delay-Tolerant Network Terminal (S-Band / Ku-Band)",
         },
     }
-    return json.dumps(data, indent=2)
+    return dumps_strict(data, indent=2)
 
 
 def read_market_resource() -> str:
@@ -119,7 +120,7 @@ def read_market_resource() -> str:
         "catalog": catalog,
         "currency": "SOV",
     }
-    return json.dumps(data, indent=2)
+    return dumps_strict(data, indent=2)
 
 
 def read_dtn_spool_resource() -> str:
@@ -136,7 +137,7 @@ def read_dtn_spool_resource() -> str:
         "dtn_protocol": "RFC 9171 BPv7",
         "queue_stats": stats,
     }
-    return json.dumps(data, indent=2)
+    return dumps_strict(data, indent=2)
 
 
 _PQC_SELF_TEST_MESSAGE = b"SMDC_MCP_PQC_STATUS_SELF_TEST"
@@ -220,7 +221,7 @@ def read_pqc_status_resource() -> str:
         },
         "enforcement": "not assessed",
     }
-    return json.dumps(data, indent=2)
+    return dumps_strict(data, indent=2)
 
 
 # --- Registry ---
@@ -288,7 +289,7 @@ def get_mcp_resources() -> list[MCPResource]:
         MCPResource(
             uri="smdc://metaverse/5g/slices",
             name="5G Network Slices QoS & Isolation",
-            description="Real-time bandwidth allocations, target vs avg latencies, and reliability metrics for URLLC/eMBB/mMTC.",
+            description="Simulated bandwidth allocations, target vs avg latencies, and reliability figures for URLLC/eMBB/mMTC.",
             mime_type="application/json",
             reader=read_metaverse_slices_resource,
         ),
@@ -301,7 +302,7 @@ def read_metaverse_uav_status_resource() -> str:
 
     orch = MetaverseOrchestrator()
     trace = orch.step(deterministic=True)
-    return json.dumps(
+    return dumps_strict(
         {
             "uri": "smdc://metaverse/uav/status",
             "timestamp": time.time(),
@@ -320,18 +321,10 @@ def read_metaverse_uav_status_resource() -> str:
 
 
 def read_metaverse_slices_resource() -> str:
-    """Returns 5G network slicing QoS and isolation status."""
-    from sovereign_dc.metaverse.slicing import NetworkSlicingManager
+    """Returns the simulated 5G slice figures of this process's orchestrator, with their ``source``."""
+    from sovereign_dc.mcp.tools import get_5g_slices_snapshot
 
-    mgr = NetworkSlicingManager()
-    return json.dumps(
-        {
-            "uri": "smdc://metaverse/5g/slices",
-            "timestamp": time.time(),
-            "slices": mgr.get_summary(),
-        },
-        indent=2,
-    )
+    return dumps_strict({"uri": "smdc://metaverse/5g/slices", **get_5g_slices_snapshot()}, indent=2)
 
 
 def read_enterprise_apps_resource() -> str:
@@ -340,7 +333,7 @@ def read_enterprise_apps_resource() -> str:
 
     manager = get_enterprise_manager()
     states = manager.list_runtime_states()
-    return json.dumps(
+    return dumps_strict(
         {
             "uri": "smdc://enterprise/apps",
             "timestamp": time.time(),
@@ -377,4 +370,4 @@ def read_enterprise_schema_resource() -> str:
             },
         },
     }
-    return json.dumps(schema, indent=2)
+    return dumps_strict(schema, indent=2)

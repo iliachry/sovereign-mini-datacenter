@@ -10,11 +10,11 @@
 
 The **Sovereign Mini Datacenter (SMDC)** enterprise framework enables organizations to deploy, manage, and scale their proprietary or open-source software workloads on sovereign, off-grid, solar-backed edge compute nodes without cloud lock-in.
 
-Whether deploying industrial IoT pipelines, computer vision models, geospatial digital twins, or confidential databases, the SMDC runtime guarantees:
+Whether deploying industrial IoT pipelines, computer vision models, geospatial digital twins, or confidential databases, the SMDC runtime provides:
 
-1. **Hardware-Enforced Energy Sovereignty**: Workloads automatically adapt to available solar generation and battery State-of-Charge (SoC) through graduated power tiers ($L_0 \to L_4$).
-2. **Post-Quantum Cryptographic Attestation**: Application bundles and inter-node transactions are signed using lattice-based NIST FIPS 204 ML-DSA-87 algorithms.
-3. **Delay-Tolerant Space Relaying**: Integrated RFC 9171 BPv7 DTN communication spools critical event payloads directly to Low Earth Orbit (LEO) satellite constellations during terrestrial link outages.
+1. **Energy-Aware Power Tiers**: Workloads adapt to available solar generation and battery State-of-Charge (SoC) through graduated power tiers ($L_0 \to L_4$).
+2. **Post-Quantum Package Signatures**: Application bundles can be signed with ML-DSA-87 (the FIPS 204 algorithm), and node wallets can use it for ledger transactions. The implementation is a pure-Python library that is not FIPS-validated; see [`COMPLIANCE.md`](COMPLIANCE.md) for what is implemented and what is planned.
+3. **Delay-Tolerant Space Relaying**: Integrated RFC 9171 BPv7 DTN communication spools critical event payloads for a Low Earth Orbit (LEO) satellite contact window during terrestrial link outages (the repository ships the bundle spool and a pass predictor, not a radio driver; bundle payloads are not encrypted).
 4. **Autonomous AI Multi-Agent Supervision**: Built-in Sentinel and Technician Copilots monitor workload health, resource quotas, and thermals.
 
 ```mermaid
@@ -94,7 +94,7 @@ power:
 # Network & Multi-Spectral Connectivity
 network:
   ports: [8080, 8443]    # Listening service ports
-  expose_wireguard: true # Peered across zero-trust WireGuard mesh
+  expose_wireguard: true # Peered across the WireGuard mesh
   space_dtn_enabled: true # Authorized to spool RFC 9171 BPv7 satellite bundles
   lora_heartbeat: true   # Transmit emergency telemetry over Sub-GHz LoRa
 

@@ -8,13 +8,15 @@
 
 ## 1. Executive Summary & Vision
 
-A **Fully Autonomous Network of Sovereign Mini Datacenters (Autonomous Sovereign Mesh)** is a zero-trust, decentralized, self-governing compute fabric designed to operate seamlessly across catastrophic infrastructure failures, long-term power grid blackouts, geopolitical isolation, and extreme network partitions.
+A **Fully Autonomous Network of Sovereign Mini Datacenters (Autonomous Sovereign Mesh)** is a decentralized, self-governing compute fabric designed to operate seamlessly across catastrophic infrastructure failures, long-term power grid blackouts, geopolitical isolation, and extreme network partitions.
 
 Unlike traditional cloud architectures that depend on centralized control planes (e.g. AWS, Azure, GCP, Cloudflare), **every node in this network is an independently viable sovereign micro-datacenter**. Each unit incorporates its own:
 - ☀️ **Solar Micro-Grid & Battery Management System (BMS)**
 - ❄️ **Cooling Subsystem** (air-cooled AI nodes, closed liquid loop for the system host)
 - 🤖 **Local AI Inference Engine & Multi-Agent Copilots**
 - 📡 **Multi-Spectral Communication Transceivers** (Terrestrial Mesh, Starlink/LEO, Sub-GHz LoRa, and Space DTN/BPv7)
+
+> **Status of this document:** this is a target architecture. It describes design intent alongside what the repository ships, and the two are not the same. In the trust and security layer in particular, only the WireGuard overlay (Headscale), HTTPS termination in Traefik, Restic encrypted backups and ML-DSA signatures on wallets and app packages are implemented. SPIFFE/SPIRE, mutual TLS between services, TPM or HSM roots of trust, Secure Boot, decentralized identifiers and post-quantum key exchange on links are **planned and not implemented**. [`COMPLIANCE.md`](COMPLIANCE.md) has the control-by-control status.
 
 ```
                                     ┌──────────────────────────────────────┐
@@ -68,9 +70,9 @@ graph TD
     classDef l1 fill:#312e81,stroke:#6366f1,color:#fff;
 
     L7["L7: Swarm Intelligence & Multi-Agent Layer (Sentinel, Reviewer, Indexer, Dispatcher)"]:::l7
-    L6["L6: Data & State Replication (CRDTs, SeaweedFS / Garage S3, Qdrant Federation)"]:::l6
+    L6["L6: Data & State Replication (design only: CRDTs, SeaweedFS / Garage S3, Qdrant Federation. Today: peer reachability probe only)"]:::l6
     L5["L5: Compute & Workload Orchestration (Talos Linux, K3s, Nomad, Wasm Runtimes)"]:::l5
-    L4["L4: Trust, Identity & Cryptography (SPIFFE/SPIRE, TPM 2.0 / HSM, Kyber/Dilithium PQC)"]:::l4
+    L4["L4: Trust, Identity & Cryptography (today: WireGuard keys, ML-DSA signatures. Planned: SPIFFE/SPIRE, TPM 2.0 / HSM, ML-KEM)"]:::l4
     L3["L3: Multi-Tier Overlay Mesh (Headscale WireGuard, Nebula, Yggdrasil, BGP EVPN)"]:::l3
     L2["L2: Deep Out-of-Band & DTN Routing (RFC 9171 BPv7, Meshtastic LoRa, Simplified Orbital Pass Predictor)"]:::l2
     L1["L1: Physical Microgrid & Telemetry (LiFePO4 BMS, Victron MPPT, ESP32, Coolant Loop)"]:::l1
@@ -85,10 +87,10 @@ graph TD
 
 | Layer | Subsystem | Sovereign Technology Stack | Primary Function |
 | :--- | :--- | :--- | :--- |
-| **L7: Swarm Intelligence** | Multi-Agent Coordination | Autonomous Sentinel, GitLab Reviewer, Indexer, Auto-Disaster Broker | Workload negotiation, energy-aware job dispatch, model weight sharing. |
-| **L6: Data & Consensus** | Distributed State Fabric | CRDTs, SeaweedFS / Garage S3, Qdrant Federation, Raft State Quorum | Masterless data sync, vector index federation, zero-loss snapshotting. |
+| **L7: Swarm Intelligence** | Multi-Agent Coordination | Sentinel mode publisher, GitLab Reviewer and Indexer (implemented); swarm dispatcher / disaster broker (design only) | Target: workload negotiation, energy-aware job dispatch, model weight sharing. Today: one node-local operating mode that the indexer and the enterprise manager honour. |
+| **L6: Data & Consensus** | Distributed State Fabric | Design only: CRDTs, SeaweedFS / Garage S3, Qdrant federation, Raft state quorum. Implemented: `mesh_sync.py`, which only probes whether each peer's exporter is reachable, an in-process Raft simulator (`smdc mesh consensus`) and single-node Restic backups | Target: masterless data sync, vector index federation, replicated snapshots. Today: nothing is replicated or synchronised between nodes. |
 | **L5: Compute & Workloads** | Sovereign Orchestration | Talos Linux + K3s / Nomad / Docker Engine, WebAssembly (Wasm) | Dynamic container scheduling, AI batch pipelines, emergency load shedding. |
-| **L4: Trust & Identity** | Zero-Trust & PKI | SPIFFE/SPIRE, TPM 2.0 / HSM Attestation, Kyber/Dilithium PQC | Cryptographic machine identity, mutual TLS (mTLS), hardware trust roots. |
+| **L4: Trust & Identity** | Identity & PKI | Implemented: WireGuard node keys (Headscale), Ed25519 and ML-DSA wallet and package signatures. Planned: SPIFFE/SPIRE, TPM 2.0 / HSM attestation, ML-KEM key exchange | Target: cryptographic machine identity, mutual TLS (mTLS), hardware trust roots. Today: node keys on the VPN overlay and signed packages; no mTLS and no hardware trust root. |
 | **L3: Network Fabric** | Multi-Tier Overlay Mesh | Headscale (WireGuard), Nebula, Yggdrasil, BGP EVPN | Seamless P2P flat mesh routing across dynamic NATs, firewalls, and air-gaps. |
 | **L2: Deep Out-of-Band** | Emergency Comms & DTN | RFC 9171 DTN/BPv7, Meshtastic LoRa, Starlink, simplified circular-orbit pass predictor (not SGP4) | Asynchronous orbital store-and-forward, low-baud heartbeat broadcast. |
 | **L1: Energy & Physical** | Microgrid & Telemetry | LiFePO4 BMS, Victron MPPT (VE.Direct/RS485), ESP32, Host Liquid Loop & Exhaust Fans | Solar harvesting, autonomous thermal regulation, brownout cold-recovery. |
@@ -120,7 +122,7 @@ graph TD
 
 ### Communication Tier Details
 
-1. **Tier 1: High-Bandwidth Terrestrial Zero-Trust Mesh (Headscale / Nebula)**
+1. **Tier 1: High-Bandwidth Terrestrial WireGuard Mesh (Headscale implemented; Nebula is an alternative, not shipped)**
    * **Underlay**: Fiber broadband, point-to-point 60GHz / 5GHz wireless bridges, local LANs.
    * **Overlay**: WireGuard encrypted peer-to-peer tunnels managed by a federated control plane.
    * **Payloads**: Real-time multi-node AI model updates, Git repository synchronization, streaming telemetry, live database transactions.
@@ -208,9 +210,11 @@ stateDiagram-v2
 
 ---
 
-## 5. Decentralized Storage, Sync & State Replication
+## 5. Decentralized Storage, Sync & State Replication (Target Design)
 
-Data in an autonomous network survives complete network isolation without split-brain corruption.
+> **Planned, not implemented.** No CRDT engine, SeaweedFS / Garage cluster, Qdrant federation or Git bundle exchange exists in this repository, and no state is synchronised between nodes. The mesh daemon (`mesh_sync.py`) only probes whether each peer's telemetry exporter answers over its mesh address and logs the result. Each node runs its own Qdrant and its own Restic backups (point 3 below).
+
+The design goal: data in an autonomous network survives complete network isolation without split-brain corruption.
 
 ```
                               ┌───────────────────────────────────┐
@@ -239,8 +243,8 @@ Data in an autonomous network survives complete network isolation without split-
    * Collections partitioned by Node IDs with distributed HNSW graph querying across active mesh links.
 
 3. **Encrypted Snapshot Quorum (Restic Engine)**
-   * Scheduled zero-knowledge encrypted restic backups replicated across $M \ge 3$ sovereign peers.
-   * Cryptographically sealed with hardware-backed TPM/HSM master keys.
+   * Implemented: scheduled Restic backups, encrypted with a repository password, to one repository (local by default).
+   * Planned: replication across $M \ge 3$ sovereign peers, and repository keys held in a TPM or HSM. Neither exists in the repository.
 
 ---
 
@@ -251,10 +255,10 @@ Each sovereign datacenter runs a localized multi-agent loop collaborating with p
 ```mermaid
 graph LR
     subgraph LocalNode ["Sovereign Node Autonomous Agent Runtime"]
-        S["Sentinel Copilot Agent<br/>• Power & Thermal Guard<br/>• Hardware Failover"]
-        R["GitLab Code Reviewer<br/>• Automated QA<br/>• Patch Generation"]
-        I["Knowledge Indexer<br/>• Semantic Vectorization<br/>• Document RAG"]
-        D["Swarm Dispatcher<br/>• Peer Negotiation<br/>• Workload Bidding"]
+        S["Sentinel Copilot Agent<br/>• Polls power exporter<br/>• Publishes operating mode"]
+        R["GitLab Code Reviewer<br/>• Polls open MRs<br/>• Posts one review note"]
+        I["Knowledge Indexer<br/>• Text chunk embedding<br/>• Qdrant upsert"]
+        D["Swarm Dispatcher (design, not implemented)<br/>• Peer Negotiation<br/>• Workload Bidding"]
     end
 
     subgraph PeerNodes ["Mesh Peer Nodes"]
@@ -269,15 +273,23 @@ graph LR
     D ---|P2P Agent Gossip Protocol| P2
 ```
 
-- **Sentinel Copilot Agent**: Parses hardware telemetry (`/dev/ttyUSB0` VE.Direct, RS485 Modbus, 1-Wire sensors) and executes deterministic emergency actions (GPU throttling, coolant pump speed adjustment, radiator and exhaust fan PWM control).
-- **Swarm Dispatcher Agent**: Participates in an open compute-bidding marketplace, shifting heavy compute tasks to nodes with >80% battery SoC and excess solar.
-- **Space Link Scheduler Agent**: Recalculates contact windows for LEO satellites with the simplified circular-orbit propagator (not SGP4), queueing DTN bundles for burst transmission during orbital passes.
+What the code in this repository does today (the diagram above is the target design; the dispatcher and the peer gossip protocol do not exist yet):
+
+- **Sentinel Copilot Agent** (`sentinel_copilot.py`): Polls the power exporter's `/metrics` over HTTP every `SENTINEL_POLL_INTERVAL_SECONDS` (default 30). It does not open serial ports, Modbus or 1-Wire devices itself. From battery state of charge and PV power it derives an operating mode (`NORMAL`, `SOLAR_SURPLUS_COMPUTE`, `ECO_PRESERVATION`), writes it to a shared mode file and publishes a `load_shedding.changed` event on the in-process event bus. It throttles no GPU and drives no pump or fan; consumers of the mode act on it (the knowledge indexer defers indexing; an `EnterpriseManager` in the same process marks deferrable apps paused).
+- **GitLab Code Reviewer** (`gitlab_reviewer.py`): Polls open merge requests every 60 s and posts one LLM-generated review note per MR revision. It generates no patches and gates no builds.
+- **Knowledge Indexer** (`knowledge_indexer.py`): Polls a directory of plain-text files, embeds their chunks via Ollama and upserts them into Qdrant.
+- **Technician Notifier** (`technician_notifier.py`): Writes alerts to a local JSONL log and queues them in the DTN spool; its MQTT and LoRa channels are placeholders that report failure.
+- **Bootstrap Provisioner** (`bootstrap_provisioner.py`): Read-only start-up checker (hardware inventory, peer probes, Docker/Ollama/Qdrant/Prometheus reachability, DTN spool depth). It starts no service and synchronises no state.
+- **Swarm Dispatcher Agent** (design only, not implemented): would take part in a compute-bidding marketplace, shifting heavy tasks to nodes with >80% battery SoC and excess solar.
+- **Space Link Scheduler** (partly implemented): contact windows are computed with the simplified circular-orbit propagator (not SGP4) and bundles are spooled by the DTN router; nothing schedules burst transmission against a real radio.
 
 ---
 
-## 7. Zero-Trust Security, Identity & Cryptographic Roots
+## 7. Security, Identity & Cryptographic Roots (Target Design)
 
-Security in an autonomous network operates without dependence on external Certificate Authorities or single points of failure.
+The aim is security that does not depend on external Certificate Authorities or single points of failure.
+
+> **Planned, not implemented.** The diagram and the four points below are the target design. None of the hardware root of trust, decentralized identifiers, SPIFFE/SPIRE attestation, mutual TLS between services, CrowdSec decision sharing or post-quantum key exchange exists in this repository. What exists today: a Headscale-managed WireGuard overlay, HTTPS termination with Let's Encrypt certificates in Traefik (an external certificate authority), a CrowdSec engine in detection-only mode on each node, LUKS2 keyed to the node UUID on the Talos path, and ML-DSA / ML-KEM as a pure-Python library used for wallet and package signatures. See [`COMPLIANCE.md`](COMPLIANCE.md).
 
 ```
                     ┌────────────────────────────────────────────────────────┐
@@ -300,10 +312,10 @@ Security in an autonomous network operates without dependence on external Certif
     └──────────────────────────────────┘                  └──────────────────────────────────┘
 ```
 
-1. **Hardware-Attested Node Identity**: Immutable cryptographic identity rooted in discrete TPM 2.0 chips. Boot integrity verified via UEFI Secure Boot and Talos Linux immutable kernel validation.
-2. **Workload Attestation (SPIFFE/SPIRE)**: Services receive dynamic, short-lived X.509 SVID certificates based on runtime cryptographic attestation of container hashes, namespaces, and node signatures.
-3. **Mesh Threat Defense (CrowdSec Mesh)**: Attack signatures detected on one node are gossiped across the mesh via WireGuard and LoRa, immunizing the entire network in real-time.
-4. **Post-Quantum Cryptography (PQC)**: Inter-node tunnels employ hybrid post-quantum key encapsulation (X25519 + Kyber-1024) to secure data against future quantum decryption.
+1. **Hardware-Attested Node Identity (planned)**: cryptographic identity rooted in a discrete TPM 2.0 chip, with boot integrity verified by UEFI Secure Boot and the Talos Linux immutable image.
+2. **Workload Attestation with SPIFFE/SPIRE (planned)**: services would receive dynamic, short-lived X.509 SVID certificates based on runtime cryptographic attestation of container hashes, namespaces, and node signatures.
+3. **Mesh Threat Defense (planned)**: attack signatures detected on one node would be shared across the mesh over WireGuard and LoRa. Today each node's CrowdSec engine works alone and only detects.
+4. **Post-Quantum Cryptography (planned for links)**: inter-node tunnels would use hybrid post-quantum key encapsulation (X25519 + ML-KEM-1024). Today the tunnels use WireGuard's standard handshake; ML-KEM exists only as a library and self-test.
 
 ---
 
@@ -330,8 +342,8 @@ sequenceDiagram
     Compute->>Compute: Load Talos Linux / K3s immutable OS
     Compute->>Compute: Initialize WireGuard & Headscale client
     Compute->>Mesh: Send WireGuard & LoRa NODE_ONLINE_RECOVERED Beacon
-    Mesh-->>Compute: Replay missed CRDT state logs & DTN bundles
-    Note over Compute: Node fully synchronised & operational
+    Mesh-->>Compute: Replay missed state logs & DTN bundles (target design, not implemented)
+    Note over Compute: Node operational (peers are only probed for reachability today)
 ```
 
 ---
@@ -349,7 +361,7 @@ sequenceDiagram
 ## 10. Implementation Roadmap
 
 ```
-Phase 1: Multi-Node Overlay & Zero-Trust PKI
+Phase 1: Multi-Node Overlay & Workload-Identity PKI
   ├── Extend `software/vpn/` with automated Headscale federated join
   ├── Integrate SPIRE/SPIFFE workload attestation into `kubernetes/helm/`
   └── Implement DID node registration in `src/sovereign_dc/mesh/`

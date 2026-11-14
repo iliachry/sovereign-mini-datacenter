@@ -8,12 +8,15 @@ from __future__ import annotations
 
 import base64
 import contextlib
+import fractions
 import hashlib
 import hmac
 import json
 import math
+import os
 import re
 import sqlite3
+import stat
 import threading
 from collections.abc import Iterator
 from dataclasses import asdict, dataclass
@@ -40,12 +43,18 @@ _SUPPORTED_HASH_VERSIONS = (HASH_VERSION_LEGACY, HASH_VERSION_CURRENT)
 PRIVILEGED_SENDERS = frozenset({"GENESIS", "SYSTEM", "MINT"})
 
 _HEX64 = re.compile(r"[0-9a-f]{64}")
-# Unit of account: one micro-credit (0.000001 credits). All balance arithmetic is done on
-# integers of this unit; floats only appear at the API and in the REAL database columns.
+# Unit of account: one micro-credit (0.000001 credits). Balances are stored and updated as
+# integer micro-credits (``balances.balance_micro``); floats only appear at the API and in the
+# REAL ``balance`` column that is kept in step for readers from older releases.
 _MICRO_CREDITS = 1_000_000
-# Largest micro-credit count a float (and a SQLite REAL) represents exactly: 2**53, about
-# 9.007 billion credits. Amounts and balances beyond it are refused.
-_MAX_MICRO = 2**53
+# Largest amount and largest balance the ledger accepts: 2,000,000,000 credits (2e15
+# micro-credits). The bound is what makes the float API exact: below 2**31 credits a double
+# resolves 2**-22 credits (0.24 micro-credits), so every micro-credit count up to the bound
+# has its own float and ``_to_micro(_from_micro(m)) == m`` holds for all of them. (2**53
+# micro-credits, the previous bound, is not enough: near 9e9 credits adjacent doubles are
+# 1.9 micro-credits apart, so a balance read back as a float could move by a micro-credit.)
+MAX_CREDITS = 2_000_000_000
+_MAX_MICRO = MAX_CREDITS * _MICRO_CREDITS
 
 # Chain anchor: the head of the local chain digest is authenticated with a MAC key derived
 # from this node's persistent identity key, which lives in the SMDC state directory and not
@@ -112,11 +121,31 @@ def _to_micro(amount: float) -> int:
     """Converts a credit amount to integer micro-credits, rounding to 6 decimal places.
 
     This is the lenient conversion, used to quantise values that are already part of the
-    record (stored REAL balances, amounts of rows written by older releases, the amount of a
-    received promise whose signature covers 6 decimals). New amounts go through
-    ``_exact_micro``.
+    record (amounts of rows written by older releases, channel totals that were validated
+    when they were set). New amounts go through ``_exact_micro``.
     """
     return round(amount * _MICRO_CREDITS)
+
+
+def _real_to_micro(value: float) -> int:
+    """Nearest micro-credit count to a stored REAL credit value, by exact rational rounding.
+
+    Used only to migrate REAL balances written by older releases: the double is taken at its
+    exact value (no intermediate float multiplication), so ``0.19999999999999998`` becomes
+    200000 and a large balance is not moved by a second rounding error.
+    """
+    return round(fractions.Fraction(value) * _MICRO_CREDITS)
+
+
+def _micro_text(micro: int) -> str:
+    """Canonical 6-decimal text of a micro-credit count (``1000001`` -> ``"1.000001"``).
+
+    Built from the integer, so two different counts never share a text. For a count within
+    the accepted range it is the same string ``f"{credits:.6f}"`` produces for its float.
+    """
+    sign = "-" if micro < 0 else ""
+    whole, fraction = divmod(abs(micro), _MICRO_CREDITS)
+    return f"{sign}{whole}.{fraction:06d}"
 
 
 def _from_micro(micro: int) -> float:
@@ -129,8 +158,8 @@ def _exact_micro(amount: float) -> int | None:
 
     An amount is accepted when it is exactly the float a 6-decimal literal parses to
     (``0.1``, ``0.25``, ``12.5``, ``0.000001``). ``0.1234567`` or ``0.1 + 0.2`` are not:
-    accounting never rounds an amount silently. Magnitudes above ``_MAX_MICRO`` micro-credits
-    are not exactly representable and are refused as well.
+    accounting never rounds an amount silently. Magnitudes above ``MAX_CREDITS`` are outside
+    the range in which a float identifies one micro-credit count and are refused as well.
     """
     micro = _to_micro(amount)
     if abs(micro) > _MAX_MICRO:
@@ -142,8 +171,8 @@ def credits_to_micro(amount: float) -> int:
     """Converts a credit amount to integer micro-credits (1 credit = 1,000,000).
 
     Raises ValueError if ``amount`` is not a finite real number, has more than 6 decimal
-    places, or exceeds 2**53 micro-credits. This is the validation every new ledger amount
-    goes through.
+    places, or exceeds ``MAX_CREDITS`` (2,000,000,000 credits). This is the validation every
+    new ledger amount goes through.
     """
     if not _is_real_number(amount) or not math.isfinite(amount):
         raise ValueError("Credit amount must be a finite real number")
@@ -402,6 +431,11 @@ class StateChannel:
     ``close()`` settles the highest cumulative amount this object knows the sender signed
     for: what it signed itself (sender side) or what it verified (receiver side). All
     comparisons and sums are done in integer micro-credits.
+
+    A promise commits to one integer micro-credit count: the signed text and the settled
+    amount are both derived from that integer (``_micro_text``). A promise whose
+    ``amount_transferred`` is not exactly a whole number of micro-credits is rejected by
+    ``verify_promise``; it is never rounded to a neighbouring amount.
     """
 
     def __init__(
@@ -431,8 +465,14 @@ class StateChannel:
         # Receiver-side replay protection: highest promise accepted by verify_promise().
         self.last_verified_sequence = 0
         self.last_verified_amount = 0.0
+        self._last_verified_micro = 0
         # The promise behind last_verified_amount: the receiver's evidence for settlement.
         self.last_verified_promise: StateChannelPromise | None = None
+
+    @staticmethod
+    def _promise_payload(channel_id: str, sequence: int, amount_micro: int, timestamp: str) -> bytes:
+        """The signed bytes of a promise for ``amount_micro`` micro-credits."""
+        return f"{channel_id}:{sequence}:{_micro_text(amount_micro)}:{timestamp}".encode()
 
     def stream_micropayment(self, amount: float, wallet: NodeWallet) -> StateChannelPromise:
         """Generates a signed state update promise allocating micro-credits to peer."""
@@ -454,8 +494,7 @@ class StateChannel:
         self.sequence += 1
         ts = datetime.now(UTC).isoformat()
 
-        payload = f"{self.channel_id}:{self.sequence}:{self.transferred_amount:.6f}:{ts}".encode()
-        sig = wallet.sign_payload(payload)
+        sig = wallet.sign_payload(self._promise_payload(self.channel_id, self.sequence, total_micro, ts))
 
         return StateChannelPromise(
             channel_id=self.channel_id,
@@ -472,7 +511,9 @@ class StateChannel:
 
         The promise must be signed by the key that controls ``sender_address``, and both its
         sequence number and cumulative amount must advance past the last accepted promise, so
-        a stale or replayed promise is rejected (returns False).
+        a stale or replayed promise is rejected (returns False). The amount must be exactly a
+        whole number of micro-credits: the signature is checked against the text of that
+        integer, and that integer is what ``close()`` settles.
         """
         if self.is_closed or promise.channel_id != self.channel_id:
             return False
@@ -483,15 +524,17 @@ class StateChannel:
         amount = promise.amount_transferred
         if not _is_real_number(amount) or not math.isfinite(amount) or amount <= 0:
             return False
-        if _to_micro(amount) > _to_micro(self.deposit_amount):
+        amount_micro = _exact_micro(amount)
+        if amount_micro is None:
+            # 1.0000015 renders as "1.000001" with 6 decimals: it is not the signed amount.
             return False
-        if _to_micro(amount) < _to_micro(self.last_verified_amount):
+        if amount_micro > _to_micro(self.deposit_amount):
+            return False
+        if amount_micro < self._last_verified_micro:
             return False
         if not NodeWallet.public_key_matches_address(sender_public_key_hex, self.sender_address, algorithm):
             return False
-        payload = (
-            f"{promise.channel_id}:{promise.sequence}:{promise.amount_transferred:.6f}:{promise.timestamp}".encode()
-        )
+        payload = self._promise_payload(promise.channel_id, promise.sequence, amount_micro, promise.timestamp)
         if not NodeWallet.verify_signature(
             payload=payload,
             signature_hex=promise.signature,
@@ -500,8 +543,9 @@ class StateChannel:
         ):
             return False
         self.last_verified_sequence = promise.sequence
-        # The signature covers the amount rendered with 6 decimals, i.e. these micro-credits.
-        self.last_verified_amount = _from_micro(_to_micro(amount))
+        # The signature covers exactly these micro-credits.
+        self._last_verified_micro = amount_micro
+        self.last_verified_amount = _from_micro(amount_micro)
         self.last_verified_promise = promise
         return True
 
@@ -514,7 +558,7 @@ class StateChannel:
         sender-side object ``last_verified_amount`` stays 0, so each side reports the latest
         state it can prove; a receiver backs its claim with ``last_verified_promise``.
         """
-        return _from_micro(max(_to_micro(self.transferred_amount), _to_micro(self.last_verified_amount)))
+        return _from_micro(max(_to_micro(self.transferred_amount), self._last_verified_micro))
 
     def close(self) -> tuple[float, float]:
         """Closes the state channel and returns ``(settled_to_peer, refund_to_sender)``.
@@ -538,6 +582,38 @@ class StateChannel:
         return settled_to_peer, refund_to_sender
 
 
+_SQLITE_SIDECARS = ("-wal", "-shm", "-journal")
+
+
+def _secure_db_file(db_path: str) -> None:
+    """Makes the SQLite file at ``db_path`` (and its side files) private to the owner (0600).
+
+    A missing database is created empty with mode 0600 before SQLite opens it; SQLite gives
+    the ``-wal``/``-shm``/``-journal`` files it creates later the mode of the main file. An
+    existing database or side file that is a regular file owned by the current user and
+    accessible to group or others is chmod-ed to 0600. Files owned by someone else and
+    symlinks are left alone. Errors are logged, never raised: the caller's open decides.
+    """
+    try:
+        fd = os.open(db_path, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        os.close(fd)
+    except OSError as err:
+        logger.debug("Could not pre-create %s with mode 0600: %s", db_path, err)
+    getuid = getattr(os, "getuid", None)
+    for path in (db_path, *(db_path + suffix for suffix in _SQLITE_SIDECARS)):
+        try:
+            st = os.lstat(path)
+        except OSError:
+            continue
+        if not stat.S_ISREG(st.st_mode) or (getuid is not None and st.st_uid != getuid()):
+            continue
+        if stat.S_IMODE(st.st_mode) & 0o077:
+            try:
+                os.chmod(path, 0o600)
+            except OSError as err:
+                logger.warning("Could not restrict %s to mode 0600: %s", path, err)
+
+
 class Ledger:
     """Persistent, thread-safe, hash-linked append-only compute credits ledger.
 
@@ -554,6 +630,8 @@ class Ledger:
         if self.db_path == ":memory:":
             self._memory_conn = sqlite3.connect(":memory:", check_same_thread=False)
             self._memory_conn.row_factory = sqlite3.Row
+        else:
+            _secure_db_file(self.db_path)
         self._init_db()
 
     def close(self) -> None:
@@ -660,10 +738,20 @@ class Ledger:
                 CREATE TABLE IF NOT EXISTS balances (
                     address TEXT PRIMARY KEY,
                     balance REAL NOT NULL,
-                    nonce INTEGER NOT NULL
+                    nonce INTEGER NOT NULL,
+                    balance_micro INTEGER
                 )
                 """
             )
+            # ``balance_micro`` (integer micro-credits) is the balance of record. Ledgers from
+            # releases that only had the REAL ``balance`` column are migrated in place: the
+            # column is added and filled by exact rounding of each REAL to the nearest
+            # micro-credit. ``balance`` stays and is rewritten with every change, so a reader
+            # from an older release still sees the balance.
+            balance_cols = {row[1] for row in conn.execute("PRAGMA table_info(balances)").fetchall()}
+            if "balance_micro" not in balance_cols:
+                conn.execute("ALTER TABLE balances ADD COLUMN balance_micro INTEGER")
+            self._backfill_balance_micro(conn)
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS settled_proofs (
@@ -709,6 +797,16 @@ class Ledger:
                 conn.execute("UPDATE transactions SET chain_digest = ? WHERE rowid = ?", (digest, r["rid"]))
 
     @staticmethod
+    def _backfill_balance_micro(conn: sqlite3.Connection) -> None:
+        """Gives every balance row without ``balance_micro`` the micro-credits of its REAL balance."""
+        rows = conn.execute("SELECT address, balance FROM balances WHERE balance_micro IS NULL").fetchall()
+        for r in rows:
+            conn.execute(
+                "UPDATE balances SET balance_micro = ? WHERE address = ?",
+                (_real_to_micro(float(r["balance"])), r["address"]),
+            )
+
+    @staticmethod
     def _scoped_proof_key(payer: str, settlement_key: str) -> str:
         return f"{payer}|{settlement_key}"
 
@@ -729,12 +827,41 @@ class Ledger:
     def _account_micro(conn: sqlite3.Connection, address: str) -> tuple[int, int]:
         """Returns (balance in micro-credits, next_nonce) for ``address`` as seen by ``conn``.
 
-        The ``balance`` column is a REAL holding credits. It is quantised to micro-credits on
-        the way in, so a value left behind by the float arithmetic of older releases
-        (``0.19999999999999998``) reads as the balance it stands for (200000 micro-credits).
+        The integer ``balance_micro`` column is the balance of record. The REAL ``balance``
+        column is only consulted for a row this release did not write last: one inserted by
+        an older release (``balance_micro`` NULL), or one whose REAL no longer equals the
+        float of its ``balance_micro`` because an older release updated it. Such a REAL is
+        converted by exact rounding to the nearest micro-credit, so a value left behind by
+        float arithmetic (``0.19999999999999998``) reads as the balance it stands for.
         """
-        row = conn.execute("SELECT balance, nonce FROM balances WHERE address = ?", (address,)).fetchone()
-        return (_to_micro(float(row["balance"])), int(row["nonce"])) if row else (0, 0)
+        row = conn.execute(
+            "SELECT balance, balance_micro, nonce FROM balances WHERE address = ?", (address,)
+        ).fetchone()
+        if row is None:
+            return 0, 0
+        return Ledger._row_micro(row), int(row["nonce"])
+
+    @staticmethod
+    def _row_micro(row: sqlite3.Row) -> int:
+        """Micro-credit balance of a ``balances`` row (see ``_account_micro``)."""
+        real = float(row["balance"])
+        stored = row["balance_micro"]
+        if stored is not None and _from_micro(int(stored)) == real:
+            return int(stored)
+        return _real_to_micro(real)
+
+    @staticmethod
+    def _set_balance(conn: sqlite3.Connection, address: str, micro: int, *, bump_nonce: bool = False) -> None:
+        """Writes ``micro`` as the balance of ``address`` (integer column and its REAL mirror)."""
+        conn.execute(
+            """
+            INSERT INTO balances (address, balance, nonce, balance_micro) VALUES (?, ?, 0, ?)
+            ON CONFLICT(address) DO UPDATE SET balance = excluded.balance, balance_micro = excluded.balance_micro
+            """,
+            (address, _from_micro(micro), micro),
+        )
+        if bump_nonce:
+            conn.execute("UPDATE balances SET nonce = nonce + 1 WHERE address = ?", (address,))
 
     @staticmethod
     def _account(conn: sqlite3.Connection, address: str) -> tuple[float, int]:
@@ -799,9 +926,18 @@ class Ledger:
             return row is not None
 
     def get_balance(self, address: str) -> float:
-        """Returns current balance for the given address."""
+        """Returns current balance for the given address, in credits.
+
+        The float is exact for every balance the ledger can create (up to ``MAX_CREDITS``):
+        ``credits_to_micro(get_balance(a)) == get_balance_micro(a)``.
+        """
         with self._lock, self._get_connection() as conn:
             return self._account(conn, address)[0]
+
+    def get_balance_micro(self, address: str) -> int:
+        """Returns current balance for the given address in integer micro-credits."""
+        with self._lock, self._get_connection() as conn:
+            return self._account_micro(conn, address)[0]
 
     def get_nonce(self, address: str) -> int:
         """Returns the next expected transaction nonce for the given address."""
@@ -852,8 +988,9 @@ class Ledger:
 
         Enforces uniqueness, the sender's expected nonce and sufficient balance, then debits,
         credits and appends the transaction to the local hash chain. Balances are validated
-        and updated in integer micro-credits (the REAL columns keep holding credits), and an
-        amount or fee finer than one micro-credit is refused (reason ``amount_precision``)
+        and updated in integer micro-credits (``balance_micro``; the REAL ``balance`` column
+        mirrors it), and an amount or fee finer than one micro-credit is refused (reason
+        ``amount_precision``)
         instead of being rounded. A transaction that
         carries a signed ``settlement_key`` is refused if its sender has already paid that key
         here, and otherwise records the key as paid, whether the transaction was created
@@ -885,26 +1022,16 @@ class Ledger:
                     f"Insufficient balance: {tx.sender} has {_from_micro(balance_micro):.6f} credits, "
                     f"requires {_from_micro(debit_micro):.6f}",
                 )
-            conn.execute(
-                "UPDATE balances SET balance = ?, nonce = nonce + 1 WHERE address = ?",
-                (_from_micro(balance_micro - debit_micro), tx.sender),
-            )
+            self._set_balance(conn, tx.sender, balance_micro - debit_micro, bump_nonce=True)
 
         # Read after the debit: the write lock is held, so this is the recipient's current balance.
         recipient_micro, _ = self._account_micro(conn, tx.recipient)
         if recipient_micro + amount_micro > _MAX_MICRO:
             raise TransactionRejected(
                 "balance_overflow",
-                f"Rejected transaction {tx.tx_id}: balance of {tx.recipient} would exceed the representable range",
+                f"Rejected transaction {tx.tx_id}: balance of {tx.recipient} would exceed {MAX_CREDITS:,} credits",
             )
-        credited = _from_micro(recipient_micro + amount_micro)
-        conn.execute(
-            """
-            INSERT INTO balances (address, balance, nonce) VALUES (?, ?, 0)
-            ON CONFLICT(address) DO UPDATE SET balance = ?
-            """,
-            (tx.recipient, credited, credited),
-        )
+        self._set_balance(conn, tx.recipient, recipient_micro + amount_micro)
         # ``prev_hash`` is part of the signed hash and, for a foreign transaction, points into
         # its origin ledger. ``local_prev`` is this ledger's own chain link.
         tip = conn.execute("SELECT tx_id, chain_digest FROM transactions ORDER BY rowid DESC LIMIT 1").fetchone()
@@ -1062,12 +1189,14 @@ class Ledger:
     def mint(self, recipient: str, amount: float, memo: str = "GENESIS_MINT") -> Transaction:
         """Mints initial compute credits to an address.
 
-        ``amount`` must be a positive multiple of 0.000001 credits (ValueError otherwise).
+        ``amount`` must be a positive multiple of 0.000001 credits, at most ``MAX_CREDITS``
+        (ValueError otherwise). Credits minted here are issued by this node for itself: they
+        are local test credits and carry no value outside this ledger.
         """
         if not _is_real_number(amount) or not math.isfinite(amount) or amount <= 0:
             raise ValueError("Mint amount must be a finite, strictly positive number")
         if _exact_micro(amount) is None:
-            raise ValueError("Mint amount must not have more than 6 decimal places")
+            raise ValueError(f"Mint amount must not have more than 6 decimal places or exceed {MAX_CREDITS:,} credits")
         if not recipient:
             raise ValueError("Recipient address must not be empty")
         if not NodeWallet.is_valid_address(recipient):
@@ -1118,7 +1247,9 @@ class Ledger:
         amount_micro = _exact_micro(amount)
         fee_micro = _exact_micro(fee)
         if amount_micro is None or fee_micro is None or amount_micro <= 0:
-            raise ValueError("Transfer amount and fee must not have more than 6 decimal places")
+            raise ValueError(
+                f"Transfer amount and fee must not have more than 6 decimal places or exceed {MAX_CREDITS:,} credits"
+            )
         if sender_wallet.address == recipient:
             raise ValueError("Cannot transfer credits to self")
         if not NodeWallet.is_valid_address(recipient):
@@ -1300,9 +1431,13 @@ class Ledger:
     def export_state(self) -> dict[str, Any]:
         """Exports ledger snapshot state."""
         with self._lock, self._get_connection() as conn:
-            bal_rows = conn.execute("SELECT address, balance, nonce FROM balances").fetchall()
+            bal_rows = conn.execute("SELECT address, balance, balance_micro, nonce FROM balances").fetchall()
             balances = {
-                r["address"]: {"balance": _from_micro(_to_micro(float(r["balance"]))), "nonce": int(r["nonce"])}
+                r["address"]: {
+                    "balance": _from_micro(self._row_micro(r)),
+                    "balance_micro": self._row_micro(r),
+                    "nonce": int(r["nonce"]),
+                }
                 for r in bal_rows
             }
         chain_ok, anchor_status = self._chain_report()

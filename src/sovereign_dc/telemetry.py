@@ -217,7 +217,8 @@ def run(port: int | None = None, simulation: bool | None = None) -> None:
         logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
     PORT = PORT if port is None else port
     SIMULATION = SIMULATION if simulation is None else simulation
-    server = HTTPServer(("0.0.0.0", PORT), MetricsHandler)
+    # Prometheus scrapes this exporter from another container, so it binds every interface.
+    server = HTTPServer(("0.0.0.0", PORT), MetricsHandler)  # noqa: S104
     logger.info("Sovereign Power & Thermal Exporter listening on http://0.0.0.0:%d/metrics (Sim=%s)", PORT, SIMULATION)
     try:
         server.serve_forever()

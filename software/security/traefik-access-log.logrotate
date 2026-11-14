@@ -1,0 +1,37 @@
+# Sovereign Mini Datacenter — logrotate rule for the Traefik access log (HOST file).
+#
+# Traefik does not rotate its access log (--accesslog.filepath in docker-compose.yml);
+# its documentation says to rotate it with an external program and then send USR1,
+# on which Traefik closes and reopens the file. Without this rule the
+# sovereign_traefik_logs volume grows until the disk is full.
+#
+# Install on the Docker host (root; needs logrotate, which Debian/Ubuntu run daily
+# from cron or a systemd timer):
+#   sudo install -m 0644 software/security/traefik-access-log.logrotate /etc/logrotate.d/sovereign-traefik
+#   sudo logrotate --debug /etc/logrotate.d/sovereign-traefik    # dry run: prints what it would do
+#   sudo logrotate --force /etc/logrotate.d/sovereign-traefik    # rotate once now, to prove it works
+#
+# The path below is the default mountpoint of the named volume. If Docker's data root
+# is not /var/lib/docker, use the directory printed by:
+#   docker volume inspect -f '{{ .Mountpoint }}' sovereign_traefik_logs
+#
+# Rotated files are named access.log.1, access.log.2.gz, ...: they no longer match
+# the CrowdSec acquisition pattern /traefik-logs/*.log (acquis.d/traefik.yaml), so
+# CrowdSec keeps reading only the live file and does not parse old lines twice.
+# Retention: 14 rotations, at most one per logrotate run (daily by default). `maxsize`
+# rotates a file above 100 MB even if a day has not passed; it is only checked when
+# logrotate runs, so run logrotate hourly on a busy node.
+/var/lib/docker/volumes/sovereign_traefik_logs/_data/access.log {
+    su root root
+    daily
+    maxsize 100M
+    rotate 14
+    missingok
+    notifempty
+    compress
+    delaycompress
+    create 0640 root root
+    postrotate
+        docker kill --signal=USR1 sovereign_traefik >/dev/null 2>&1 || true
+    endscript
+}

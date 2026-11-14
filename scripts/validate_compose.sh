@@ -10,6 +10,9 @@
 #    (or all of them) must not change the resolved name of any volume or network
 #    a core service uses, and an overlay run standalone through
 #    docker-compose.attach.yml must attach to those same objects as external.
+# 4. Backup coverage: every named volume of the merged stack is classified in
+#    software/backup/volumes.conf and the backup overlay mounts exactly the
+#    `files` ones (read-only), never a `dumped` live database directory.
 #
 # Uses software/env.example as the env file; never creates software/.env.
 # ====================================================================
@@ -189,6 +192,131 @@ for project in ("software", "edgeone"):
 if errors:
     print("\n".join("    FAIL " + e for e in errors), file=sys.stderr)
     sys.exit("%d storage-identity violation(s): an overlay must not rename core volumes/networks" % len(errors))
+PY
+
+# ── Backup coverage ──────────────────────────────────────────────────
+# Every named volume of the merged stack must be accounted for in
+# software/backup/volumes.conf: either backed up (`files`: mounted read-only at
+# /data/<key> by the backup overlay), replaced by a native dump (`dumped`: never
+# mounted, a live database directory) or explicitly not backed up (`skip`, with a
+# reason). A new volume that nobody classified fails here instead of silently
+# missing from every snapshot.
+echo "--> backup coverage: every named volume is backed up, dumped or explicitly skipped"
+python3 - "$INVARIANT_DIR" "${SW}/backup/volumes.conf" "$SW" <<'PY'
+import json, os, sys
+
+tmp, conf_path, sw = sys.argv[1], sys.argv[2], os.path.realpath(sys.argv[3])
+errors = []
+BACKUP_SERVICE = "backup-cron"
+BACKUP_TAG = "backup_docker-compose.backup.yml"
+
+conf = {}
+with open(conf_path, encoding="utf-8") as fh:
+    for lineno, raw in enumerate(fh, 1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split("|")
+        if len(parts) != 5:
+            errors.append("volumes.conf:%d: expected 5 pipe-separated fields, got %d" % (lineno, len(parts)))
+            continue
+        key, name, cls, paths, reason = parts
+        if key in conf:
+            errors.append("volumes.conf:%d: duplicate key %s" % (lineno, key))
+        if cls not in ("files", "dumped", "skip"):
+            errors.append("volumes.conf:%d: %s has unknown class %r" % (lineno, key, cls))
+        if cls == "files" and not paths.split():
+            errors.append("volumes.conf:%d: files volume %s lists no paths" % (lineno, key))
+        if cls in ("dumped", "skip") and not reason.strip():
+            errors.append("volumes.conf:%d: %s is %s without a reason" % (lineno, key, cls))
+        conf[key] = {"name": name, "class": cls, "paths": paths, "reason": reason}
+
+
+def load(name):
+    with open(os.path.join(tmp, name), encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def check_backup_service(cfg, label, project):
+    """Mounts of the backup container must match volumes.conf exactly."""
+    svc = (cfg.get("services") or {}).get(BACKUP_SERVICE)
+    if svc is None:
+        errors.append("%s: service %s not found" % (label, BACKUP_SERVICE))
+        return
+    vols = cfg.get("volumes") or {}
+    data_mounts, binds = {}, {}
+    for m in svc.get("volumes", []):
+        if m.get("type") == "bind":
+            binds[m["target"]] = m
+        elif m.get("type") == "volume" and m["target"].startswith("/data/"):
+            data_mounts[m["source"]] = m
+    for key, row in sorted(conf.items()):
+        m = data_mounts.get(key)
+        want = row["name"] if row["name"] != "-" else "%s_%s" % (project, key)
+        if row["class"] == "files":
+            if m is None:
+                errors.append("%s: volume %s is `files` in volumes.conf but %s does not mount it under /data"
+                              % (label, key, BACKUP_SERVICE))
+                continue
+            if m["target"] != "/data/" + key:
+                errors.append("%s: volume %s is mounted at %s, expected /data/%s" % (label, key, m["target"], key))
+            if not m.get("read_only"):
+                errors.append("%s: volume %s must be mounted read-only in %s" % (label, key, BACKUP_SERVICE))
+            got = (vols.get(key) or {}).get("name")
+            if got != want:
+                errors.append("%s: volume %s resolves to %s, volumes.conf (and the stack) expect %s"
+                              % (label, key, got, want))
+        elif m is not None:
+            errors.append("%s: volume %s is `%s` in volumes.conf but %s mounts it at %s (a live database "
+                          "directory must not be walked by restic)" % (label, key, row["class"], BACKUP_SERVICE, m["target"]))
+    for key in sorted(set(data_mounts) - set(conf)):
+        errors.append("%s: %s mounts volume %s, which volumes.conf does not list" % (label, BACKUP_SERVICE, key))
+    # Deployment configuration and the host's dump directory.
+    config = binds.get("/config")
+    if config is None or os.path.realpath(config["source"]) != sw or not config.get("read_only"):
+        errors.append("%s: %s must bind-mount software/ read-only at /config (compose files, overlays, .env)"
+                      % (label, BACKUP_SERVICE))
+    dumps = binds.get("/dumps")
+    if dumps is None or not dumps.get("read_only"):
+        errors.append("%s: %s must bind-mount the host dump directory read-only at /dumps" % (label, BACKUP_SERVICE))
+    for target, m in binds.items():
+        if "docker.sock" in m["source"]:
+            errors.append("%s: %s must not mount the Docker socket (%s)" % (label, BACKUP_SERVICE, m["source"]))
+
+
+for project in ("software", "edgeone"):
+    before = len(errors)
+    merged = load("%s.merged.ALL.json" % project)
+    stack = {k: v["name"] for k, v in (merged.get("volumes") or {}).items()}
+    for key in sorted(set(stack) - set(conf)):
+        errors.append("-p %s: named volume %s (%s) of the merged stack is not listed in software/backup/volumes.conf: "
+                      "add it as files, dumped or skip (with a reason)" % (project, key, stack[key]))
+    for key in sorted(set(conf) - set(stack)):
+        errors.append("-p %s: volumes.conf lists %s, which no Compose file of the merged stack declares" % (project, key))
+    for key in sorted(set(conf) & set(stack)):
+        want = conf[key]["name"] if conf[key]["name"] != "-" else "%s_%s" % (project, key)
+        if stack[key] != want:
+            errors.append("-p %s: volume %s resolves to %s, volumes.conf says %s" % (project, key, stack[key], want))
+    check_backup_service(merged, "-p %s merged.ALL" % project, project)
+    check_backup_service(load("%s.merged.%s.json" % (project, BACKUP_TAG)), "-p %s core+backup" % project, project)
+    check_backup_service(load("%s.attach.%s.json" % (project, BACKUP_TAG)), "-p %s attach+backup (standalone)" % project, project)
+    if len(errors) > before:
+        continue
+    counts = {c: sum(1 for k in stack if conf[k]["class"] == c) for c in ("files", "dumped", "skip")}
+    print("    ok  -p %-8s %d named volumes: %d backed up (files), %d replaced by a native dump, %d explicitly "
+          "not backed up; backup mounts identical merged / core+backup / standalone"
+          % (project, len(stack), counts["files"], counts["dumped"], counts["skip"]))
+    if project == "software":
+        for key in sorted(stack):
+            row = conf[key]
+            what = {"files": "files   /data/%s:ro  paths=%s" % (key, row["paths"]),
+                    "dumped": "dumped  not mounted",
+                    "skip": "skip    not backed up"}[row["class"]]
+            print("        %-20s %-44s %s" % (key, what, row["reason"]))
+
+if errors:
+    print("\n".join("    FAIL " + e for e in errors), file=sys.stderr)
+    sys.exit("%d backup-coverage violation(s)" % len(errors))
 PY
 
 echo "--> setup.sh --all --dry-run"
