@@ -410,30 +410,37 @@ class EnterpriseManager:
                 if tracked is None or tracked.status != AppStatus.PAUSED:
                     del self._shed_paused[app_id]
 
-        # The actions run outside the lock (they publish events). A subscriber may publish a
-        # newer shedding event from inside one of them; that event recomputes every app, so
-        # what is left of this older plan must not be applied on top of it.
+        # The actions run outside the lock (they publish events). A newer shedding event may
+        # be handled meanwhile, by a subscriber publishing from inside one of them or by
+        # another thread; it recomputes every app, so what is left of this older plan must
+        # not be applied on top of it. Each action therefore re-checks the plan generation
+        # under the same lock in which it changes the app state (see _pause / resume_app).
         soc_text = "" if soc is None else f", battery SoC {soc:.1f}%"
         for app_id, causes in to_pause:
-            if self._shed_plan_is_stale(generation):
-                return
             self._pause(
                 app_id,
                 reason=f"Load shedding level {level}{soc_text} ({' + '.join(sorted(causes))})",
                 by_shedding=True,
                 causes=causes,
+                plan_generation=generation,
             )
         for app_id in sorted(to_resume):
-            if self._shed_plan_is_stale(generation):
-                return
-            self.resume_app(app_id, reason=f"Load shedding eased to level {level}{soc_text}")
+            self.resume_app(
+                app_id, reason=f"Load shedding eased to level {level}{soc_text}", plan_generation=generation
+            )
 
-    def _shed_plan_is_stale(self, generation: int) -> bool:
-        """True when a newer load-shedding event has been handled since ``generation``."""
+    def _shed_plan_is_stale(self, generation: int | None) -> bool:
+        """True when a newer load-shedding event was handled since ``generation``.
+
+        Called with ``self._lock`` held (it is re-entrant), so the answer stays true while
+        the caller changes the app state. ``None`` (an operator action) is never stale.
+        """
+        if generation is None:
+            return False
         with self._lock:
             stale = self._shed_generation != generation
         if stale:
-            logger.info("Dropping the rest of an older load-shedding plan: a newer event was handled.")
+            logger.info("Skipping an action of an older load-shedding plan: a newer event was handled.")
         return stale
 
     def _on_enterprise_telemetry(self, event: Event) -> None:
@@ -562,9 +569,17 @@ class EnterpriseManager:
         return success, msg
 
     def _pause(
-        self, app_id: str, reason: str, *, by_shedding: bool, causes: set[str] | None = None
+        self,
+        app_id: str,
+        reason: str,
+        *,
+        by_shedding: bool,
+        causes: set[str] | None = None,
+        plan_generation: int | None = None,
     ) -> tuple[bool, str]:
         with self._lock:
+            if self._shed_plan_is_stale(plan_generation):
+                return False, f"Application '{app_id}' left as it is: a newer load-shedding event was handled."
             runtime = self._runtimes.get(app_id)
             if not runtime or runtime.status != AppStatus.RUNNING:
                 return False, f"Application '{app_id}' is not currently running."
@@ -588,9 +603,17 @@ class EnterpriseManager:
         """Mark an application paused on request. Such a pause is not lifted when shedding eases."""
         return self._pause(app_id, reason, by_shedding=False)
 
-    def resume_app(self, app_id: str, reason: str = "Solar surplus") -> tuple[bool, str]:
-        """Resume execution of a paused application."""
+    def resume_app(
+        self, app_id: str, reason: str = "Solar surplus", *, plan_generation: int | None = None
+    ) -> tuple[bool, str]:
+        """Resume execution of a paused application.
+
+        ``plan_generation`` is set only by the load-shedding handler: the resume is then
+        skipped if a newer shedding event has been handled since that plan was made.
+        """
         with self._lock:
+            if self._shed_plan_is_stale(plan_generation):
+                return False, f"Application '{app_id}' left as it is: a newer load-shedding event was handled."
             runtime = self._runtimes.get(app_id)
             if not runtime or runtime.status != AppStatus.PAUSED:
                 return False, f"Application '{app_id}' is not paused."

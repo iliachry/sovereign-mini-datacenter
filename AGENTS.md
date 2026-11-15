@@ -49,10 +49,10 @@ sovereign-mini-datacenter/
 │       │   ├── sdk.py                # Zero-dependency SMDCClient & AppLifecycleHandler SDK
 │       │   └── manager.py            # App state tracking (no process supervision), load-shedding hooks & PQC packaging
 │       ├── hal/                 # Hardware Abstraction Layer
-│       │   ├── gpu.py                # NVIDIA Jetson / Tegra / Desktop GPU telemetry
-│       │   ├── power.py              # Victron MPPT & SmartShunt BMS readers
-│       │   ├── storage.py            # NVMe health, S.M.A.R.T. & IOPS telemetry
-│       │   └── thermal.py            # 1-Wire DS18B20 liquid coolant & ambient probes
+│       │   ├── gpu.py                # NVIDIA GPU discovery (name and memory via nvidia-smi)
+│       │   ├── power.py              # Battery/solar readings from the power exporter's /metrics
+│       │   ├── storage.py            # Filesystem capacity (total / used / free)
+│       │   └── thermal.py            # Coolant/air temperatures from the exporter, host thermal zones
 │       ├── mcp/                 # Native Model Context Protocol (MCP) Server
 │       │   ├── __init__.py           # Package exports (MCPServer, MCPTool, MCPResource, MCPPrompt)
 │       │   ├── server.py             # JSON-RPC 2.0 stdio server and request router
@@ -136,7 +136,7 @@ sovereign-mini-datacenter/
 │   └── MANUFACTURING_GUIDE.md   # Laser cut DXF export, CNC sheet metal bending specs
 ├── docs/                        # Interactive Three.js WebGL Digital Twin & GitHub Pages
 │   └── index.html               # 3D WebGL CAD viewer + interactive sizing & TCO calculator
-├── tests/                       # Complete automated Pytest suite (1337 tests, 92.5% coverage)
+├── tests/                       # Complete automated Pytest suite (1344 tests, 92.5% coverage)
 ├── ARCHITECTURE.md              # Multi-node autonomous network architecture specification
 ├── ENTERPRISE_ONBOARDING.md     # Enterprise manifest spec, power tiers & developer guide
 ├── COMMERCIALIZATION.md         # Investment thesis, TAM/SAM/SOM & 3-year TCO payback model
@@ -160,9 +160,9 @@ sovereign-mini-datacenter/
 - **In-Process Event Bus (`events.py`)**: Thread-safe publish/subscribe event dispatcher (`SovereignEventBus`) with wildcard event routing (`load_shedding.*`, `mesh.*`, `space.*`, `economy.*`, `metaverse.*`) and ring-buffered audit logs.
 
 ### B. Hardware Abstraction Layer (HAL) (`src/sovereign_dc/hal/`)
-- **GPU (`gpu.py`)**: Automatic discovery of NVIDIA Tegra (Jetson Orin) and desktop GPUs via `nvidia-smi`, parsing power draw, temperature, and utilization.
+- **GPU (`gpu.py`)**: Discovers NVIDIA GPUs via `nvidia-smi` and reports each one's name and total memory (unified memory is read from the host on Tegra/GB10 systems). It does not read power draw, temperature or utilization.
 - **Power (`power.py`)**: Reads battery SoC, PV power, battery voltage and system load from the power exporter's `/metrics` (it does not open a VE.Direct or RS485 port itself); refuses an exporter that reports `sovereign_telemetry_source_up 0`.
-- **Storage (`storage.py`)**: Evaluates NVMe drive wear-out percentage, temperatures, and filesystem I/O metrics.
+- **Storage (`storage.py`)**: Reports total, used and free capacity of a filesystem path (`shutil.disk_usage`). It reads no S.M.A.R.T. data, drive wear, drive temperature or I/O figures.
 - **Thermal (`thermal.py`)**: Reads coolant and rack air temperatures from the power exporter's `/metrics`, plus Linux `/sys/class/thermal` zones and `nvidia-smi` for the host; DS18B20 probes reach it through the ESP32 bridge and the exporter, not through `/sys/bus/w1`.
 
 ### C. Post-Quantum Cryptography & Security Engine (`src/sovereign_dc/security/pqc.py`)
@@ -330,7 +330,7 @@ Windows equivalent without `uv run`: `.\.venv\Scripts\python -m sovereign_dc <co
 ## 6. Checklist Before Completing Any Agent Task
 
 1. [ ] **Pass All Quality Gates Locally**: Run `scripts/quality_gate.ps1` or `scripts/quality_gate.sh` (Ruff lint/format, Mypy typing, Pytest $\ge 85\%$ coverage).
-2. [ ] **Pass All Unit Tests**: Verify all 1337 tests in `tests/` pass with zero failures.
+2. [ ] **Pass All Unit Tests**: Verify all 1344 tests in `tests/` pass with zero failures.
 3. [ ] **Preserve Existing Interfaces**: Ensure CLI arguments, Prometheus metric names, and DTN bundle schemas remain backward-compatible.
 4. [ ] **Verify Markdown/Mermaid & Math**: Ensure any new or modified `.md` files strictly comply with GitHub Mermaid and LaTeX math rendering rules.
 5. [ ] **Synchronize Documentation**: Update `AGENTS.md` and `README.md` with any newly added modules, subcommands, or architectural changes.

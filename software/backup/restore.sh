@@ -65,7 +65,25 @@ env_file_value() {
     [[ -f "$ENV_FILE" ]] || return 0
     # The last assignment wins, in any spelling Compose accepts for the key:
     # `KEY=`, `KEY =`, `export KEY=`, `KEY: `.
-    efv="$(sed -n -E "s/^[[:space:]]*(export[[:space:]]+)?$1[[:space:]]*[=:]//p" "$ENV_FILE" | tail -n 1 | tr -d '\r')"
+    # This reader works line by line. A quoted value that continues on the next line would
+    # make it read a line inside that value as an assignment, so such a file is refused.
+    if ! awk '{
+            line = $0
+            if (sub(/^[ \t]*(export[ \t]+)?[A-Za-z_][A-Za-z0-9_]*[ \t]*[=:][ \t]*/, "", line) == 0) next
+            quote = substr(line, 1, 1)
+            if ((quote == "\047" || quote == "\"") && index(substr(line, 2), quote) == 0) { open = 1; exit }
+        } END { exit open ? 1 : 0 }' "$ENV_FILE"; then
+        echo "[ERROR]   ${ENV_FILE} holds a quoted value that spans several lines; this script cannot read such a file reliably. Put every value on one line." >&2
+        return 2
+    fi
+    efv="$(sed -n -E "s/^[[:space:]]*(export[[:space:]]+)?$1[[:space:]]*[=:]//p" "$ENV_FILE" | tail -n 1)"
+    # A line ending of CR LF loses its CR; a carriage return inside the value is kept by
+    # Compose and cannot be passed on safely here.
+    efv_cr="$(printf '\r')"
+    efv="${efv%"$efv_cr"}"
+    case "$efv" in
+        *"$efv_cr"*) echo "[ERROR]   $1 in ${ENV_FILE} contains a carriage return inside its value." >&2; return 2 ;;
+    esac
     # Decoded as Docker Compose decodes its .env file, so that this script and the backup
     # container (which gets the value through Compose) use the same password:
     # blanks after `=` are dropped; a single-quoted value is literal; in unquoted and

@@ -110,7 +110,7 @@ MORE_ENV_LINES = {
     "Z": ("Z=end$", "end$"),
 }
 # Compose accepts these with a decoding these scripts do not reproduce: they must stop, not differ.
-MORE_REFUSED = {"L": "L='abc\\'def'", "O": "O='sq\\back'", "Q": 'Q="dq"tail', "X": "X='unterminated"}
+MORE_REFUSED = {"L": "L='abc\\'def'", "O": "O='sq\\back'", "Q": 'Q="dq"tail'}
 
 
 @pytest.mark.parametrize("script", ["backup.sh", "restore.sh"])
@@ -122,6 +122,11 @@ def test_backup_scripts_decode_or_refuse_further_env_forms(script: str, tmp_path
         result = _env_file_value(script, env_file, key)
         assert result.returncode == 0 and result.stdout == expected, (key, result.stdout, result.stderr)
     for key in MORE_REFUSED:
+        result = _env_file_value(script, env_file, key)
+        assert result.returncode == 2 and result.stdout == "", (key, result.stdout)
+    # An unterminated quote makes Compose reject the whole file; so do the scripts, for every key.
+    env_file.write_text("P=fine\nX='unterminated\n", encoding="utf-8")
+    for key in ("P", "X"):
         result = _env_file_value(script, env_file, key)
         assert result.returncode == 2 and result.stdout == "", (key, result.stdout)
 

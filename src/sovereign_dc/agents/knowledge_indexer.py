@@ -463,10 +463,15 @@ def index_file(filepath: str) -> bool:
 
 def remove_file(filepath: str) -> bool:
     """Removes every point of a document that no longer exists. Returns True on success."""
+    # A document is indexed under its absolute path (index_file). The spelling given here
+    # is removed as well when it differs: points written by an earlier release under a
+    # relative path carry that spelling.
+    spellings = list(dict.fromkeys((os.path.abspath(filepath), filepath)))
     try:
-        delete_source_points(filepath)
-        _cleanup_pending.discard(filepath)
-        _reconcile_pending.discard(filepath)
+        for spelling in spellings:
+            delete_source_points(spelling)
+            _cleanup_pending.discard(spelling)
+            _reconcile_pending.discard(spelling)
         logger.info("Removed '%s' from the index (document no longer present).", os.path.basename(filepath))
         return True
     except Exception as e:
