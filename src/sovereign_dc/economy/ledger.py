@@ -1292,8 +1292,18 @@ class Ledger:
         self, conn: sqlite3.Connection, anchor_key: tuple[str, bytes] | None
     ) -> tuple[bool, str, int, str, str]:
         """Walks the chain; returns ``(structure_ok, anchor_status, tx_count, head_tx_id, head_digest)``."""
-        rows = conn.execute("SELECT * FROM transactions ORDER BY rowid ASC").fetchall()
-        anchor = conn.execute("SELECT * FROM chain_anchor WHERE id = 1").fetchone()
+        # One read transaction for both reads: another ledger instance or process may commit a
+        # valid transaction (rows plus a new anchor) between them, and an old row list
+        # compared with a new anchor would look like tampering.
+        began = not conn.in_transaction
+        if began:
+            conn.execute("BEGIN")
+        try:
+            rows = conn.execute("SELECT * FROM transactions ORDER BY rowid ASC").fetchall()
+            anchor = conn.execute("SELECT * FROM chain_anchor WHERE id = 1").fetchone()
+        finally:
+            if began:
+                conn.commit()
         expected_prev = GENESIS_PREV_HASH
         digest = GENESIS_PREV_HASH
         # Per sender: (nonce of its latest row, whether that row came through the validated apply path).

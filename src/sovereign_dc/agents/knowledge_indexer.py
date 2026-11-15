@@ -385,8 +385,12 @@ def index_file(filepath: str) -> bool:
 
     A document larger than ``MAX_FILE_BYTES`` is refused (see ``is_oversized``).
 
+    The document is identified by its absolute path (point ids and the ``path`` payload), so
+    indexing it once through a relative and once through an absolute path gives one entry.
+
     Returns True only if the collection was brought in line with the file.
     """
+    filepath = os.path.abspath(filepath)
     if is_oversized(filepath):
         return False
     try:
@@ -483,6 +487,7 @@ def list_documents(watch_dir: str, walk_errors: list[OSError] | None = None) -> 
     passes ``INCLUDE_GLOBS``. Listing errors are appended to ``walk_errors`` if given.
     """
     documents: list[str] = []
+    watch_dir = os.path.abspath(watch_dir)  # one spelling per document (see index_file)
     onerror = walk_errors.append if walk_errors is not None else None
     for root, dirs, files in os.walk(watch_dir, onerror=onerror):
         dirs[:] = sorted(d for d in dirs if not is_excluded_dir(d))

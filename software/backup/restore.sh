@@ -63,12 +63,15 @@ err()  { echo -e "\033[1;31m[ERROR]   $*\033[0m" >&2; exit 1; }
 # .env is a Compose env file, not a shell script: read the keys we need as data.
 env_file_value() {
     [[ -f "$ENV_FILE" ]] || return 0
-    efv="$(sed -n "s/^[[:space:]]*$1=//p" "$ENV_FILE" | tail -n 1 | tr -d '\r')"
+    # The last assignment wins, in any spelling Compose accepts for the key:
+    # `KEY=`, `KEY =`, `export KEY=`, `KEY: `.
+    efv="$(sed -n -E "s/^[[:space:]]*(export[[:space:]]+)?$1[[:space:]]*[=:]//p" "$ENV_FILE" | tail -n 1 | tr -d '\r')"
     # Decoded as Docker Compose decodes its .env file, so that this script and the backup
     # container (which gets the value through Compose) use the same password:
     # blanks after `=` are dropped; a single-quoted value is literal; in unquoted and
-    # double-quoted values `$$` is one `$`; after a closing quote only a ` # comment` may
-    # follow. What Compose would expand or unescape (a `$NAME` / `${NAME}` reference, a
+    # double-quoted values `$$` is one `$`; a comment starts at a space followed by `#`
+    # (a tab before `#` is part of the value); after a closing quote only such a comment
+    # may follow. What Compose would expand or unescape (a `$NAME` / `${NAME}` reference, a
     # backslash inside quotes) is refused here instead of being guessed.
     efv="$(printf '%s' "$efv" | sed -e 's/^[[:space:]]*//')"
     efv_quote=""
@@ -87,7 +90,7 @@ env_file_value() {
         case "$efv" in
             *\\*) echo "[ERROR]   $1 in ${ENV_FILE} is quoted and contains a backslash, which Docker Compose may treat as an escape; use a value without backslashes." >&2; return 2 ;;
         esac
-        efv_after="$(printf '%s' "$efv_after" | sed -e 's/^[[:space:]][[:space:]]*#.*$//' -e 's/[[:space:]]*$//')"
+        efv_after="$(printf '%s' "$efv_after" | sed -e 's/^  *#.*$//' -e 's/[[:space:]]*$//')"
         if [ -n "$efv_after" ]; then
             echo "[ERROR]   $1 in ${ENV_FILE} has text after its closing quote; only a comment (space, then #) may follow." >&2
             return 2
@@ -97,7 +100,7 @@ env_file_value() {
             return 0
         fi
     else
-        efv="$(printf '%s' "$efv" | sed -e 's/[[:space:]]#.*$//' -e 's/[[:space:]]*$//')"
+        efv="$(printf '%s' "$efv" | sed -e 's/ #.*$//' -e 's/[[:space:]]*$//')"
     fi
     efv_rest="$(printf '%s' "$efv" | sed 's/\$\$//g')"
     case "$efv_rest" in

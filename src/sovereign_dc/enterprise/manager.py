@@ -256,6 +256,8 @@ class EnterpriseManager:
         # Apps this manager paused because of load shedding (as opposed to an operator
         # pause), with the causes still in force: CAUSE_TIER and/or CAUSE_SOC_FLOOR.
         self._shed_paused: dict[str, set[str]] = {}
+        # Incremented for every handled load-shedding event (see _shed_plan_is_stale).
+        self._shed_generation = 0
         # Level and battery SoC of the last load-shedding event this manager understood
         # (None until the first one / while the SoC is unknown); applied by start_app().
         self._shedding_level: int | None = None
@@ -387,6 +389,8 @@ class EnterpriseManager:
         with self._lock:
             self._shedding_level = level
             self._shedding_soc = soc
+            self._shed_generation += 1
+            generation = self._shed_generation
             for app_id, runtime in self._runtimes.items():
                 previous = self._shed_paused.get(app_id, set())
                 causes = self._shed_causes(runtime.manifest, level, soc, previous)
@@ -406,8 +410,13 @@ class EnterpriseManager:
                 if tracked is None or tracked.status != AppStatus.PAUSED:
                     del self._shed_paused[app_id]
 
+        # The actions run outside the lock (they publish events). A subscriber may publish a
+        # newer shedding event from inside one of them; that event recomputes every app, so
+        # what is left of this older plan must not be applied on top of it.
         soc_text = "" if soc is None else f", battery SoC {soc:.1f}%"
         for app_id, causes in to_pause:
+            if self._shed_plan_is_stale(generation):
+                return
             self._pause(
                 app_id,
                 reason=f"Load shedding level {level}{soc_text} ({' + '.join(sorted(causes))})",
@@ -415,7 +424,17 @@ class EnterpriseManager:
                 causes=causes,
             )
         for app_id in sorted(to_resume):
+            if self._shed_plan_is_stale(generation):
+                return
             self.resume_app(app_id, reason=f"Load shedding eased to level {level}{soc_text}")
+
+    def _shed_plan_is_stale(self, generation: int) -> bool:
+        """True when a newer load-shedding event has been handled since ``generation``."""
+        with self._lock:
+            stale = self._shed_generation != generation
+        if stale:
+            logger.info("Dropping the rest of an older load-shedding plan: a newer event was handled.")
+        return stale
 
     def _on_enterprise_telemetry(self, event: Event) -> None:
         """Ingest custom telemetry published by enterprise app instances."""
