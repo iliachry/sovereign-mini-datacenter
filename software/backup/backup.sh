@@ -1182,7 +1182,8 @@ manifest_fingerprint() {
 # skip_if_uploaded <dumps tag> <created_epoch>: exits 0 when there is nothing to upload.
 skip_if_uploaded() {
     if [ "$(cat "$UPLOAD_STATE" 2>/dev/null || true)" != "$1" ]; then
-        siu_out="$(restic snapshots --tag "sovereign-snapshot,mode-container,$1" --json 2>/dev/null)" || return 0
+        # Any mode counts: a host full run (`sh backup.sh`) uploads the same generation.
+        siu_out="$(restic snapshots --tag "sovereign-snapshot,$1" --json 2>/dev/null)" || return 0
         case "$siu_out" in
             *'"tree"'*) ;;
             *) return 0 ;;

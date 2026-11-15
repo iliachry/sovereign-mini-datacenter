@@ -446,11 +446,11 @@ export function handleTerminalInput(e) {
   } else if (lower.includes('economy') && lower.includes('market')) {
     print(`${DEMO_TAG}
 <span class="term-line-amber">[PRICE QUOTE: SAMPLE]</span>
-  Solar Harvest:  2,660 W (above the 1,000 W surplus threshold)
-  Battery SoC:    88.5% (above the 75% surplus threshold)
+  Solar Harvest:  2,660 W (at or above the 500 W surplus threshold)
+  Battery SoC:    88.5% (at or above the 75% surplus threshold)
   Solar Discount: 50.0% (surplus-solar rate)
-  LLM Inference:  0.0025 credits / 1k tokens
-  Space DTN Relay:0.0050 credits / MB`);
+  LLM Inference:  0.0250 credits / 1k tokens
+  Space DTN Relay:0.0500 credits / MB`);
   } else if (lower.includes('space') && lower.includes('passes')) {
     print(`${DEMO_TAG}
 <span class="term-line-cyan">[CONTACT PASSES: SAMPLE]</span>

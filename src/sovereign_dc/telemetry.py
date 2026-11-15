@@ -89,25 +89,42 @@ fault_overrides: dict[str, float] = {}
 # sovereign_load_shedding_active is 1 at shedding level 3 and above, i.e. while SoC is below
 # the level-3 threshold of the node's one SoC policy (SovereignConfig.shedding_l3_soc, read
 # here from the same SHEDDING_L3_SOC environment variable with the same default).
-SHEDDING_L3_SOC_ENV = "SHEDDING_L3_SOC"
-DEFAULT_LOAD_SHEDDING_SOC_PERCENT = 20.0
+SHEDDING_SOC_ENVS = ("SHEDDING_L1_SOC", "SHEDDING_L2_SOC", "SHEDDING_L3_SOC", "SHEDDING_L4_SOC")
+SHEDDING_SOC_DEFAULTS = (50.0, 30.0, 20.0, 10.0)
+SHEDDING_L3_SOC_ENV = SHEDDING_SOC_ENVS[2]
+DEFAULT_LOAD_SHEDDING_SOC_PERCENT = SHEDDING_SOC_DEFAULTS[2]
 
 
 def load_shedding_soc_percent() -> float:
-    """SoC (percent) below which ``sovereign_load_shedding_active`` is 1: ``SHEDDING_L3_SOC``."""
-    raw = os.getenv(SHEDDING_L3_SOC_ENV, "").strip()
-    if not raw:
-        return DEFAULT_LOAD_SHEDDING_SOC_PERCENT
-    try:
-        percent = float(raw)
-    except ValueError:
-        percent = math.nan
-    if not math.isfinite(percent):
+    """SoC (percent) below which ``sovereign_load_shedding_active`` is 1: ``SHEDDING_L3_SOC``.
+
+    The four ``SHEDDING_L1_SOC``..``SHEDDING_L4_SOC`` values are one policy. Like the
+    sentinel and the Python services, the exporter uses the defaults for all four when any
+    value is not a number, lies outside 0-100, or the order is not L1 > L2 > L3 > L4, so
+    the flag can never disagree with the level the rest of the node computes.
+    """
+    values: list[float] = []
+    for name, default in zip(SHEDDING_SOC_ENVS, SHEDDING_SOC_DEFAULTS, strict=True):
+        raw = os.getenv(name, "").strip()
+        if not raw:
+            values.append(default)
+            continue
+        try:
+            values.append(float(raw))
+        except ValueError:
+            values.append(math.nan)
+    valid = all(math.isfinite(v) and 0.0 <= v <= 100.0 for v in values) and all(
+        values[i] > values[i + 1] for i in range(len(values) - 1)
+    )
+    if not valid:
         logger.warning(
-            "Ignoring %s=%r (need a number); using %g", SHEDDING_L3_SOC_ENV, raw, DEFAULT_LOAD_SHEDDING_SOC_PERCENT
+            "Ignoring %s=%s (need numbers within 0-100 with L1 > L2 > L3 > L4); using %s",
+            "/".join(SHEDDING_SOC_ENVS),
+            "/".join(os.getenv(n, "") or "unset" for n in SHEDDING_SOC_ENVS),
+            "/".join(f"{d:g}" for d in SHEDDING_SOC_DEFAULTS),
         )
         return DEFAULT_LOAD_SHEDDING_SOC_PERCENT
-    return percent
+    return values[2]
 
 
 LOAD_SHEDDING_SOC_PERCENT = load_shedding_soc_percent()

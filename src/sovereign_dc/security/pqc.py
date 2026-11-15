@@ -296,6 +296,7 @@ class PQCKEM:
 
 
 _CACHED_NODE_KEYPAIRS: dict[tuple[PQCAlgorithm, str], PQCKeyPair] = {}
+_EPHEMERAL_NODE_KEYPAIRS: set[tuple[PQCAlgorithm, str]] = set()
 
 NODE_KEY_FILE_VERSION = 1
 
@@ -367,6 +368,8 @@ def _persist_node_keypair(path: str, keypair: PQCKeyPair) -> bool:
 def get_node_pqc_keypair(
     algorithm: PQCAlgorithm = PQCAlgorithm.ML_DSA_65,
     state_dir: str | None = None,
+    *,
+    require_persistent: bool = False,
 ) -> PQCKeyPair:
     """Returns this node's persistent PQC signing identity for ``algorithm``.
 
@@ -380,6 +383,10 @@ def get_node_pqc_keypair(
     cache_key = (algorithm, path)
     cached = _CACHED_NODE_KEYPAIRS.get(cache_key)
     if cached is not None:
+        if require_persistent and cache_key in _EPHEMERAL_NODE_KEYPAIRS:
+            raise RuntimeError(
+                f"persistent node {algorithm.value} key unavailable at {path}; refusing the ephemeral in-process key"
+            )
         return cached
 
     keypair: PQCKeyPair | None = None
@@ -392,6 +399,12 @@ def get_node_pqc_keypair(
         if keypair is None:
             keypair = _load_node_keypair(path, algorithm)
     except (OSError, ValueError, KeyError, TypeError) as err:
+        if require_persistent:
+            # A signature made with a throwaway key can never be verified against this node's
+            # pinned identity, so callers that publish signatures must not be handed one.
+            raise RuntimeError(
+                f"persistent node {algorithm.value} key unavailable at {path} ({err}); refusing an ephemeral key"
+            ) from err
         logger.warning(
             "Persistent node %s key unavailable at %s (%s); using an ephemeral in-process key",
             algorithm.value,
@@ -399,6 +412,7 @@ def get_node_pqc_keypair(
             err,
         )
         keypair = PQCSigner(algorithm).generate_keypair()
+        _EPHEMERAL_NODE_KEYPAIRS.add(cache_key)
 
     _CACHED_NODE_KEYPAIRS[cache_key] = keypair
     return keypair

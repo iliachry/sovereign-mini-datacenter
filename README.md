@@ -165,7 +165,7 @@ sovereign-mini-datacenter/
 │   ├── MANUFACTURING_GUIDE.md   # Laser cut, CNC bend, and assembly instructions
 │   └── render.jpg               # Photorealistic 3D product render
 ├── docs/                        # Interactive Three.js WebGL Digital Twin (ES Modules) & GitHub Pages
-├── tests/                       # 1213 automated unit & integration tests (92.4% coverage)
+├── tests/                       # 1260 automated unit & integration tests (92.4% coverage)
 └── .github/
     └── workflows/
         ├── ci.yml               # Complete CI pipeline + Pytest + GitHub Pages deploy
@@ -224,6 +224,7 @@ smdc agent index /data/docs                          # Index a directory into Qd
 # Enterprise Workload Onboarding & Lifecycle Management
 smdc app list                                        # List all registered enterprise apps & runtime state
 smdc app init "IoT Edge" --app-id iot-edge --category iot --target-dir ./iot-edge # Scaffold new app repo
+smdc app init "IoT Edge" --app-id iot-edge --target-dir ./iot-edge --force # Re-scaffold: without --force init refuses if a scaffold file exists; with it each existing file is first moved to <name>.bak-<timestamp>
 smdc app validate ./iot-edge                         # Validate smdc-app.yaml schema and resource quotas
 smdc app register ./iot-edge                         # Register app on local sovereign node
 smdc app start iot-edge                              # Mark the app running, or paused if load shedding currently pauses its tier (state tracking; no process is launched)
@@ -294,7 +295,7 @@ smdc deploy --all
 ### 6. 💰 Autonomous Monetary & Compute Economy Layer (`src/sovereign_dc/economy/`)
 * **Post-Quantum Cryptographic Wallets:** Deterministic address derivation and signing using Ed25519 and NIST FIPS 204 ML-DSA-87.
 * **Append-Only Compute Credit Ledger:** Monotonically increasing nonces, transaction hashes, and offline bidirectional micro-payment state channels for streaming compute.
-* **Solar-Aware Dynamic Price Oracle:** Dynamic discount engine offering up to 50% discount on GPU inference during solar surplus (>1 kW) and up to 3.0x surge pricing during battery preservation.
+* **Solar-Aware Dynamic Price Oracle:** Energy-state multiplier on every catalog rate: a 50% discount while solar harvest is at least 500 W and battery SoC at least 75%, nominal pricing down to 40% SoC, a 1.5x surge below 40% SoC and a 3.0x surge below 25% SoC. (This is the pricing rule; the sentinel's `SOLAR_SURPLUS_COMPUTE` operating mode has its own bar of more than 1000 W.)
 * **Delay-Tolerant Settlement:** Cryptographic Proof-of-Compute and Proof-of-Relay verification reconciled across terrestrial mesh or RFC 9171 DTN satellite contact passes.
 
 ### 7. 🏢 Generic Enterprise Workload Coupling Framework (`src/sovereign_dc/enterprise/`)
@@ -521,7 +522,7 @@ See [`terraform/README.md`](terraform/README.md) for full module documentation a
 ---
 
 ## 🛡️ Quality Gates & Automated Tests
-The project enforces strict automated Quality Gates covering Ruff linting, Ruff formatting, Mypy static typing, Docker Compose multi-stack integrity, and Pytest coverage with 1213 automated tests ($\ge 85\%$ strict threshold, achieving **92.4%** coverage):
+The project enforces strict automated Quality Gates covering Ruff linting, Ruff formatting, Mypy static typing, Docker Compose multi-stack integrity, and Pytest coverage with 1260 automated tests ($\ge 85\%$ strict threshold, achieving **92.4%** coverage):
 
 ```bash
 # Run all quality gates locally

@@ -51,6 +51,22 @@ LOCK_TIMEOUT_SECONDS = 30.0
 LOCK_STALE_SECONDS = 60.0
 LOCK_POLL_SECONDS = 0.05
 
+# Files written by ``EnterpriseRegistry.create_project_scaffold`` (manifests always, the sample
+# code only with ``create_sample_code``).
+SCAFFOLD_MANIFEST_FILES: tuple[str, ...] = ("smdc-app.json", "smdc-app.yaml")
+SCAFFOLD_SAMPLE_FILES: tuple[str, ...] = ("app.py", "Dockerfile", "README.md")
+
+
+class ScaffoldConflictError(FileExistsError):
+    """Raised when scaffolding would overwrite files that already exist in the target directory."""
+
+    def __init__(self, target_dir: Path, existing: list[Path]) -> None:
+        self.target_dir = target_dir
+        self.existing = list(existing)
+        names = ", ".join(p.name for p in self.existing)
+        super().__init__(f"refusing to overwrite existing file(s) in {target_dir}: {names}")
+
+
 _SET = "set"
 _DELETE = "delete"
 
@@ -644,39 +660,14 @@ if __name__ == "__main__":
             f"CMD {json.dumps(argv[1:])}\n"
         )
 
-    @classmethod
-    def create_project_scaffold(
-        cls, target_dir: Path | str, manifest: AppManifest, create_sample_code: bool = True
-    ) -> Path:
-        """Generate a complete enterprise application project directory."""
-        dest = Path(target_dir)
-        dest.mkdir(parents=True, exist_ok=True)
-
-        manifest_file = dest / "smdc-app.yaml"
-        manifest_json_file = dest / "smdc-app.json"
-
-        # Write manifest JSON for deterministic compatibility
-        manifest_json_file.write_text(manifest.to_json(indent=2), encoding="utf-8")
-
-        # Write YAML representation. Values are serialized by a YAML emitter (never string
-        # interpolation), so quotes, colons or newlines in a name cannot corrupt the manifest.
-        manifest_file.write_text(cls.render_manifest_yaml(manifest), encoding="utf-8")
-
-        if create_sample_code:
-            sample_py = dest / "app.py"
-            sample_py.write_text(cls._render_sample_app(manifest), encoding="utf-8")
-
-            # Create Dockerfile
-            dockerfile = dest / "Dockerfile"
-            dockerfile.write_text(cls._render_dockerfile(manifest), encoding="utf-8")
-
-            # Create README.md
-            readme = dest / "README.md"
-            # Collapse whitespace/newlines and drop backticks so the values stay inside their
-            # heading / inline-code span / shell line.
-            safe_name = " ".join(str(manifest.name).split()) or "Enterprise App"
-            safe_id = shlex.quote(str(manifest.app_id).replace("`", ""))
-            readme_content = f"""# {safe_name}
+    @staticmethod
+    def _render_readme(manifest: AppManifest) -> str:
+        """Renders the scaffold README; manifest strings cannot leave their heading / code span."""
+        # Collapse whitespace/newlines and drop backticks so the values stay inside their
+        # heading / inline-code span / shell line.
+        safe_name = " ".join(str(manifest.name).split()) or "Enterprise App"
+        safe_id = shlex.quote(str(manifest.app_id).replace("`", ""))
+        return f"""# {safe_name}
 
 > Enterprise Onboarding Package for **Sovereign Mini Datacenter (SMDC)**
 > **App ID**: `{safe_id}` | **Category**: `{manifest.category.value}` | **Power Tier**: `{manifest.power.tier.value}`
@@ -697,6 +688,92 @@ smdc app start {safe_id}
 smdc app status {safe_id}
 ```
 """
-            readme.write_text(readme_content, encoding="utf-8")
+
+    @staticmethod
+    def scaffold_file_names(create_sample_code: bool = True) -> tuple[str, ...]:
+        """Names of the files ``create_project_scaffold`` writes into the target directory."""
+        return SCAFFOLD_MANIFEST_FILES + (SCAFFOLD_SAMPLE_FILES if create_sample_code else ())
+
+    @classmethod
+    def existing_scaffold_files(cls, target_dir: Path | str, create_sample_code: bool = True) -> list[Path]:
+        """Scaffold targets already present in ``target_dir`` (files, directories or symlinks)."""
+        dest = Path(target_dir)
+        return [dest / name for name in cls.scaffold_file_names(create_sample_code) if os.path.lexists(dest / name)]
+
+    @staticmethod
+    def _backup_path(path: Path, stamp: str) -> Path:
+        """First free ``<name>.bak-<stamp>[-N]`` next to ``path``."""
+        candidate = path.with_name(f"{path.name}.bak-{stamp}")
+        counter = 1
+        while os.path.lexists(candidate):
+            candidate = path.with_name(f"{path.name}.bak-{stamp}-{counter}")
+            counter += 1
+        return candidate
+
+    @staticmethod
+    def _write_text_atomic(path: Path, content: str) -> None:
+        """Writes ``content`` to a temporary file beside ``path`` and renames it into place."""
+        fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(content)
+                f.flush()
+                os.fsync(f.fileno())
+            os.chmod(tmp_name, 0o644)
+            os.replace(tmp_name, path)
+        except BaseException:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp_name)
+            raise
+
+    @classmethod
+    def create_project_scaffold(
+        cls,
+        target_dir: Path | str,
+        manifest: AppManifest,
+        create_sample_code: bool = True,
+        *,
+        force: bool = False,
+        backups: list[tuple[Path, Path]] | None = None,
+    ) -> Path:
+        """Generate a complete enterprise application project directory.
+
+        An application under development is never overwritten silently. Every file the
+        scaffold would write is checked before anything is written; if one already exists,
+        ``ScaffoldConflictError`` (listing them) is raised and the directory is left
+        untouched. With ``force=True`` each existing file is first moved to
+        ``<name>.bak-<UTC timestamp>`` beside it (the ``(original, backup)`` pairs are
+        appended to ``backups`` when a list is passed) and only then replaced. Each file is
+        written to a temporary file and renamed into place.
+        """
+        dest = Path(target_dir)
+        # Values are serialized by a YAML/JSON emitter (never string interpolation), so quotes,
+        # colons or newlines in a name cannot corrupt the manifest.
+        contents: dict[str, str] = {
+            "smdc-app.json": manifest.to_json(indent=2),
+            "smdc-app.yaml": cls.render_manifest_yaml(manifest),
+        }
+        if create_sample_code:
+            contents["app.py"] = cls._render_sample_app(manifest)
+            contents["Dockerfile"] = cls._render_dockerfile(manifest)
+            contents["README.md"] = cls._render_readme(manifest)
+        if set(contents) != set(cls.scaffold_file_names(create_sample_code)):  # pragma: no cover - invariant
+            raise RuntimeError("scaffold file list and rendered contents disagree")
+
+        existing = cls.existing_scaffold_files(dest, create_sample_code)
+        if existing and not force:
+            raise ScaffoldConflictError(dest, existing)
+
+        dest.mkdir(parents=True, exist_ok=True)
+        stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+        for path in existing:
+            backup = cls._backup_path(path, stamp)
+            os.rename(path, backup)
+            logger.warning("Scaffold --force: moved existing %s to %s", path, backup)
+            if backups is not None:
+                backups.append((path, backup))
+
+        for name in cls.scaffold_file_names(create_sample_code):
+            cls._write_text_atomic(dest / name, contents[name])
 
         return dest

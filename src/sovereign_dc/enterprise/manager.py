@@ -43,6 +43,7 @@ the CPU / RAM / power figures are estimates derived from the manifest's resource
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import hmac
 import json
@@ -579,8 +580,9 @@ class EnterpriseManager:
 
     @staticmethod
     def _is_excluded_name(name: str) -> bool:
-        """Dotfiles (.env, .git, .venv, ...) and bytecode caches never go into a package."""
-        return name.startswith(".") or name.startswith("__pycache__")
+        """Dotfiles (.env, .git, .venv, ...), bytecode caches and `smdc app init --force` backups
+        (``<name>.bak-<timestamp>``) never go into a package."""
+        return name.startswith(".") or name.startswith("__pycache__") or ".bak-" in name
 
     @classmethod
     def _collect_package_files(cls, source_dir: Path, skip: set[Path]) -> list[tuple[Path, str]]:
@@ -636,35 +638,48 @@ class EnterpriseManager:
 
         out_file = Path(output_path or f"{manifest.app_id}-{manifest.version}.smdc-app")
         sidecar = package_sidecar_path(out_file)
+        # Archive and sidecar are built under temporary dot-names (never collected into a
+        # package) and renamed into place only when every requested step, signing included,
+        # has succeeded: a failed run leaves no file that looks like a finished package.
+        tmp_token = f"{os.getpid()}-{time.time_ns()}"
+        tmp_out = out_file.with_name(f".{out_file.name}.{tmp_token}.tmp")
+        tmp_sidecar = sidecar.with_name(f".{sidecar.name}.{tmp_token}.tmp")
 
         try:
             out_file.parent.mkdir(parents=True, exist_ok=True)
-            members = self._collect_package_files(source_dir, skip={out_file.resolve(), sidecar.resolve()})
+            members = self._collect_package_files(
+                source_dir,
+                skip={out_file.resolve(), sidecar.resolve(), tmp_out.resolve(), tmp_sidecar.resolve()},
+            )
 
             # Build tarball
-            with tarfile.open(out_file, "w:gz") as tar:
+            with tarfile.open(tmp_out, "w:gz") as tar:
                 for item, arcname in members:
                     tar.add(item, arcname=arcname, recursive=False)
 
-            sha256_digest = _sha256_file(out_file)
+            sha256_digest = _sha256_file(tmp_out)
 
             metadata: dict[str, Any] = {
                 "app_id": manifest.app_id,
                 "version": manifest.version,
                 "sha256": sha256_digest,
-                "package_size_bytes": out_file.stat().st_size,
+                "package_size_bytes": tmp_out.stat().st_size,
                 "created_at": time.time(),
                 "pqc_signature": None,
             }
 
-            # Optional NIST FIPS 204 ML-DSA attestation
+            # NIST FIPS 204 ML-DSA attestation. Requested signing that fails is a packaging
+            # failure (fail closed): an unsigned package is produced only with sign_pqc=False.
             if sign_pqc:
                 try:
                     from sovereign_dc.security.pqc import PQCAlgorithm, PQCSigner, get_node_pqc_keypair
 
                     signer = PQCSigner(PQCAlgorithm.ML_DSA_87)
-                    kp = get_node_pqc_keypair(PQCAlgorithm.ML_DSA_87)
+                    # Only the persisted node identity may sign a package (never a throwaway key).
+                    kp = get_node_pqc_keypair(PQCAlgorithm.ML_DSA_87, require_persistent=True)
                     sig = signer.sign(_package_signing_input(metadata, PACKAGE_SIGNATURE_SCHEME), kp.private_key)
+                    if not sig:
+                        raise ValueError("signer returned an empty signature")
                     metadata["pqc_signature"] = {
                         "algorithm": PACKAGE_SIGNATURE_ALGORITHM,
                         "scheme": PACKAGE_SIGNATURE_SCHEME,
@@ -673,10 +688,19 @@ class EnterpriseManager:
                         "signature_hex": sig.hex(),
                     }
                 except Exception as e:
-                    logger.warning("PQC package signing skipped: %s", e)
+                    reason = str(e) or type(e).__name__
+                    logger.error("PQC package signing failed; no package was produced: %s", reason)
+                    return (
+                        False,
+                        f"PQC signing failed ({reason}); no package was written to {out_file}. "
+                        "Fix the signing key/library, or pass sign_pqc=False (--no-pqc) for an unsigned package.",
+                        {},
+                    )
 
-            # Save manifest sidecar
-            sidecar.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+            # Save manifest sidecar, then publish sidecar and archive.
+            tmp_sidecar.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+            os.replace(tmp_out, out_file)
+            os.replace(tmp_sidecar, sidecar)
 
             logger.info(
                 "Successfully packaged enterprise application to %s (SHA-256: %s...)",
@@ -687,3 +711,7 @@ class EnterpriseManager:
         except Exception as e:
             logger.error("Failed to package application: %s", e)
             return False, f"Packaging error: {e}", {}
+        finally:
+            for leftover in (tmp_out, tmp_sidecar):
+                with contextlib.suppress(OSError):
+                    leftover.unlink()

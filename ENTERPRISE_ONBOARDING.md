@@ -155,7 +155,7 @@ The thresholds are `SovereignConfig.shedding_l1_soc` to `shedding_l4_soc`, set w
 
 Rules that hold for every tier:
 
-- Only a tracked application in state `running` is paused, and only an application that shedding paused is resumed. An operator's `smdc app pause` stays in force until the operator resumes the application.
+- Only a tracked application in state `running` is paused, and only an application that shedding paused is resumed. An operator's manual pause stays in force until the operator resumes the application. The entry point for it is the long-running process that holds the manager: the MCP tool `manage_enterprise_app` (`action: "pause"` / `"resume"`) or `EnterpriseManager.pause_app()` / `resume_app()` in that process. The `smdc` CLI has no `app pause` command: each invocation is a separate process whose manager state lives in memory only, so a one-shot CLI command could not hold a pause.
 - The policy is applied when a `load_shedding.*` event arrives, and again when an application is started: the manager remembers the level and SoC of the last event, and `smdc app start` (or `start_app`) on an application that this level, or its `min_battery_soc`, would pause starts it **paused by shedding** (`enterprise.<app_id>.started` followed by `enterprise.<app_id>.paused` with `paused_by: load_shedding`). The call succeeds, its message names the level, and the application is resumed like any other shed application when shedding eases. A manager that has not seen an event yet (a new process, such as one `smdc app start` invocation) knows no level and starts the application running.
 - The sentinel publishes an event when its mode or the level changes, and again whenever the SoC has moved by 1 percentage point since the last event.
 
@@ -216,6 +216,12 @@ This generates:
 - `app.py`: Starter Python code wired to `sovereign_dc.enterprise.sdk`
 - `Dockerfile`: Multi-architecture container recipe
 - `README.md`: Project documentation
+
+`smdc app init` never overwrites silently. If any of these files already exists in the target directory it lists them, writes nothing and exits non-zero, so re-running it on an application under development cannot destroy its code. Pass `--force` to replace them anyway: each existing file is first moved to `<name>.bak-<UTC timestamp>` beside it, then the new file is written.
+
+```bash
+smdc app init "Predictive Maintenance" --app-id "predictive-maint" --target-dir ./predictive-maint --force
+```
 
 ---
 
@@ -322,12 +328,14 @@ smdc app package ./predictive-maint --output predictive-maint-1.0.0.smdc-app
 
 Output:
 ```
-[INFO] Packaging enterprise application directory: ./predictive-maint
-[INFO] Computed SHA-256 Digest: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-[INFO] Generating Post-Quantum Signature (NIST FIPS 204 ML-DSA-87)...
-[INFO] Created signature sidecar: predictive-maint-1.0.0.smdc-app.sig
-[SUCCESS] Application packaged to predictive-maint-1.0.0.smdc-app
+  ✔ Application packaged to predictive-maint-1.0.0.smdc-app
+  • App ID:            predictive-maint (v1.0.0)
+  • SHA-256 Digest:    <sha256 of the archive>
+  • Package Size:      <size> bytes
+  • PQC Signature:     NIST FIPS 204 ML-DSA-87 signature attached
 ```
+
+The signature and metadata are written to the sidecar `predictive-maint-1.0.0.smdc-app.sig`. Signing is on by default and fails closed: if the ML-DSA-87 signature cannot be produced, the command prints the reason, exits non-zero and leaves neither the archive nor the sidecar behind. An unsigned package is produced only when `--no-pqc` is passed (the output then says `Omitted (--no-pqc)`).
 
 ---
 

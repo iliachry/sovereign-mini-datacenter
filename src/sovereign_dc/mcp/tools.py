@@ -307,10 +307,21 @@ def tool_spool_dtn_bundle(params: dict[str, Any]) -> dict[str, Any]:
     )
 
     cfg = get_config()
-    request: dict[str, Any] = {
-        "destination": params.get("destination", DTN_DEFAULT_DESTINATION),
-        "payload": str(params.get("payload", "TELEMETRY_SNAPSHOT")),
-    }
+    # The advertised schema cannot say "one of payload / payload_b64" without a top-level
+    # JSON-Schema combinator (which several MCP clients reject), so the rule is enforced here.
+    if params.get("payload") is None and params.get("payload_b64") is None:
+        return {
+            "success": False,
+            "signed": False,
+            "status": "REJECTED",
+            "error": (
+                "Bundle was not queued: provide 'payload' (text) or 'payload_b64' (base64, for binary data); "
+                "neither was given."
+            ),
+        }
+    request: dict[str, Any] = {"destination": params.get("destination", DTN_DEFAULT_DESTINATION)}
+    if params.get("payload") is not None:
+        request["payload"] = str(params["payload"])
     if params.get("ttl_seconds") is not None:
         request["ttl"] = params["ttl_seconds"]
     for key in ("payload_b64", "priority", "source"):
@@ -610,7 +621,7 @@ def get_mcp_tools() -> list[MCPTool]:
         ),
         MCPTool(
             name="spool_dtn_bundle",
-            description="Create and queue an unsigned RFC 9171 BPv7 Delay-Tolerant bundle into the local store-and-forward spool awaiting satellite contact passes. The result reports what was stored (source, priority, TTL, payload size and SHA-256).",
+            description="Create and queue an unsigned RFC 9171 BPv7 Delay-Tolerant bundle into the local store-and-forward spool awaiting satellite contact passes. Requires 'destination' and one of 'payload' (text) or 'payload_b64' (binary, base64). The result reports what was stored (source, priority, TTL, payload size and SHA-256).",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -618,10 +629,16 @@ def get_mcp_tools() -> list[MCPTool]:
                         "type": "string",
                         "description": "RFC 9171 Endpoint ID (e.g. dtn://ground-station.earth/telemetry)",
                     },
-                    "payload": {"type": "string", "description": "Text or JSON payload string"},
+                    "payload": {
+                        "type": "string",
+                        "description": "Text or JSON payload string. One of 'payload' or 'payload_b64' must be given.",
+                    },
                     "payload_b64": {
                         "type": "string",
-                        "description": "Binary payload as base64 (used instead of 'payload' when given)",
+                        "description": (
+                            "Binary payload as standard base64; replaces 'payload' (used instead of it when both "
+                            "are given). One of 'payload' or 'payload_b64' must be given."
+                        ),
                     },
                     "priority": {
                         "type": "integer",
@@ -637,7 +654,9 @@ def get_mcp_tools() -> list[MCPTool]:
                         "description": "Optional source Endpoint ID (default: this node's dtn://<node-id>/mcp)",
                     },
                 },
-                "required": ["destination", "payload"],
+                # Only the destination is required by the schema: the payload is 'payload' OR
+                # 'payload_b64' (the handler rejects a request that carries neither).
+                "required": ["destination"],
             },
             handler=tool_spool_dtn_bundle,
         ),
@@ -730,7 +749,7 @@ def get_mcp_tools() -> list[MCPTool]:
         ),
         MCPTool(
             name="scaffold_enterprise_app",
-            description="Generate a standardized SMDC enterprise application manifest (smdc-app.yaml) for third-party software onboarding.",
+            description="Generate a standardized SMDC enterprise application manifest (smdc-app.yaml) for third-party software onboarding. Returns the manifest and a YAML preview only: no file or directory is written (use `smdc app init` to create the project directory).",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -865,7 +884,12 @@ def tool_manage_enterprise_app(params: dict[str, Any]) -> dict[str, Any]:
 
 
 def tool_scaffold_enterprise_app(params: dict[str, Any]) -> dict[str, Any]:
-    """Generates an enterprise application manifest and directory template."""
+    """Generates and validates an enterprise application manifest; returns it with a YAML preview.
+
+    Nothing is written to disk (no target directory is accepted), so this tool can never
+    overwrite an application's files. The project directory is created by ``smdc app init``,
+    which refuses to replace existing files unless ``--force`` is passed.
+    """
     from sovereign_dc.enterprise.registry import EnterpriseRegistry
     from sovereign_dc.enterprise.schema import AppCategory, PowerPriority, RuntimeType, slugify_app_id
 

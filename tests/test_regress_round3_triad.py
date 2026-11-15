@@ -259,6 +259,7 @@ def qdrant(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[FlakyQdr
     monkeypatch.setattr(knowledge_indexer, "WATCH_DIR", str(docs))
     monkeypatch.setattr(knowledge_indexer, "UPSERT_BATCH_SIZE", 2)
     monkeypatch.setattr(knowledge_indexer, "_cleanup_pending", set())
+    monkeypatch.setattr(knowledge_indexer, "_reconcile_pending", set())
     with (
         patch.object(knowledge_indexer, "get_embedding", return_value=[0.1] * knowledge_indexer.EMBEDDING_DIM),
         patch("urllib.request.urlopen", side_effect=fake),

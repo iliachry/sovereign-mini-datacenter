@@ -38,6 +38,24 @@ BASE_SERVICE_PRICING: dict[ServiceType, tuple[float, str]] = {
 }
 
 
+# Energy-state pricing rule (``ComputeMarket.get_dynamic_multiplier``). README.md and AGENTS.md
+# quote these figures; tests/test_regress_round5_astra.py compares the documents with them.
+#
+# Surplus discount: battery SoC at or above SOLAR_SURPLUS_MIN_SOC_PERCENT *and* a measured
+# solar harvest at or above SOLAR_SURPLUS_MIN_SOLAR_WATTS. (The sentinel's
+# SOLAR_SURPLUS_COMPUTE operating mode is a different rule with its own, higher solar bar.)
+SOLAR_SURPLUS_MIN_SOC_PERCENT = 75.0
+SOLAR_SURPLUS_MIN_SOLAR_WATTS = 500.0
+SOLAR_SURPLUS_MULTIPLIER = 0.50
+# Nominal pricing at or above this SoC (when the surplus discount does not apply).
+NOMINAL_MIN_SOC_PERCENT = 40.0
+NOMINAL_MULTIPLIER = 1.00
+# Moderate surge from this SoC up to NOMINAL_MIN_SOC_PERCENT; critical surge below it.
+MODERATE_SURGE_MIN_SOC_PERCENT = 25.0
+MODERATE_SURGE_MULTIPLIER = 1.50
+CRITICAL_SURGE_MULTIPLIER = 3.00
+
+
 @dataclass
 class PriceQuote:
     """Dynamic pricing quotation for an autonomous service request."""
@@ -90,10 +108,14 @@ class ComputeMarket:
     def get_dynamic_multiplier(battery_soc: float, solar_power_w: float | None) -> tuple[float, str]:
         """Calculates price discount/surge multiplier based on physical energy state.
 
-        - Battery SoC > 75% & Solar > 500W: 50% Green Discount (excess power monetization)
-        - Battery SoC 40-75%: Nominal pricing (1.0x)
-        - Battery SoC 25-40%: Moderate surge (1.5x)
-        - Battery SoC < 25%: Heavy preservation surge (3.0x)
+        - Battery SoC >= 75% and solar >= 500 W: 50% surplus discount (0.5x)
+        - Battery SoC >= 40% (otherwise): nominal pricing (1.0x)
+        - Battery SoC 25% up to 40%: moderate surge (1.5x)
+        - Battery SoC < 25%: heavy preservation surge (3.0x)
+
+        The figures are the module constants ``SOLAR_SURPLUS_*``, ``NOMINAL_*``,
+        ``MODERATE_SURGE_*`` and ``CRITICAL_SURGE_MULTIPLIER``; every bound is inclusive at
+        its lower end.
 
         ``solar_power_w`` may be None (the node has no solar measurement): an unknown harvest
         never earns the surplus discount. A non-finite ``battery_soc`` raises ValueError
@@ -103,14 +125,18 @@ class ComputeMarket:
             raise ValueError("battery_soc must be a finite number")
         if solar_power_w is not None and not math.isfinite(solar_power_w):
             solar_power_w = None
-        if battery_soc >= 75.0 and solar_power_w is not None and solar_power_w >= 500.0:
-            return 0.50, "SOLAR_SURPLUS_DISCOUNT_50%"
-        elif battery_soc >= 40.0:
-            return 1.00, "NOMINAL_ENERGY_STATE"
-        elif battery_soc >= 25.0:
-            return 1.50, "MODERATE_POWER_SURGE_150%"
+        if (
+            battery_soc >= SOLAR_SURPLUS_MIN_SOC_PERCENT
+            and solar_power_w is not None
+            and solar_power_w >= SOLAR_SURPLUS_MIN_SOLAR_WATTS
+        ):
+            return SOLAR_SURPLUS_MULTIPLIER, "SOLAR_SURPLUS_DISCOUNT_50%"
+        elif battery_soc >= NOMINAL_MIN_SOC_PERCENT:
+            return NOMINAL_MULTIPLIER, "NOMINAL_ENERGY_STATE"
+        elif battery_soc >= MODERATE_SURGE_MIN_SOC_PERCENT:
+            return MODERATE_SURGE_MULTIPLIER, "MODERATE_POWER_SURGE_150%"
         else:
-            return 3.00, "CRITICAL_BATTERY_SURGE_300%"
+            return CRITICAL_SURGE_MULTIPLIER, "CRITICAL_BATTERY_SURGE_300%"
 
     def calculate_quote(
         self,

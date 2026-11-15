@@ -45,7 +45,8 @@ def test_smdc_space_passes_cli():
     )
     assert res.returncode == 0
     assert "Upcoming Space Contact Passes" in res.stdout
-    assert "Starlink" in res.stdout or "Swarm" in res.stdout
+    # Which satellites pass in the next 6 h depends on the wall clock, so no satellite
+    # name is asserted here; pass prediction itself is tested with a pinned clock elsewhere.
 
 
 def test_smdc_mesh_cli():

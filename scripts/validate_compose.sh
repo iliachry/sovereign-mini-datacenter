@@ -319,6 +319,42 @@ if errors:
     sys.exit("%d backup-coverage violation(s)" % len(errors))
 PY
 
+# ── Traefik basic-auth hash survives the documented .env transformation ──
+# env.example tells the operator to double every `$` of the htpasswd hash. Compose
+# interpolates unquoted env-file values, where `$$` is an escaped `$`, so Traefik must
+# receive the hash with single dollars. `docker compose config` prints every literal `$`
+# of its output as `$$` (so that the output is itself a valid Compose file): the label is
+# un-escaped once before it is compared. A container label has the un-escaped value.
+echo "--> Traefik dashboard auth: documented htpasswd transformation yields the original hash"
+AUTH_TEST_HASH='admin:$apr1$Ab3dEf9h$pnmZV.qJrPK4ciUn2AqRt/' # openssl passwd -apr1 -salt Ab3dEf9h yourpassword
+AUTH_ENV="${INVARIANT_DIR}/auth-test.env"
+grep -q "sed -e 's/\\\\\$/\\\\\$\\\\\$/g'" "$ENV_FILE" \
+    || { echo "env.example no longer documents the sed transformation this check applies" >&2; exit 1; }
+grep -v '^TRAEFIK_DASHBOARD_AUTH=' "$ENV_FILE" >"$AUTH_ENV"
+# shellcheck disable=SC2016  # the sed program is the one documented in env.example
+printf 'TRAEFIK_DASHBOARD_AUTH=%s\n' "$(printf '%s' "$AUTH_TEST_HASH" | sed -e 's/\$/\$\$/g')" >>"$AUTH_ENV"
+docker compose --env-file "$AUTH_ENV" -f "${SW}/docker-compose.yml" config --format json \
+    | EXPECTED="$AUTH_TEST_HASH" python3 -c '
+import json, os, sys
+
+expected = os.environ["EXPECTED"]
+cfg = json.load(sys.stdin)
+found = []
+for name, svc in sorted(cfg["services"].items()):
+    labels = svc.get("labels") or {}
+    if isinstance(labels, list):
+        labels = dict(item.split("=", 1) for item in labels)
+    for key, value in labels.items():
+        if key.endswith(".basicauth.users"):
+            found.append((name, key, value.replace("$$", "$")))
+if not found:
+    sys.exit("no Traefik basicauth.users label found in docker-compose.yml")
+for name, key, value in found:
+    if value != expected:
+        sys.exit("%s: %s resolves to %r, expected %r" % (name, key, value, expected))
+    print("    ok  %s: %s = %s" % (name, key, value))
+'
+
 echo "--> setup.sh --all --dry-run"
 bash "${SW}/setup.sh" --all --dry-run >/dev/null
 

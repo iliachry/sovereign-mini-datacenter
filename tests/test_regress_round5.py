@@ -695,3 +695,59 @@ def test_env_example_documents_the_current_backup_and_shedding_variables() -> No
     assert "BACKUP_POLL_SECONDS=${BACKUP_POLL_SECONDS:-300}" in compose and "BACKUP_INTERVAL_SECONDS" not in compose
     agents = (ROOT / "software" / "agents" / "docker-compose.agents.yml").read_text(encoding="utf-8")
     assert "SHEDDING_HYSTERESIS_SOC=${SHEDDING_HYSTERESIS_SOC:-2}" in agents
+
+
+class TestExporterSheddingPolicyValidation:
+    """The exporter flag threshold follows the one four-value policy, like the sentinel."""
+
+    @pytest.mark.parametrize(
+        ("env", "expected"),
+        [
+            ({}, 20.0),
+            ({"SHEDDING_L3_SOC": "25"}, 25.0),
+            ({"SHEDDING_L3_SOC": "35"}, 20.0),  # L2 (30) is not above L3: invalid policy
+            ({"SHEDDING_L3_SOC": "150"}, 20.0),
+            ({"SHEDDING_L3_SOC": "abc"}, 20.0),
+            ({"SHEDDING_L1_SOC": "60", "SHEDDING_L2_SOC": "40", "SHEDDING_L3_SOC": "25", "SHEDDING_L4_SOC": "5"}, 25.0),
+            ({"SHEDDING_L4_SOC": "30"}, 20.0),
+        ],
+    )
+    def test_threshold_matches_config_policy(self, monkeypatch, env, expected):
+        import importlib.util
+        from pathlib import Path
+
+        from sovereign_dc import telemetry
+        from sovereign_dc.config import SovereignConfig
+
+        for name in ("SHEDDING_L1_SOC", "SHEDDING_L2_SOC", "SHEDDING_L3_SOC", "SHEDDING_L4_SOC"):
+            monkeypatch.delenv(name, raising=False)
+        for name, value in env.items():
+            monkeypatch.setenv(name, value)
+
+        assert telemetry.load_shedding_soc_percent() == expected
+        spec = importlib.util.spec_from_file_location(
+            "standalone_power_exporter", Path(__file__).parents[1] / "software" / "telemetry" / "power_exporter.py"
+        )
+        assert spec is not None and spec.loader is not None
+        standalone = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(standalone)
+        assert standalone.load_shedding_soc_percent() == expected
+        # Same answer as the Python services' policy.
+        assert SovereignConfig.from_env().shedding_l3_soc == expected
+
+
+def test_space_passes_cli_does_not_depend_on_which_satellite_is_overhead():
+    from pathlib import Path
+
+    text = (Path(__file__).parent / "test_cli.py").read_text(encoding="utf-8")
+    body = text[text.index("def test_smdc_space_passes_cli") :].split("\ndef ")[0]
+    assert '"Starlink" in res.stdout' not in body
+
+
+def test_backup_container_has_a_fixed_hostname_for_restic_retention():
+    from pathlib import Path
+
+    compose = (Path(__file__).parents[1] / "software" / "backup" / "docker-compose.backup.yml").read_text(
+        encoding="utf-8"
+    )
+    assert "hostname: sovereign-backup" in compose

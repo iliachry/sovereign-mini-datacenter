@@ -49,6 +49,9 @@ services:
   backup-cron:
     image: restic/restic:0.19.1
     container_name: sovereign_backup
+    # Fixed hostname: restic groups snapshots by host for retention (`forget --group-by host`);
+    # the default (the container id) would start a new group on every re-creation.
+    hostname: sovereign-backup
     restart: unless-stopped
     entrypoint: ["/bin/sh", "-c"]
     command:

@@ -176,8 +176,11 @@ def _move(src: str, dst: str) -> None:
         os.rename(src, dst)
     except OSError:
         shutil.move(src, dst)
-    with contextlib.suppress(OSError):
+    try:
         os.chmod(dst, 0o600)
+    except OSError as err:
+        # The file is already inside the 0700 state directory; say that its own mode is wider.
+        logger.warning("Could not restrict adopted file %s to mode 0600: %s", dst, err)
 
 
 def _adopt(legacy: LegacySet, directory: str, paths: NodeStatePaths) -> None:

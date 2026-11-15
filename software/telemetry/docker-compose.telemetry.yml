@@ -30,7 +30,10 @@ services:
       - ESP32_BRIDGE_URL=${ESP32_BRIDGE_URL:-}
       - ESP32_BRIDGE_MAX_FRAME_AGE_SECONDS=${ESP32_BRIDGE_MAX_FRAME_AGE_SECONDS:-10}
       # sovereign_load_shedding_active is 1 while battery SoC is below this (shedding level 3).
+      - SHEDDING_L1_SOC=${SHEDDING_L1_SOC:-50}
+      - SHEDDING_L2_SOC=${SHEDDING_L2_SOC:-30}
       - SHEDDING_L3_SOC=${SHEDDING_L3_SOC:-20}
+      - SHEDDING_L4_SOC=${SHEDDING_L4_SOC:-10}
     volumes:
       - ./telemetry/power_exporter.py:/app/power_exporter.py:ro
     networks:

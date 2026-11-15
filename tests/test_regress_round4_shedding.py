@@ -265,7 +265,8 @@ def test_compose_overlays_pass_the_thresholds_with_the_config_defaults() -> None
             assert float(default) == defaults[name], f"{path.name}: {name} default {default}"
             found.setdefault(path.name, set()).add(name)
     assert found["docker-compose.agents.yml"] == set(ENV_NAMES)  # the sentinel needs all four
-    assert found["docker-compose.telemetry.yml"] == {"SHEDDING_L3_SOC"}  # the exporter flag
+    # The exporter validates its flag threshold against the whole policy, so it needs all four too.
+    assert found["docker-compose.telemetry.yml"] == set(ENV_NAMES)
 
 
 # --- documents cannot drift ---------------------------------------------------------------------

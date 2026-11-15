@@ -1782,7 +1782,7 @@ def cmd_app_init(args):
     """Scaffold a new turnkey enterprise application."""
     from pathlib import Path
 
-    from sovereign_dc.enterprise.registry import EnterpriseRegistry
+    from sovereign_dc.enterprise.registry import EnterpriseRegistry, ScaffoldConflictError
     from sovereign_dc.enterprise.schema import AppCategory, PowerPriority, RuntimeType, slugify_app_id
 
     print(f"\n{BOLD}{CYAN}=== Sovereign Mini Datacenter — Enterprise App Scaffolding ==={RESET}\n")
@@ -1815,7 +1815,25 @@ def cmd_app_init(args):
         power_tier=power_tier,
     )
 
-    created_path = EnterpriseRegistry.create_project_scaffold(target_dir, manifest, create_sample_code=True)
+    backups: list[tuple[Path, Path]] = []
+    try:
+        created_path = EnterpriseRegistry.create_project_scaffold(
+            target_dir, manifest, create_sample_code=True, force=bool(getattr(args, "force", False)), backups=backups
+        )
+    except ScaffoldConflictError as e:
+        print(f"  {RED}✖ Refusing to scaffold into {BOLD}{target_dir}{RESET}{RED}: these files already exist:{RESET}")
+        for existing in e.existing:
+            print(f"      - {existing}")
+        print(
+            f"\n  Nothing was written. Choose another {CYAN}--target-dir{RESET}, or pass {CYAN}--force{RESET} to "
+            "replace them (each existing file is first moved to <name>.bak-<timestamp>).\n"
+        )
+        return 1
+    except OSError as e:
+        print(f"  {RED}✖ Could not create the scaffold in {target_dir}: {e}{RESET}\n")
+        return 1
+    for original, backup in backups:
+        print(f"  {YELLOW}! Existing file kept as backup:{RESET} {original.name} → {backup}")
     print(f"  {GREEN}✔ Created enterprise app scaffold:{RESET} {BOLD}{created_path}{RESET}")
     print(f"  • App Name:      {CYAN}{manifest.name}{RESET} (`{manifest.app_id}`)")
     print(f"  • Category:      {MAGENTA}{manifest.category.value}{RESET}")
@@ -1830,6 +1848,7 @@ def cmd_app_init(args):
     print(f"  2. Register with node:  {CYAN}smdc app register {created_path}{RESET}")
     print(f"  3. Start execution:     {CYAN}smdc app start {manifest.app_id}{RESET}")
     print(f"  4. Monitor telemetry:   {CYAN}smdc app status {manifest.app_id}{RESET}\n")
+    return 0
 
 
 def _print_backup_declaration_notice(manifest: Any) -> None:
@@ -2078,8 +2097,11 @@ def cmd_app_package(args):
         pqc_sig = meta.get("pqc_signature")
         if pqc_sig:
             print(f"  • PQC Signature:     {GREEN}NIST FIPS 204 ML-DSA-87 signature attached{RESET}")
-        else:
+        elif args.no_pqc:
             print(f"  • PQC Signature:     {YELLOW}Omitted (--no-pqc){RESET}")
+        else:  # package_app fails when a requested signature cannot be made; never report success here
+            print(f"  {RED}✖ Signing was requested but the package carries no signature.{RESET}\n")
+            return 1
         print("\n  Package is ready for air-gapped deployment and Space DTN synchronization.\n")
         return 0
     print(f"  {RED}✖ {msg}{RESET}\n")
@@ -2654,6 +2676,12 @@ def main():
         help="Power load shedding priority tier (default: L1_STANDARD)",
     )
     p_app_init.add_argument("--target-dir", type=str, help="Target destination directory for scaffolding")
+    p_app_init.add_argument(
+        "--force",
+        action="store_true",
+        help="Replace scaffold files that already exist in the target directory "
+        "(each is first moved to <name>.bak-<timestamp>); without it, init refuses and writes nothing",
+    )
     p_app_init.set_defaults(func=cmd_app_init)
 
     p_app_val = app_subs.add_parser("validate", help="Validate manifest against schema and node hardware budgets")

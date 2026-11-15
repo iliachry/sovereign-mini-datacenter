@@ -311,10 +311,12 @@ def list_indexed_sources() -> set[str]:
 _cleanup_pending: set[str] = set()
 
 
-# Documents whose current chunks were written but whose stale-chunk deletion failed (see
-# ``index_file``). The collection holds their complete new version, possibly next to chunks
-# of an older one, and the caller does not record them as indexed. They are tracked here so
-# that ``scan_and_index`` removes their points if the file vanishes before a retry succeeds.
+# Documents that may hold points the caller does not record as indexed (see ``index_file``):
+# either their current chunks were written but the stale-chunk deletion failed (the
+# collection holds the complete new version, possibly next to chunks of an older one), or
+# their first upsert failed with an unknown outcome (it may have been committed). They are
+# tracked here so that ``scan_and_index`` removes their points if the file vanishes before a
+# retry succeeds.
 _reconcile_pending: set[str] = set()
 
 
@@ -324,7 +326,7 @@ def pending_cleanup_paths() -> frozenset[str]:
 
 
 def pending_reconcile_paths() -> frozenset[str]:
-    """Documents whose points were written but whose stale-chunk deletion is still due."""
+    """Documents that may hold points nothing else tracks (stale-chunk deletion or first upsert failed)."""
     return frozenset(_reconcile_pending)
 
 
@@ -372,12 +374,14 @@ def index_file(filepath: str) -> bool:
     only on success). The attempt is therefore rolled back: every point of the document is
     deleted, so a file that is removed before the next scan leaves nothing searchable behind.
     If that deletion fails too, the path is kept in a needs-cleanup set which
-    ``scan_and_index`` retries on every scan. A failure of the first batch wrote nothing and
-    deletes nothing. A failure of the final stale-chunk deletion leaves the complete new
-    version in place (searchable) and records the path in a pending-reconciliation set, so
-    that ``scan_and_index`` still removes its points if the file is deleted before a retry
-    succeeds: for a new document nothing else tracks them. In every case the whole document
-    is retried on the next scan.
+    ``scan_and_index`` retries on every scan. A failure of the first batch deletes nothing
+    (a previous version stays searchable), but its outcome is unknown: the request may have
+    been committed before its response was lost. The path is therefore recorded in the
+    pending-reconciliation set, exactly as after a failure of the final stale-chunk deletion
+    (which leaves the complete new version in place, searchable): ``scan_and_index`` then
+    still removes the document's points if the file is deleted before a retry succeeds; for a
+    new document nothing else tracks them. In every case the whole document is retried on the
+    next scan.
 
     A document larger than ``MAX_FILE_BYTES`` is refused (see ``is_oversized``).
 
@@ -423,6 +427,18 @@ def index_file(filepath: str) -> bool:
                         e,
                         start,
                         "rolled back" if rolled_back else "NOT removed yet (cleanup pending)",
+                    )
+                else:
+                    # The outcome of a failed request is unknown: Qdrant may have committed the
+                    # batch before the response was lost. Nothing is deleted (a previous version
+                    # stays searchable), but the path is tracked so its points are removed if
+                    # the file is gone before a retry succeeds.
+                    _reconcile_pending.add(filepath)
+                    logger.error(
+                        "First upsert of %s failed (%s); its outcome is unknown, so the document is tracked "
+                        "for reconciliation.",
+                        filepath,
+                        e,
                     )
                 raise
         try:
@@ -499,8 +515,9 @@ def scan_and_index(indexed_files: set[tuple[str, float]]) -> tuple[int, int]:
     counts as a failure). That does not depend on the file still existing or on WATCH_DIR
     being listable: such points belong to no recorded document.
 
-    A document whose chunks were written but whose stale-chunk deletion failed
-    (``pending_reconcile_paths``) is not in ``indexed_files`` either. While its file is
+    A document whose chunks were written but whose stale-chunk deletion failed, or whose
+    first upsert failed with an unknown outcome (``pending_reconcile_paths``), is not in
+    ``indexed_files`` either. While its file is
     eligible it is simply indexed again; once the file is no longer eligible its points are
     removed exactly like those of a recorded document (same WATCH_DIR safeguards).
     """
