@@ -66,18 +66,39 @@ env_file_value() {
     efv="$(sed -n "s/^[[:space:]]*$1=//p" "$ENV_FILE" | tail -n 1 | tr -d '\r')"
     # Decoded as Docker Compose decodes its .env file, so that this script and the backup
     # container (which gets the value through Compose) use the same password:
-    # single-quoted values are literal; in unquoted and double-quoted values `$$` is one
-    # `$`. A `$NAME` / `${NAME}` reference, or a backslash escape inside double quotes,
-    # would be expanded by Compose and is refused here instead of being guessed.
+    # blanks after `=` are dropped; a single-quoted value is literal; in unquoted and
+    # double-quoted values `$$` is one `$`; after a closing quote only a ` # comment` may
+    # follow. What Compose would expand or unescape (a `$NAME` / `${NAME}` reference, a
+    # backslash inside quotes) is refused here instead of being guessed.
+    efv="$(printf '%s' "$efv" | sed -e 's/^[[:space:]]*//')"
+    efv_quote=""
     case "$efv" in
-        \'*\'*) efv="${efv#\'}"; efv="${efv%\'*}"; printf '%s' "$efv"; return 0 ;;
-        \"*\"*)
-            efv="${efv#\"}"; efv="${efv%\"*}"
-            case "$efv" in
-                *\\*) echo "[ERROR]   $1 in ${ENV_FILE} is double-quoted and contains a backslash; put the value in single quotes." >&2; return 2 ;;
-            esac ;;
-        *) efv="$(printf '%s' "$efv" | sed -e 's/[[:space:]]#.*$//' -e 's/[[:space:]]*$//')" ;;
+        \'*) efv_quote="'" ;;
+        \"*) efv_quote='"' ;;
     esac
+    if [ -n "$efv_quote" ]; then
+        efv="${efv#?}"
+        case "$efv" in
+            *"$efv_quote"*) ;;
+            *) echo "[ERROR]   $1 in ${ENV_FILE} has an opening quote without a closing one." >&2; return 2 ;;
+        esac
+        efv_after="${efv#*"$efv_quote"}"
+        efv="${efv%%"$efv_quote"*}"
+        case "$efv" in
+            *\\*) echo "[ERROR]   $1 in ${ENV_FILE} is quoted and contains a backslash, which Docker Compose may treat as an escape; use a value without backslashes." >&2; return 2 ;;
+        esac
+        efv_after="$(printf '%s' "$efv_after" | sed -e 's/^[[:space:]][[:space:]]*#.*$//' -e 's/[[:space:]]*$//')"
+        if [ -n "$efv_after" ]; then
+            echo "[ERROR]   $1 in ${ENV_FILE} has text after its closing quote; only a comment (space, then #) may follow." >&2
+            return 2
+        fi
+        if [ "$efv_quote" = "'" ]; then
+            printf '%s' "$efv"
+            return 0
+        fi
+    else
+        efv="$(printf '%s' "$efv" | sed -e 's/[[:space:]]#.*$//' -e 's/[[:space:]]*$//')"
+    fi
     efv_rest="$(printf '%s' "$efv" | sed 's/\$\$//g')"
     case "$efv_rest" in
         *\$[A-Za-z_\{]*)

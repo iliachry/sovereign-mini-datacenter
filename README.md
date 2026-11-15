@@ -111,7 +111,7 @@ sovereign-mini-datacenter/
 ├── src/
 │   └── sovereign_dc/            # Python CLI & Core Stack Package (`smdc`)
 │       ├── __init__.py          # Version & package metadata
-│       ├── cli.py               # Unified CLI interface (Click/Rich)
+│       ├── cli.py               # Unified CLI interface (argparse)
 │       ├── config.py            # Layered configuration (Defaults -> YAML -> Env)
 │       ├── events.py            # In-process thread-safe pub/sub event bus
 │       ├── log.py               # Structured JSON & colored logging
@@ -165,7 +165,7 @@ sovereign-mini-datacenter/
 │   ├── MANUFACTURING_GUIDE.md   # Laser cut, CNC bend, and assembly instructions
 │   └── render.jpg               # Photorealistic 3D product render
 ├── docs/                        # Interactive Three.js WebGL Digital Twin (ES Modules) & GitHub Pages
-├── tests/                       # 1323 automated unit & integration tests (92.5% coverage)
+├── tests/                       # 1332 automated unit & integration tests (92.5% coverage)
 └── .github/
     └── workflows/
         ├── ci.yml               # Complete CI pipeline + Pytest + GitHub Pages deploy
@@ -296,7 +296,7 @@ smdc deploy --all
 
 ### 6. 💰 Autonomous Monetary & Compute Economy Layer (`src/sovereign_dc/economy/`)
 * **Post-Quantum Cryptographic Wallets:** Deterministic address derivation and signing using Ed25519 and NIST FIPS 204 ML-DSA-87.
-* **Append-Only Compute Credit Ledger:** Monotonically increasing nonces, transaction hashes, and offline bidirectional micro-payment state channels for streaming compute.
+* **Append-Only Compute Credit Ledger:** Monotonically increasing nonces, transaction hashes, and offline unidirectional micro-payment state channels (one payer, one payee per channel) for streaming compute.
 * **Solar-Aware Dynamic Price Oracle:** Energy-state multiplier on every catalog rate: a 50% discount while solar harvest is at least 500 W and battery SoC at least 75%, nominal pricing down to 40% SoC, a 1.5x surge below 40% SoC and a 3.0x surge below 25% SoC. (This is the pricing rule; the sentinel's `SOLAR_SURPLUS_COMPUTE` operating mode has its own bar of more than 1000 W.)
 * **Delay-Tolerant Settlement:** Cryptographic Proof-of-Compute and Proof-of-Relay verification reconciled across terrestrial mesh or RFC 9171 DTN satellite contact passes.
 
@@ -526,7 +526,7 @@ See [`terraform/README.md`](terraform/README.md) for full module documentation a
 ---
 
 ## 🛡️ Quality Gates & Automated Tests
-The project enforces strict automated Quality Gates covering Ruff linting, Ruff formatting, Mypy static typing, Docker Compose multi-stack integrity, and Pytest coverage with 1323 automated tests ($\ge 85\%$ strict threshold, achieving **92.5%** coverage):
+The project enforces strict automated Quality Gates covering Ruff linting, Ruff formatting, Mypy static typing, Docker Compose multi-stack integrity, and Pytest coverage with 1332 automated tests ($\ge 85\%$ strict threshold, achieving **92.5%** coverage):
 
 ```bash
 # Run all quality gates locally

@@ -148,8 +148,10 @@ services:
         gitlab_rails['smtp_enable'] = true
         gitlab_rails['smtp_address'] = "${SMTP_HOST:-smtp.sovereign.local}"
         gitlab_rails['smtp_port'] = ${SMTP_PORT:-587}
-        gitlab_rails['smtp_user_name'] = "${SMTP_USER}"
-        gitlab_rails['smtp_password'] = "${SMTP_PASSWORD}"
+        # Read from the container environment (set below), not interpolated into this Ruby
+        # text: a password containing a quote or a backslash would otherwise break gitlab.rb.
+        gitlab_rails['smtp_user_name'] = ENV.fetch('GITLAB_SMTP_USER', '')
+        gitlab_rails['smtp_password'] = ENV.fetch('GITLAB_SMTP_PASSWORD', '')
         gitlab_rails['smtp_tls'] = false
         gitlab_rails['smtp_starttls_auto'] = true
         gitlab_rails['gitlab_email_from'] = "${SMTP_FROM:-gitlab@sovereign.local}"
@@ -157,6 +159,8 @@ services:
         # and restic keeps the history; local archives older than 2 days are pruned
         # by the next gitlab-backup run.
         gitlab_rails['backup_keep_time'] = 172800
+      GITLAB_SMTP_USER: "${SMTP_USER}"
+      GITLAB_SMTP_PASSWORD: "${SMTP_PASSWORD}"
     volumes:
       - gitlab_config:/etc/gitlab
       - gitlab_logs:/var/log/gitlab

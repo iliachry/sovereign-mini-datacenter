@@ -139,8 +139,9 @@ def test_mcp_pricing_with_both_inputs_does_not_read_telemetry(monkeypatch: pytes
     result = tools.tool_query_market_pricing({"battery_soc": 85, "solar_watts": 1200})
     assert result["dynamic_multiplier"] == 0.5
     assert result["inputs_source"] == "caller" and result["telemetry_simulated"] is None
+    # The battery SoC is the one input that needs telemetry when the caller does not give it.
     with pytest.raises(TelemetryUnavailable):
-        tools.tool_query_market_pricing({"battery_soc": 85})
+        tools.tool_query_market_pricing({"solar_watts": 1200})
     assert tools.tool_query_market_pricing({"battery_soc": "x", "solar_watts": 1})["success"] is False
 
 

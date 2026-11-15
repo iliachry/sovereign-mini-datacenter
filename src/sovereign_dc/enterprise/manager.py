@@ -341,8 +341,30 @@ class EnterpriseManager:
             causes.add(CAUSE_SOC_FLOOR)
         return causes
 
+    def _sync_with_registry(self) -> None:
+        """Brings the tracked runtimes in line with the registry (which re-reads its file).
+
+        Another process may have registered, re-registered or unregistered apps since this
+        manager started: every tracked runtime takes the current manifest (so the shedding
+        policy uses the current power tier), newly registered apps get a runtime, and the
+        runtime of an app that is no longer registered is dropped together with its
+        shedding bookkeeping.
+        """
+        current = {app.app_id: app for app in self.registry.list_apps()}
+        with self._lock:
+            for app_id in [known for known in self._runtimes if known not in current]:
+                del self._runtimes[app_id]
+                self._shed_paused.pop(app_id, None)
+            for app_id, manifest in current.items():
+                runtime = self._runtimes.get(app_id)
+                if runtime is None:
+                    self._runtimes[app_id] = AppRuntimeState(manifest=manifest)
+                else:
+                    runtime.manifest = manifest
+
     def _on_load_shedding_event(self, event: Event) -> None:
         """Apply the tiered shedding policy (module docstring) to the tracked app states."""
+        self._sync_with_registry()
         payload = event.payload if isinstance(event.payload, dict) else {}
         level = self._extract_shedding_level(payload)
         if level is None:
@@ -433,6 +455,7 @@ class EnterpriseManager:
         succeeds; the message names the level. An operator ``resume_app`` overrides it until
         the next event.
         """
+        self._sync_with_registry()
         manifest = self.registry.get_app(app_id)
         if not manifest:
             return False, f"Application '{app_id}' is not registered."
@@ -442,6 +465,7 @@ class EnterpriseManager:
             if runtime is None:
                 runtime = AppRuntimeState(manifest=manifest)
                 self._runtimes[app_id] = runtime
+            runtime.manifest = manifest
 
             if runtime.status == AppStatus.RUNNING:
                 return True, f"Application '{app_id}' is already running."
@@ -566,16 +590,14 @@ class EnterpriseManager:
 
     def get_runtime_state(self, app_id: str) -> AppRuntimeState | None:
         """Get the tracked runtime state for a specific app."""
+        self._sync_with_registry()
         with self._lock:
             return self._runtimes.get(app_id)
 
     def list_runtime_states(self) -> list[AppRuntimeState]:
         """Return tracked runtime states of all registered applications."""
-        apps = self.registry.list_apps()
+        self._sync_with_registry()
         with self._lock:
-            for app in apps:
-                if app.app_id not in self._runtimes:
-                    self._runtimes[app.app_id] = AppRuntimeState(manifest=app)
             return list(self._runtimes.values())
 
     @staticmethod

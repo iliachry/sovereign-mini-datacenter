@@ -224,28 +224,55 @@ def tool_set_load_shedding(params: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _node_solar_watts() -> tuple[float | None, str]:
+    """The node's solar harvest and where it came from, without requiring a battery SoC.
+
+    Used when the caller supplied the SoC but not the solar input. An exporter that is
+    unreachable, reports its source down or has no finite solar sample gives ``(None,
+    "unknown")``: an unknown harvest earns no discount and no value is invented.
+    """
+    from sovereign_dc.hal.power import METRIC_SIMULATED, METRIC_SOLAR_WATTS, fetch_exporter_metrics, optional_metric
+
+    try:
+        metrics = fetch_exporter_metrics(get_config().power_exporter_url)
+    except Exception as exc:  # unreachable, source down, malformed
+        logger.debug("No solar measurement for pricing: %s", exc)
+        return None, "unknown"
+    solar = optional_metric(metrics, METRIC_SOLAR_WATTS)
+    if solar is None:
+        return None, "unknown"
+    return solar, "simulated_telemetry" if metrics.get(METRIC_SIMULATED, 0.0) > 0 else "measured_telemetry"
+
+
 def tool_query_market_pricing(params: dict[str, Any]) -> dict[str, Any]:
     """Queries dynamic solar-aware compute, token, and DTN relay pricing rates."""
     from sovereign_dc.economy.market import ComputeMarket, ServiceType
 
-    inputs_from_caller = params.get("battery_soc") is not None and params.get("solar_watts") is not None
-    # Telemetry is read only for an input the caller did not supply, so a what-if quote with
-    # both inputs still works while the node's telemetry source is down.
-    power = (
-        None
-        if inputs_from_caller
-        else read_power(exporter_url=get_config().power_exporter_url, simulation=get_config().is_simulation())
-    )
+    soc_given = params.get("battery_soc") is not None
+    solar_given = params.get("solar_watts") is not None
+    # Telemetry is read only for an input the caller did not supply. The battery SoC is the
+    # one input that must exist; a missing solar reading is "unknown" (no discount).
+    soc_in: Any = params.get("battery_soc")
+    solar_in: Any = params.get("solar_watts")
+    sources = {"battery_soc": "caller", "solar_watts": "caller"}
+    if not soc_given:
+        power = read_power(exporter_url=get_config().power_exporter_url, simulation=get_config().is_simulation())
+        telemetry = "simulated_telemetry" if power.is_simulated else "measured_telemetry"
+        soc_in, sources["battery_soc"] = power.battery_soc, telemetry
+        if not solar_given:
+            solar_in = power.solar_watts
+            sources["solar_watts"] = telemetry if solar_in is not None else "unknown"
+    elif not solar_given:
+        solar_in, sources["solar_watts"] = _node_solar_watts()
     try:
-        soc_in: Any = params["battery_soc"] if params.get("battery_soc") is not None else power.battery_soc  # type: ignore[union-attr]
         soc = float(soc_in)
         # None: the node has no solar measurement (an unknown harvest earns no discount).
-        solar_in: Any = params["solar_watts"] if params.get("solar_watts") is not None else power.solar_watts  # type: ignore[union-attr]
         solar = float(solar_in) if solar_in is not None else None
         if not math.isfinite(soc) or (solar is not None and not math.isfinite(solar)):
             raise ValueError("non-finite value")
     except (TypeError, ValueError):
         return {"success": False, "error": "'battery_soc' and 'solar_watts' must be finite numbers"}
+    telemetry_kinds = {v for v in sources.values() if v.endswith("_telemetry")}
 
     market = ComputeMarket()
     mult, status = market.get_dynamic_multiplier(soc, solar)
@@ -256,13 +283,16 @@ def tool_query_market_pricing(params: dict[str, Any]) -> dict[str, Any]:
     return {
         "battery_soc_percent": soc,
         "solar_pv_watts": solar,
-        # Where the SoC / solar inputs came from: caller-supplied what-if values, simulated
-        # telemetry or measured telemetry.
+        # Where each input came from: "caller" (a what-if value), "measured_telemetry",
+        # "simulated_telemetry" or "unknown" (no solar reading).
+        "input_sources": sources,
+        # Summary of the above: "caller" when both inputs are the caller's, "mixed" when one
+        # is, otherwise the kind of telemetry used.
         "inputs_source": "caller"
-        if inputs_from_caller
-        else ("simulated_telemetry" if power is not None and power.is_simulated else "measured_telemetry"),
-        # None: both inputs came from the caller and telemetry was not read.
-        "telemetry_simulated": bool(power.is_simulated) if power is not None else None,
+        if soc_given and solar_given
+        else ("mixed" if soc_given or solar_given else sources["battery_soc"]),
+        # None: no telemetry value was used.
+        "telemetry_simulated": ("simulated_telemetry" in telemetry_kinds) if telemetry_kinds else None,
         "dynamic_multiplier": mult,
         "market_condition": status,
         "service_rates": catalog,
