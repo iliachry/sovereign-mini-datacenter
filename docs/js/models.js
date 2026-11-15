@@ -25,6 +25,8 @@ export function setFanRpmCallback(cb) {
   _getFanRpmCb = cb;
 }
 
+// Inspector rows are static data-sheet values only. Live readings (SoC, temperatures, power)
+// belong to the HUD ribbon, which is fed by the node's telemetry; never put a reading here.
 const COMPONENT_DATA = {
   space_antenna: {
     name: 'Motorized Phased Array Space Terminal',
@@ -36,25 +38,25 @@ const COMPONENT_DATA = {
     name: 'NVIDIA DGX Spark AI Core 1',
     badge: 'AI COMPUTE',
     desc: 'Primary AI node built on the NVIDIA GB10 Grace Blackwell Superchip with 128GB unified memory and 4TB NVMe, hosting local Ollama LLMs and Qdrant semantic vector embeddings.',
-    specs: { 'Chip': 'NVIDIA GB10 (20-core Arm)', 'Memory': '128GB unified LPDDR5x', 'Power': '240W supply / 140W SoC TDP', 'Cooling': 'Sealed unit, air-cooled', 'Thermal': '42.4°C' },
+    specs: { 'Chip': 'NVIDIA GB10 (20-core Arm)', 'Memory': '128GB unified LPDDR5x', 'Power': '240W supply / 140W SoC TDP', 'Cooling': 'Sealed unit, air-cooled', 'Storage': '4TB NVMe' },
   },
   dgx2: {
     name: 'NVIDIA DGX Spark AI Core 2',
     badge: 'AI COMPUTE',
     desc: 'Secondary parallel AI accelerator coupled over the ConnectX-7 QSFP / 10GbE fabric for distributed multi-agent LLM inference and GitLab code reviews.',
-    specs: { 'Chip': 'NVIDIA GB10 (20-core Arm)', 'Memory': '128GB unified LPDDR5x', 'Power': '240W supply / 140W SoC TDP', 'Cooling': 'Sealed unit, air-cooled', 'Thermal': '43.1°C' },
+    specs: { 'Chip': 'NVIDIA GB10 (20-core Arm)', 'Memory': '128GB unified LPDDR5x', 'Power': '240W supply / 140W SoC TDP', 'Cooling': 'Sealed unit, air-cooled', 'Storage': '4TB NVMe' },
   },
   battery1: {
     name: 'LiFePO4 Battery Pack 1 (48V 100Ah)',
     badge: 'ENERGY / 48V',
     desc: '48V 100Ah (5.12 kWh) rackmount lithium iron phosphate battery module with integrated smart RS485 Modbus BMS and automated cell balancing.',
-    specs: { 'Capacity': '5.12 kWh', 'Voltage': '51.2V Nom.', 'Max Discharge': '100A (5 kW)', 'Cycle Life': '6,000+ @ 80% DoD', 'SoC': '88.5%' },
+    specs: { 'Capacity': '5.12 kWh', 'Voltage': '51.2V Nom.', 'Max Discharge': '100A (5 kW)', 'Cycle Life': '6,000+ @ 80% DoD', 'Chemistry': 'LiFePO4, built-in BMS' },
   },
   battery2: {
     name: 'LiFePO4 Battery Pack 2 (48V 100Ah)',
     badge: 'ENERGY / 48V',
     desc: 'Secondary 5.12 kWh battery pack connected in parallel on the common 48V DC busbar, giving 10.24 kWh total autonomous energy storage.',
-    specs: { 'Capacity': '5.12 kWh', 'Voltage': '51.2V Nom.', 'Max Discharge': '100A (5 kW)', 'Cycle Life': '6,000+ @ 80% DoD', 'SoC': '88.5%' },
+    specs: { 'Capacity': '5.12 kWh', 'Voltage': '51.2V Nom.', 'Max Discharge': '100A (5 kW)', 'Cycle Life': '6,000+ @ 80% DoD', 'Chemistry': 'LiFePO4, built-in BMS' },
   },
   switch: {
     name: 'MikroTik CRS309-1G-8S+IN',
@@ -66,13 +68,13 @@ const COMPONENT_DATA = {
     name: 'AMD EPYC 4004 System Host',
     badge: 'CORE HOST',
     desc: 'Host coordinator with 64GB ECC DDR5, dual Samsung 990 PRO 4TB NVMe SSDs in RAID-1, and local ZFS backup spool. Its CPU is the only component on the liquid cooling loop.',
-    specs: { 'CPU': 'AMD EPYC 4004', 'RAM': '64GB ECC DDR5', 'NVMe': '8TB PCIe 4.0', 'OS': 'Talos Linux / Ubuntu 24.04', 'Temp': '37.8°C' },
+    specs: { 'CPU': 'AMD EPYC 4004', 'RAM': '64GB ECC DDR5', 'NVMe': '8TB PCIe 4.0', 'OS': 'Talos Linux / Ubuntu 24.04', 'Cooling': 'CPU on the liquid loop' },
   },
   pdu: {
     name: 'APC Metered Rack PDU (1U)',
     badge: 'POWER DISTRIB',
     desc: '1U intelligent power distribution unit with per-port telemetry, remote power cycling, and digital current monitoring.',
-    specs: { 'Outlets': '8x IEC C13', 'Voltage': '230V AC', 'Max Current': '16A', 'Telemetry': 'Prometheus Exporter', 'Draw': '340W' },
+    specs: { 'Outlets': '8x IEC C13', 'Voltage': '230V AC', 'Max Current': '16A', 'Telemetry': 'Prometheus Exporter', 'Rated Load': '3.68 kW' },
   },
   inverter: {
     name: 'Victron MultiPlus-II 48/3000',
@@ -84,7 +86,7 @@ const COMPONENT_DATA = {
     name: 'Victron SmartSolar MPPT 250/70',
     badge: 'SOLAR MPPT',
     desc: 'Ultra-fast Maximum Power Point Tracking (MPPT) solar charge controller converting high-voltage PV input to 48V battery bank.',
-    specs: { 'Max PV Voltage': '250V', 'Max PV Isc': '35A', 'Max Charge Current': '70A', 'Peak Efficiency': '99%', 'Comms': 'VE.Direct Serial', 'Power': '2,660W Harvest' },
+    specs: { 'Max PV Voltage': '250V', 'Max PV Isc': '35A', 'Max Charge Current': '70A', 'Peak Efficiency': '99%', 'Comms': 'VE.Direct Serial' },
   },
   solar_panels: {
     name: 'Solar Photovoltaic Array (3.28 kWp)',
@@ -108,19 +110,19 @@ const COMPONENT_DATA = {
     name: 'Ground Receiver 1 (Disadvantaged Urban Canyon)',
     badge: 'IoT / 5G UE',
     desc: 'Severely shadowed user equipment located in an urban street canyon, for which the published paper reports a +79.6% capacity gain under SA-PPO positioning optimization.',
-    specs: { 'Location': 'Urban Canyon', 'Initial SINR': '-12.0 dB', 'Optimized SINR': '-9.7 dB', 'Capacity': '0.187 bps/Hz', 'Gain (paper)': '+79.6%' },
+    specs: { 'Location': 'Urban Canyon', 'Initial SINR': '-12.0 dB', 'Optimized SINR': '-9.7 dB', 'Capacity': '0.187 bps/Hz', 'Gain (paper)': '+79.6%', 'Figures': 'Illustrative, not live' },
   },
   rx2: {
     name: 'Ground Receiver 2 (Suburban Edge)',
     badge: 'IoT / 5G UE',
     desc: 'Intermediate user equipment receiving secondary multipath reflections, achieving +49.9% capacity boost under SA-PPO.',
-    specs: { 'Location': 'Suburban Edge', 'Initial SINR': '-9.4 dB', 'Optimized SINR': '-8.1 dB', 'Capacity': '0.256 bps/Hz', 'Gain': '+49.9%' },
+    specs: { 'Location': 'Suburban Edge', 'Initial SINR': '-9.4 dB', 'Optimized SINR': '-8.1 dB', 'Capacity': '0.256 bps/Hz', 'Gain': '+49.9%', 'Figures': 'Illustrative, not live' },
   },
   rx3: {
     name: 'Ground Receiver 3 (Line-of-Sight)',
     badge: 'IoT / 5G UE',
     desc: 'Direct line-of-sight user equipment with minimal obstruction, achieving +27.0% capacity gain.',
-    specs: { 'Location': 'Open Line-of-Sight', 'Initial SINR': '-5.5 dB', 'Optimized SINR': '-5.1 dB', 'Capacity': '0.489 bps/Hz', 'Gain': '+27.0%' },
+    specs: { 'Location': 'Open Line-of-Sight', 'Initial SINR': '-5.5 dB', 'Optimized SINR': '-5.1 dB', 'Capacity': '0.489 bps/Hz', 'Gain': '+27.0%', 'Figures': 'Illustrative, not live' },
   },
 };
 

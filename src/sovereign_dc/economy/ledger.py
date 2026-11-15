@@ -1432,6 +1432,7 @@ class Ledger:
         """Exports ledger snapshot state."""
         with self._lock, self._get_connection() as conn:
             bal_rows = conn.execute("SELECT address, balance, balance_micro, nonce FROM balances").fetchall()
+            total_transactions = int(conn.execute("SELECT COUNT(*) FROM transactions").fetchone()[0])
             balances = {
                 r["address"]: {
                     "balance": _from_micro(self._row_micro(r)),
@@ -1443,7 +1444,7 @@ class Ledger:
         chain_ok, anchor_status = self._chain_report()
         return {
             "balances": balances,
-            "total_transactions": len(self.get_history(limit=10000)),
+            "total_transactions": total_transactions,
             "chain_verified": chain_ok and anchor_status != ANCHOR_INVALID,
             "chain_anchor": anchor_status,
         }

@@ -136,7 +136,7 @@ sovereign-mini-datacenter/
 │   └── MANUFACTURING_GUIDE.md   # Laser cut DXF export, CNC sheet metal bending specs
 ├── docs/                        # Interactive Three.js WebGL Digital Twin & GitHub Pages
 │   └── index.html               # 3D WebGL CAD viewer + interactive sizing & TCO calculator
-├── tests/                       # Complete automated Pytest suite (1314 tests, 92.5% coverage)
+├── tests/                       # Complete automated Pytest suite (1323 tests, 92.5% coverage)
 ├── ARCHITECTURE.md              # Multi-node autonomous network architecture specification
 ├── ENTERPRISE_ONBOARDING.md     # Enterprise manifest spec, power tiers & developer guide
 ├── COMMERCIALIZATION.md         # Investment thesis, TAM/SAM/SOM & 3-year TCO payback model
@@ -208,7 +208,7 @@ sovereign-mini-datacenter/
 
 ### J. Enterprise Workload Onboarding & Coupling Framework (`src/sovereign_dc/enterprise/`)
 - **Declarative Manifest Specification (`schema.py`)**: Type-safe `smdc-app.yaml` manifest supporting multi-tier power shedding ($L_0 \to L_4$), memory/vRAM quotas, network policies, and health probes.
-- **Enterprise Registry & Discovery (`registry.py`)**: Automated discovery across `/etc/smdc/apps`, `~/.smdc/apps`, and workspace paths with turnkey project scaffolding (`smdc app init`; it refuses with a non-zero exit and writes nothing when any scaffold file already exists, and `--force` first moves each existing file to `<name>.bak-<timestamp>`; files are written atomically). The registry file is shared by every `smdc` process: a save locks it, reloads it and applies only this instance's pending changes, so concurrent `smdc app register` runs are merged. `register_app` returns `(False, [reason])` when the file could not be saved (lock timeout, unwritable directory, unreadable file) and takes the registration back; `smdc app register` then exits non-zero. `unregister_app` behaves the same way (`last_save_error` holds the reason).
+- **Enterprise Registry & Discovery (`registry.py`)**: Automated discovery across `/etc/smdc/apps`, `~/.smdc/apps`, and workspace paths with turnkey project scaffolding (`smdc app init`; it refuses with a non-zero exit and writes nothing when any scaffold file already exists, and `--force` first moves each existing file to `<name>.bak-<timestamp>`; files are written atomically). The registry file is shared by every `smdc` process: a save locks it, reloads it and applies only this instance's pending changes, so concurrent `smdc app register` runs are merged. Lookups (`get_app`, `list_apps`) re-read the file when its modification time or size changed, so a long-running process (MCP server, dashboard) sees apps registered after it started. `register_app` returns `(False, [reason])` when the file could not be saved (lock timeout, unwritable directory, unreadable file) and takes the registration back; `smdc app register` then exits non-zero. `unregister_app` behaves the same way (`last_save_error` holds the reason).
 - **Zero-Dependency Enterprise SDK (`sdk.py`)**: Minimal footprint `SMDCClient` and `AppLifecycleHandler` providing direct event bus binding, hardware telemetry streams, dynamic pricing queries (`get_dynamic_pricing()` prices the node's own telemetry when called without arguments, returns `status: "unavailable"` and no multiplier when the battery SoC cannot be read, and always reports its `inputs` and their source), and Space DTN spooling.
 - **Load Shedding State Manager (`manager.py`)**: In-memory app state tracking (it does not launch or supervise OS processes; resource figures are estimates from the manifest) marking apps paused by power tier on `load_shedding.*` events (level 1 pauses `L4_IDLE`, level 2 adds `L3_DEFERRABLE`, level 3 adds `L2_BACKGROUND`, level 4 adds `L1_STANDARD`; `L0_CRITICAL` never) and while a reported `battery_soc` is below the manifest's `power.min_battery_soc`, resuming only what shedding paused once the level and SoC allow it; `start_app` applies the level and SoC of the last event at once, so an app the policy pauses right now is started paused by shedding (`started` then `paused` events, `paused_by: load_shedding`) instead of running until the next event (`max_ambient_temp_c`, `allow_solar_burst` and `min_solar_watts` are reserved, not enforced), plus NIST FIPS 204 ML-DSA-87 cryptographic bundle packaging (`.smdc-app` + `.sig`).
 
@@ -330,7 +330,7 @@ Windows equivalent without `uv run`: `.\.venv\Scripts\python -m sovereign_dc <co
 ## 6. Checklist Before Completing Any Agent Task
 
 1. [ ] **Pass All Quality Gates Locally**: Run `scripts/quality_gate.ps1` or `scripts/quality_gate.sh` (Ruff lint/format, Mypy typing, Pytest $\ge 85\%$ coverage).
-2. [ ] **Pass All Unit Tests**: Verify all 1314 tests in `tests/` pass with zero failures.
+2. [ ] **Pass All Unit Tests**: Verify all 1323 tests in `tests/` pass with zero failures.
 3. [ ] **Preserve Existing Interfaces**: Ensure CLI arguments, Prometheus metric names, and DTN bundle schemas remain backward-compatible.
 4. [ ] **Verify Markdown/Mermaid & Math**: Ensure any new or modified `.md` files strictly comply with GitHub Mermaid and LaTeX math rendering rules.
 5. [ ] **Synchronize Documentation**: Update `AGENTS.md` and `README.md` with any newly added modules, subcommands, or architectural changes.

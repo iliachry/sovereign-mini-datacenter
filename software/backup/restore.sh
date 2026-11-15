@@ -64,19 +64,34 @@ err()  { echo -e "\033[1;31m[ERROR]   $*\033[0m" >&2; exit 1; }
 env_file_value() {
     [[ -f "$ENV_FILE" ]] || return 0
     efv="$(sed -n "s/^[[:space:]]*$1=//p" "$ENV_FILE" | tail -n 1 | tr -d '\r')"
+    # Decoded as Docker Compose decodes its .env file, so that this script and the backup
+    # container (which gets the value through Compose) use the same password:
+    # single-quoted values are literal; in unquoted and double-quoted values `$$` is one
+    # `$`. A `$NAME` / `${NAME}` reference, or a backslash escape inside double quotes,
+    # would be expanded by Compose and is refused here instead of being guessed.
     case "$efv" in
-        \"*\"*) efv="${efv#\"}"; efv="${efv%\"*}" ;;
-        \'*\'*) efv="${efv#\'}"; efv="${efv%\'*}" ;;
+        \'*\'*) efv="${efv#\'}"; efv="${efv%\'*}"; printf '%s' "$efv"; return 0 ;;
+        \"*\"*)
+            efv="${efv#\"}"; efv="${efv%\"*}"
+            case "$efv" in
+                *\\*) echo "[ERROR]   $1 in ${ENV_FILE} is double-quoted and contains a backslash; put the value in single quotes." >&2; return 2 ;;
+            esac ;;
         *) efv="$(printf '%s' "$efv" | sed -e 's/[[:space:]]#.*$//' -e 's/[[:space:]]*$//')" ;;
     esac
-    printf '%s' "$efv"
+    efv_rest="$(printf '%s' "$efv" | sed 's/\$\$//g')"
+    case "$efv_rest" in
+        *\$[A-Za-z_\{]*)
+            echo "[ERROR]   $1 in ${ENV_FILE} contains a \$NAME reference, which Docker Compose would expand; write a literal dollar sign as \$\$, or put the value in single quotes." >&2
+            return 2 ;;
+    esac
+    printf '%s' "$efv" | sed 's/\$\$/$/g'
 }
 # A repository named in the environment of this command is used as it is (see the header).
 REPOSITORY_FROM_ENVIRONMENT=false
 if [[ -n "${RESTIC_REPOSITORY:-}" ]]; then REPOSITORY_FROM_ENVIRONMENT=true; fi
 for key in RESTIC_REPOSITORY RESTIC_PASSWORD RESTIC_S3_KEY RESTIC_S3_SECRET; do
     if [[ -z "${!key+set}" ]]; then
-        value="$(env_file_value "$key")"
+        value="$(env_file_value "$key")" || exit 2
         if [[ -n "$value" ]]; then export "${key}=${value}"; fi
     fi
 done

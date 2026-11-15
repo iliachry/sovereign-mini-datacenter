@@ -518,10 +518,11 @@ real OpenProject, GitLab, Nextcloud, Vaultwarden and Grafana containers:
 - After one service and its volume were removed, the next run aborted with a coverage
   drop naming that service (exit 1).
 
-That run predates the Nextcloud maintenance window, the size and SHA-256 records, the
-daemon check and the coverage guard. Those were tested on 2026-11-14 with recording
-stand-ins for `docker`, `restic`, `sqlite3`, `cp` and `rsync` (the script itself run
-under `dash`), not against real services:
+The first run (the table further up) predates the Nextcloud maintenance window, the size
+and SHA-256 records, the daemon check and the coverage guard; the second run above is
+the one that exercised them against real services. The remaining cases below were
+tested on 2026-11-14 with recording stand-ins for `docker`, `restic`, `sqlite3`, `cp`
+and `rsync` (the script itself run under `dash`), not against real services:
 
 | Case | Result checked |
 | :--- | :--- |

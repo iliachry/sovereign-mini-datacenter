@@ -99,7 +99,31 @@ class EnterpriseRegistry:
         self._corrupt_backup: tuple[tuple[int, int], Path] | None = None
         # Why the most recent save_registry() call failed; None after a successful one.
         self.last_save_error: str | None = None
+        # (mtime_ns, size) of the registry file when this instance last read it; lookups
+        # re-read the file when it differs, so a long-running process (the MCP server, the
+        # dashboard) sees what another `smdc` process registered after it started.
+        self._loaded_signature: tuple[int, int] | None = None
         self.load_registry()
+        self._loaded_signature = self._file_signature()
+
+    def _file_signature(self) -> tuple[int, int] | None:
+        """(mtime_ns, size) of the registry file, or None when it cannot be read."""
+        try:
+            stat = self.registry_file.stat()
+        except OSError:
+            return None
+        return stat.st_mtime_ns, stat.st_size
+
+    def refresh(self) -> None:
+        """Re-reads the registry file if it changed since this instance last read it.
+
+        This instance's own unsaved changes are kept on top (see ``load_registry``).
+        """
+        signature = self._file_signature()
+        if signature != self._loaded_signature:
+            self._loaded_signature = signature
+            if signature is not None:
+                self.load_registry()
 
     def _backup_unreadable_registry(self) -> Path | None:
         """Copies an unparseable registry file aside. Returns the backup path, or None on failure."""
@@ -429,7 +453,8 @@ class EnterpriseRegistry:
         return False
 
     def get_app(self, app_id: str) -> AppManifest | None:
-        """Retrieve manifest for a registered app by ID."""
+        """Retrieve manifest for a registered app by ID (re-reading the file if it changed)."""
+        self.refresh()
         return self._apps.get(app_id)
 
     def get_app_path(self, app_id: str) -> Path | None:
@@ -437,7 +462,8 @@ class EnterpriseRegistry:
         return self._app_paths.get(app_id)
 
     def list_apps(self) -> list[AppManifest]:
-        """Return all registered application manifests."""
+        """Return all registered application manifests (re-reading the file if it changed)."""
+        self.refresh()
         return list(self._apps.values())
 
     @staticmethod

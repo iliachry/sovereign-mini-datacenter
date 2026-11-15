@@ -228,16 +228,24 @@ def tool_query_market_pricing(params: dict[str, Any]) -> dict[str, Any]:
     """Queries dynamic solar-aware compute, token, and DTN relay pricing rates."""
     from sovereign_dc.economy.market import ComputeMarket, ServiceType
 
-    power = read_power(exporter_url=get_config().power_exporter_url, simulation=get_config().is_simulation())
+    inputs_from_caller = params.get("battery_soc") is not None and params.get("solar_watts") is not None
+    # Telemetry is read only for an input the caller did not supply, so a what-if quote with
+    # both inputs still works while the node's telemetry source is down.
+    power = (
+        None
+        if inputs_from_caller
+        else read_power(exporter_url=get_config().power_exporter_url, simulation=get_config().is_simulation())
+    )
     try:
-        soc = float(params["battery_soc"]) if params.get("battery_soc") is not None else power.battery_soc
+        soc_in: Any = params["battery_soc"] if params.get("battery_soc") is not None else power.battery_soc  # type: ignore[union-attr]
+        soc = float(soc_in)
         # None: the node has no solar measurement (an unknown harvest earns no discount).
-        solar = float(params["solar_watts"]) if params.get("solar_watts") is not None else power.solar_watts
+        solar_in: Any = params["solar_watts"] if params.get("solar_watts") is not None else power.solar_watts  # type: ignore[union-attr]
+        solar = float(solar_in) if solar_in is not None else None
         if not math.isfinite(soc) or (solar is not None and not math.isfinite(solar)):
             raise ValueError("non-finite value")
     except (TypeError, ValueError):
         return {"success": False, "error": "'battery_soc' and 'solar_watts' must be finite numbers"}
-    inputs_from_caller = params.get("battery_soc") is not None and params.get("solar_watts") is not None
 
     market = ComputeMarket()
     mult, status = market.get_dynamic_multiplier(soc, solar)
@@ -252,8 +260,9 @@ def tool_query_market_pricing(params: dict[str, Any]) -> dict[str, Any]:
         # telemetry or measured telemetry.
         "inputs_source": "caller"
         if inputs_from_caller
-        else ("simulated_telemetry" if power.is_simulated else "measured_telemetry"),
-        "telemetry_simulated": bool(power.is_simulated),
+        else ("simulated_telemetry" if power is not None and power.is_simulated else "measured_telemetry"),
+        # None: both inputs came from the caller and telemetry was not read.
+        "telemetry_simulated": bool(power.is_simulated) if power is not None else None,
         "dynamic_multiplier": mult,
         "market_condition": status,
         "service_rates": catalog,

@@ -156,12 +156,27 @@ done
 env_file_value() { # env_file_value KEY -> value of the last KEY= line
     [ -f "$ENV_FILE" ] || return 0
     efv="$(sed -n "s/^[[:space:]]*$1=//p" "$ENV_FILE" | tail -n 1 | tr -d '\r')"
+    # Decoded as Docker Compose decodes its .env file, so that this script and the backup
+    # container (which gets the value through Compose) use the same password:
+    # single-quoted values are literal; in unquoted and double-quoted values `$$` is one
+    # `$`. A `$NAME` / `${NAME}` reference, or a backslash escape inside double quotes,
+    # would be expanded by Compose and is refused here instead of being guessed.
     case "$efv" in
-        \"*\"*) efv="${efv#\"}"; efv="${efv%\"*}" ;;
-        \'*\'*) efv="${efv#\'}"; efv="${efv%\'*}" ;;
+        \'*\'*) efv="${efv#\'}"; efv="${efv%\'*}"; printf '%s' "$efv"; return 0 ;;
+        \"*\"*)
+            efv="${efv#\"}"; efv="${efv%\"*}"
+            case "$efv" in
+                *\\*) echo "[ERROR]   $1 in ${ENV_FILE} is double-quoted and contains a backslash; put the value in single quotes." >&2; return 2 ;;
+            esac ;;
         *) efv="$(printf '%s' "$efv" | sed -e 's/[[:space:]]#.*$//' -e 's/[[:space:]]*$//')" ;;
     esac
-    printf '%s' "$efv"
+    efv_rest="$(printf '%s' "$efv" | sed 's/\$\$//g')"
+    case "$efv_rest" in
+        *\$[A-Za-z_\{]*)
+            echo "[ERROR]   $1 in ${ENV_FILE} contains a \$NAME reference, which Docker Compose would expand; write a literal dollar sign as \$\$, or put the value in single quotes." >&2
+            return 2 ;;
+    esac
+    printf '%s' "$efv" | sed 's/\$\$/$/g'
 }
 for key in RESTIC_REPOSITORY RESTIC_PASSWORD RESTIC_S3_KEY RESTIC_S3_SECRET \
     BACKUP_DUMP_DIR BACKUP_DUMP_MAX_AGE_SECONDS BACKUP_SMDC_STATE_DIR SMDC_STATE_DIR \
@@ -169,7 +184,7 @@ for key in RESTIC_REPOSITORY RESTIC_PASSWORD RESTIC_S3_KEY RESTIC_S3_SECRET \
     BACKUP_NEXTCLOUD_SETTLE_SECONDS; do
     eval "is_set=\${${key}+set}"
     if [ -z "$is_set" ]; then
-        value="$(env_file_value "$key")"
+        value="$(env_file_value "$key")" || exit 2
         if [ -n "$value" ]; then
             export "${key}=${value}"
         fi
