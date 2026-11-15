@@ -1,0 +1,6 @@
+# Not part of the chart package
+__pycache__/
+*.pyc
+.DS_Store
+*.orig
+*.bak

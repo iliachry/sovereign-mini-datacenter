@@ -47,9 +47,15 @@
 #   SHEDDING_L2_SOC, SHEDDING_L4_SOC  (defaults 30, 10) are not used for a
 #                          decision here, but the four form ONE policy: all must
 #                          be numbers within 0-100 with L1 > L2 > L3 > L4, else
-#                          the script exits 2 without deciding (the Python
-#                          services fall back to the defaults in that case, so
-#                          a broken policy is never half-applied).
+#                          the script exits 2 without deciding. The Python
+#                          components (smdc, sentinel, power exporter) apply
+#                          the same test but, being long-running, log one
+#                          warning and use all four defaults instead, so a
+#                          broken policy is never half-applied anywhere. An
+#                          unset or empty variable stands for its default in
+#                          both. This script accepts plain decimals only
+#                          (25, 27.5); the Python components also accept
+#                          what float() does (1e1, +25, surrounding blanks).
 #
 # Docker state: a pause is only given up on a DEFINITE answer from a reachable
 # daemon (the container is running / exited / does not exist). When docker is
@@ -297,6 +303,11 @@ fi
 # script (`set -euo pipefail`): awk prints nothing and exits 0 on no match.
 # One awk reading a here-string: no `producer | head` pipeline that could die
 # of SIGPIPE under pipefail.
+source_up=$(awk '$1 == "sovereign_telemetry_source_up" { print $2; exit }' <<<"$metrics" || true)
+if [[ "$source_up" == "0" || "$source_up" == "0.0" ]]; then
+    warn "Exporter reports sovereign_telemetry_source_up 0 (no telemetry source); no load-shedding decision made (any existing pause is held)."
+    exit 0
+fi
 soc=$(awk '$1 == "sovereign_battery_soc_percent" { print $2; exit }' <<<"$metrics" || true)
 coolant_temp=$(awk '$1 == "sovereign_temp_coolant_celsius" { print $2; exit }' <<<"$metrics" || true)
 

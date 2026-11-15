@@ -92,6 +92,7 @@ def poll_interval_seconds(raw: str | None = None) -> float:
 POLL_INTERVAL_SECONDS = poll_interval_seconds()
 
 SOC_METRIC = "sovereign_battery_soc_percent"
+SOURCE_UP_METRIC = "sovereign_telemetry_source_up"
 SOLAR_METRIC = "sovereign_solar_pv_power_watts"
 
 DEFAULT_MODE = "NORMAL"
@@ -102,14 +103,18 @@ VALID_MODES = frozenset({"NORMAL", "SOLAR_SURPLUS_COMPUTE", "ECO_PRESERVATION", 
 # src/sovereign_dc/agents/sentinel_copilot.py (the sentinel also ships as a standalone,
 # standard-library-only script and cannot import the package); tests/ compares the two.
 # It needs only ``math`` and the module's ``logger``.
+
+# --- shedding thresholds (one rule): begin ----------------------------------------------
+# This sub-block is byte-identical in src/sovereign_dc/config.py, the sentinel
+# (src/sovereign_dc/agents/sentinel_copilot.py and its copy under software/agents/) and the
+# power exporter (src/sovereign_dc/telemetry.py, software/telemetry/power_exporter.py and the
+# Helm chart's copy); tests/ compares them. The standalone scripts are standard-library-only
+# and cannot import the package. It needs only ``math`` and the module's ``logger``.
 SHEDDING_ENV_NAMES = ("SHEDDING_L1_SOC", "SHEDDING_L2_SOC", "SHEDDING_L3_SOC", "SHEDDING_L4_SOC")
 DEFAULT_SHEDDING_THRESHOLDS = (50.0, 30.0, 20.0, 10.0)
-SHEDDING_HYSTERESIS_ENV = "SHEDDING_HYSTERESIS_SOC"
-DEFAULT_SHEDDING_HYSTERESIS_SOC = 2.0
-MAX_SHEDDING_HYSTERESIS_SOC = 10.0
 
 
-def shedding_policy_problem(thresholds: tuple[float, float, float, float]) -> str | None:
+def shedding_policy_problem(thresholds: tuple[float, ...]) -> str | None:
     """Why ``thresholds`` (levels 1-4) are not a usable policy, or None when they are.
 
     Usable means: four finite numbers within 0-100 with L1 > L2 > L3 > L4.
@@ -130,26 +135,44 @@ def shedding_policy_problem(thresholds: tuple[float, float, float, float]) -> st
     return None
 
 
-def checked_shedding_thresholds(
-    thresholds: tuple[float, float, float, float],
-) -> tuple[float, float, float, float]:
-    """``thresholds`` if they are a usable policy, else the defaults (one warning names why).
+def checked_shedding_thresholds(settings: tuple[object, ...]) -> tuple[float, float, float, float]:
+    """The node's four SoC thresholds from the raw settings of levels 1-4. The one rule.
 
-    A partly applied policy would be worse than the default one, so one bad value discards
-    all four: SHEDDING_L1_SOC > SHEDDING_L2_SOC > SHEDDING_L3_SOC > SHEDDING_L4_SOC.
+    ``settings`` holds, per level, what was configured: an environment string, a YAML value
+    or a number; None or a blank string means "not set" and stands for that level's default.
+    If ANY of the four is not a number, lies outside 0-100, or the order is not
+    SHEDDING_L1_SOC > SHEDDING_L2_SOC > SHEDDING_L3_SOC > SHEDDING_L4_SOC, ALL four defaults
+    are used and one warning names the four variables: a partly applied policy would be
+    worse than the default one, and every reader of the policy must reach the same four
+    numbers from the same settings.
     """
-    problem = shedding_policy_problem(thresholds)
+    values: list[float] = []
+    for setting, default in zip(settings, DEFAULT_SHEDDING_THRESHOLDS, strict=False):
+        if setting is None or (isinstance(setting, str) and not setting.strip()):
+            values.append(default)
+            continue
+        try:
+            values.append(math.nan if isinstance(setting, bool) else float(setting))  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            values.append(math.nan)
+    problem = shedding_policy_problem(tuple(values)) if len(settings) == 4 else "four thresholds are needed"
     if problem is None:
-        return (float(thresholds[0]), float(thresholds[1]), float(thresholds[2]), float(thresholds[3]))
+        return (values[0], values[1], values[2], values[3])
     logger.warning(
         "Ignoring the load-shedding thresholds %s (%s): they must be numbers within 0-100 with "
-        "%s; using the defaults %s.",
-        ", ".join(f"{name}={value!r}" for name, value in zip(SHEDDING_ENV_NAMES, thresholds, strict=False)),
+        "%s; using the defaults %s for all four.",
+        ", ".join(f"{name}={setting!r}" for name, setting in zip(SHEDDING_ENV_NAMES, settings, strict=False)),
         problem,
         " > ".join(SHEDDING_ENV_NAMES),
         " / ".join(f"{value:g}" for value in DEFAULT_SHEDDING_THRESHOLDS),
     )
     return DEFAULT_SHEDDING_THRESHOLDS
+
+
+# --- shedding thresholds (one rule): end ------------------------------------------------
+SHEDDING_HYSTERESIS_ENV = "SHEDDING_HYSTERESIS_SOC"
+DEFAULT_SHEDDING_HYSTERESIS_SOC = 2.0
+MAX_SHEDDING_HYSTERESIS_SOC = 10.0
 
 
 def checked_shedding_hysteresis(value: object) -> float:
@@ -236,22 +259,12 @@ class SheddingState(NamedTuple):
 def shedding_thresholds() -> tuple[float, float, float, float]:
     """SoC thresholds of levels 1-4 from ``SHEDDING_L1_SOC`` .. ``SHEDDING_L4_SOC``.
 
-    Exactly what ``SovereignConfig`` does: a value that cannot be parsed as a number is
-    ignored with a warning and that one default is kept; the four values are then checked
-    as one policy (finite, within 0-100, L1 > L2 > L3 > L4) and, on a violation, one warning
-    is logged and all four defaults are used.
+    Exactly what ``SovereignConfig`` and the power exporter do (the same
+    ``checked_shedding_thresholds``): an unset or blank variable stands for its default; if
+    any of the four is not a number, lies outside 0-100, or the order is not
+    L1 > L2 > L3 > L4, one warning is logged and all four defaults are used.
     """
-    values: list[float] = []
-    for name, default in SHEDDING_SOC_DEFAULTS:
-        raw = os.getenv(name, "").strip()
-        value = default
-        if raw:
-            try:
-                value = float(raw)
-            except ValueError:
-                logger.warning("Ignoring %s=%r (need a number); using %g %%.", name, raw, default)
-        values.append(value)
-    return checked_shedding_thresholds((values[0], values[1], values[2], values[3]))
+    return checked_shedding_thresholds(tuple(os.getenv(name) for name in SHEDDING_ENV_NAMES))
 
 
 def shedding_hysteresis() -> float:
@@ -419,6 +432,19 @@ def _finite_metric(metrics: dict[str, float], name: str) -> float | None:
     return float(value)
 
 
+def telemetry_source_up(metrics: dict[str, float]) -> bool:
+    """False when the exporter says its source is down: its other samples are then not measurements.
+
+    The same rule as ``sovereign_dc.hal.power.fetch_exporter_metrics``:
+    ``sovereign_telemetry_source_up``, when present, must be a finite value above zero. An
+    exporter that does not publish the series is taken at its word for the samples it sends.
+    """
+    if SOURCE_UP_METRIC not in metrics:
+        return True
+    source_up = metrics[SOURCE_UP_METRIC]
+    return math.isfinite(source_up) and source_up > 0
+
+
 def evaluate_state(
     metrics: dict[str, float], forecast: float, previous_level: int | None = None
 ) -> SheddingState | None:
@@ -428,11 +454,14 @@ def evaluate_state(
     (``run_copilot`` does): the level, and the mode derived from it, then recover with the
     hysteresis of ``shedding_level``. Without it the plain mapping is used.
 
-    Returns None when the battery state of charge is unknown (exporter unreachable,
-    series missing or non-finite): the caller must then keep the current mode. Healthy
+    Returns None when the battery state of charge is unknown (exporter unreachable, the
+    exporter reports its source down with ``sovereign_telemetry_source_up 0``, series
+    missing or non-finite): the caller must then keep the current mode. Healthy
     values are never substituted for missing telemetry. An unknown solar reading can
     never unlock SOLAR_SURPLUS_COMPUTE. ``forecast`` only appears in the reason text.
     """
+    if not telemetry_source_up(metrics):
+        return None
     soc = _finite_metric(metrics, SOC_METRIC)
     if soc is None:
         return None

@@ -38,14 +38,18 @@ _FALLBACK_STATE_DIR: str | None = None
 # src/sovereign_dc/agents/sentinel_copilot.py (the sentinel also ships as a standalone,
 # standard-library-only script and cannot import the package); tests/ compares the two.
 # It needs only ``math`` and the module's ``logger``.
+
+# --- shedding thresholds (one rule): begin ----------------------------------------------
+# This sub-block is byte-identical in src/sovereign_dc/config.py, the sentinel
+# (src/sovereign_dc/agents/sentinel_copilot.py and its copy under software/agents/) and the
+# power exporter (src/sovereign_dc/telemetry.py, software/telemetry/power_exporter.py and the
+# Helm chart's copy); tests/ compares them. The standalone scripts are standard-library-only
+# and cannot import the package. It needs only ``math`` and the module's ``logger``.
 SHEDDING_ENV_NAMES = ("SHEDDING_L1_SOC", "SHEDDING_L2_SOC", "SHEDDING_L3_SOC", "SHEDDING_L4_SOC")
 DEFAULT_SHEDDING_THRESHOLDS = (50.0, 30.0, 20.0, 10.0)
-SHEDDING_HYSTERESIS_ENV = "SHEDDING_HYSTERESIS_SOC"
-DEFAULT_SHEDDING_HYSTERESIS_SOC = 2.0
-MAX_SHEDDING_HYSTERESIS_SOC = 10.0
 
 
-def shedding_policy_problem(thresholds: tuple[float, float, float, float]) -> str | None:
+def shedding_policy_problem(thresholds: tuple[float, ...]) -> str | None:
     """Why ``thresholds`` (levels 1-4) are not a usable policy, or None when they are.
 
     Usable means: four finite numbers within 0-100 with L1 > L2 > L3 > L4.
@@ -66,26 +70,44 @@ def shedding_policy_problem(thresholds: tuple[float, float, float, float]) -> st
     return None
 
 
-def checked_shedding_thresholds(
-    thresholds: tuple[float, float, float, float],
-) -> tuple[float, float, float, float]:
-    """``thresholds`` if they are a usable policy, else the defaults (one warning names why).
+def checked_shedding_thresholds(settings: tuple[object, ...]) -> tuple[float, float, float, float]:
+    """The node's four SoC thresholds from the raw settings of levels 1-4. The one rule.
 
-    A partly applied policy would be worse than the default one, so one bad value discards
-    all four: SHEDDING_L1_SOC > SHEDDING_L2_SOC > SHEDDING_L3_SOC > SHEDDING_L4_SOC.
+    ``settings`` holds, per level, what was configured: an environment string, a YAML value
+    or a number; None or a blank string means "not set" and stands for that level's default.
+    If ANY of the four is not a number, lies outside 0-100, or the order is not
+    SHEDDING_L1_SOC > SHEDDING_L2_SOC > SHEDDING_L3_SOC > SHEDDING_L4_SOC, ALL four defaults
+    are used and one warning names the four variables: a partly applied policy would be
+    worse than the default one, and every reader of the policy must reach the same four
+    numbers from the same settings.
     """
-    problem = shedding_policy_problem(thresholds)
+    values: list[float] = []
+    for setting, default in zip(settings, DEFAULT_SHEDDING_THRESHOLDS, strict=False):
+        if setting is None or (isinstance(setting, str) and not setting.strip()):
+            values.append(default)
+            continue
+        try:
+            values.append(math.nan if isinstance(setting, bool) else float(setting))  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            values.append(math.nan)
+    problem = shedding_policy_problem(tuple(values)) if len(settings) == 4 else "four thresholds are needed"
     if problem is None:
-        return (float(thresholds[0]), float(thresholds[1]), float(thresholds[2]), float(thresholds[3]))
+        return (values[0], values[1], values[2], values[3])
     logger.warning(
         "Ignoring the load-shedding thresholds %s (%s): they must be numbers within 0-100 with "
-        "%s; using the defaults %s.",
-        ", ".join(f"{name}={value!r}" for name, value in zip(SHEDDING_ENV_NAMES, thresholds, strict=False)),
+        "%s; using the defaults %s for all four.",
+        ", ".join(f"{name}={setting!r}" for name, setting in zip(SHEDDING_ENV_NAMES, settings, strict=False)),
         problem,
         " > ".join(SHEDDING_ENV_NAMES),
         " / ".join(f"{value:g}" for value in DEFAULT_SHEDDING_THRESHOLDS),
     )
     return DEFAULT_SHEDDING_THRESHOLDS
+
+
+# --- shedding thresholds (one rule): end ------------------------------------------------
+SHEDDING_HYSTERESIS_ENV = "SHEDDING_HYSTERESIS_SOC"
+DEFAULT_SHEDDING_HYSTERESIS_SOC = 2.0
+MAX_SHEDDING_HYSTERESIS_SOC = 10.0
 
 
 def checked_shedding_hysteresis(value: object) -> float:
@@ -136,6 +158,9 @@ def compute_shedding_level(
 
 
 # --- shared shedding policy: end -------------------------------------------------------
+
+# SovereignConfig fields of the four thresholds, in level order (shedding_l1_soc .. l4).
+_SHEDDING_THRESHOLD_FIELDS = tuple(name.lower() for name in SHEDDING_ENV_NAMES)
 
 
 def _is_private_dir(path: str) -> bool:
@@ -337,7 +362,9 @@ class SovereignConfig:
         except (TypeError, ValueError):
             mesh_interval = math.nan
         self.mesh_poll_interval = max(1.0, mesh_interval) if math.isfinite(mesh_interval) else 60.0
-        # One SoC policy: L1 > L2 > L3 > L4, finite, within 0-100; otherwise all four defaults.
+        # One SoC policy: four numbers within 0-100 with L1 > L2 > L3 > L4; otherwise all four
+        # defaults. The loaders pass the raw settings of these four fields through unchanged
+        # (see _assign_coerced) so that an unparsable one is judged here, with the others.
         (
             self.shedding_l1_soc,
             self.shedding_l2_soc,
@@ -482,6 +509,14 @@ def _assign_coerced(kwargs: dict[str, Any], name: str, value: Any, type_hint: st
     names its source, leaving whatever a lower-precedence layer (or the default) provided:
     one mistyped setting must not make every command fail at configuration load.
     """
+    if name in _SHEDDING_THRESHOLD_FIELDS:
+        # Not coerced one by one: the four thresholds are one policy, parsed and validated
+        # together by checked_shedding_thresholds() in __post_init__ (one unparsable value
+        # discards all four, exactly as in the sentinel and the power exporter). A blank or
+        # null setting means "not set": it leaves a lower-precedence layer's value in place.
+        if value is not None and not (isinstance(value, str) and not value.strip()):
+            kwargs[name] = value
+        return
     try:
         kwargs[name] = _coerce(value, type_hint)
     except (TypeError, ValueError):

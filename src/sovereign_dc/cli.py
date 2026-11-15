@@ -1573,9 +1573,8 @@ def cmd_bootstrap(args):
     power = hw.get("power", {})
     if "battery_soc" in power:
         sim_tag = " (simulated)" if power.get("simulated") else ""
-        print(
-            f"  • Battery / PV:   {power.get('battery_soc', 0):.1f}% SoC | {power.get('solar_w', 0):.0f}W Solar{sim_tag}"
-        )
+        solar_text = f"{power['solar_w']:.0f}W Solar" if "solar_w" in power else "solar n/a"
+        print(f"  • Battery / PV:   {power['battery_soc']:.1f}% SoC | {solar_text}{sim_tag}")
     else:
         print(f"  • Battery / PV:   {YELLOW}telemetry unavailable{RESET}")
 
@@ -2079,7 +2078,11 @@ def cmd_app_status(args):
 
 
 def cmd_app_package(args):
-    """Package an application into a verified, PQC-signed .smdc-app bundle."""
+    """Package an application into a .smdc-app bundle signed with this node's ML-DSA-87 key.
+
+    Signing is not verification: nothing on a receiving node checks the signature unless
+    someone runs ``smdc app verify`` (or calls ``verify_package``) with a key they trust.
+    """
     from pathlib import Path
 
     from sovereign_dc.enterprise.manager import EnterpriseManager
@@ -2097,14 +2100,56 @@ def cmd_app_package(args):
         pqc_sig = meta.get("pqc_signature")
         if pqc_sig:
             print(f"  • PQC Signature:     {GREEN}NIST FIPS 204 ML-DSA-87 signature attached{RESET}")
+            print(f"  • Signer Key ID:     {pqc_sig.get('key_id')}")
         elif args.no_pqc:
             print(f"  • PQC Signature:     {YELLOW}Omitted (--no-pqc){RESET}")
         else:  # package_app fails when a requested signature cannot be made; never report success here
             print(f"  {RED}✖ Signing was requested but the package carries no signature.{RESET}\n")
             return 1
-        print("\n  Package is ready for air-gapped deployment and Space DTN synchronization.\n")
+        if pqc_sig:
+            print(
+                "\n  Nothing verifies this signature automatically. On the receiving side run:\n"
+                "    smdc app verify <package> --public-key <this node's public key, obtained over a trusted channel>\n"
+                "  (the key is `pqc_signature.public_key_hex` in the sidecar written on THIS node).\n"
+            )
+        else:
+            print("\n  The package is unsigned: a receiver cannot check where it came from.\n")
         return 0
     print(f"  {RED}✖ {msg}{RESET}\n")
+    return 1
+
+
+def _public_key_argument(value: str) -> str:
+    """``--public-key``: hex text, or the path of a file that holds hex text (whitespace ignored)."""
+    from pathlib import Path
+
+    try:
+        candidate = Path(value)
+        if candidate.is_file():
+            return "".join(candidate.read_text(encoding="utf-8").split())
+    except (OSError, ValueError):  # a 5,184-character hex key is not a usable path
+        pass
+    return "".join(value.split())
+
+
+def cmd_app_verify(args: argparse.Namespace) -> int:
+    """Verify a ``.smdc-app`` package against a public key the caller already trusts.
+
+    Exits 0 only when the archive matches its sidecar (SHA-256, size) and the sidecar's
+    ML-DSA-87 signature was made by exactly the given key. The key inside the sidecar is
+    never trusted by itself. This is the only verification entry point: no installer calls
+    it, so a package is verified only when someone runs this command (or
+    ``sovereign_dc.enterprise.verify_package``).
+    """
+    from sovereign_dc.enterprise.manager import verify_package
+
+    print(f"\n{BOLD}{CYAN}=== Sovereign Mini Datacenter — Verify Enterprise Application Package ==={RESET}\n")
+    ok, reason = verify_package(args.package, _public_key_argument(args.public_key), sidecar_path=args.sidecar)
+    if ok:
+        print(f"  {GREEN}✔ {args.package}: archive matches its sidecar and the ML-DSA-87 signature is valid{RESET}")
+        print("    for the public key you supplied. Whether that key belongs to the publisher is yours to establish.\n")
+        return 0
+    print(f"  {RED}✖ {args.package}: NOT verified: {reason}{RESET}\n")
     return 1
 
 
@@ -2722,6 +2767,34 @@ def main():
     p_app_pkg.add_argument("--output", type=str, help="Custom output package file path")
     p_app_pkg.add_argument("--no-pqc", action="store_true", help="Skip NIST FIPS 204 ML-DSA post-quantum signature")
     p_app_pkg.set_defaults(func=cmd_app_package)
+
+    p_app_verify = app_subs.add_parser(
+        "verify",
+        help="Verify a .smdc-app package (SHA-256, size, ML-DSA-87 signature) against a public key you trust",
+    )
+    p_app_verify.add_argument("package", help="Path to the .smdc-app archive (its sidecar is <package>.sig)")
+    p_app_verify.add_argument(
+        "--public-key",
+        required=True,
+        help="Trusted ML-DSA-87 public key of the signer: hex text, or a file containing it. "
+        "Obtain it from the signer over a trusted channel, not from the package being verified.",
+    )
+    p_app_verify.add_argument("--sidecar", default=None, help="Signature sidecar path (default: <package>.sig)")
+    p_app_verify.set_defaults(func=cmd_app_verify)
+
+    # Top-level shortcut for `smdc app verify`: same handler, same arguments.
+    p_verify = subparsers.add_parser(
+        "verify",
+        help="Shortcut for `app verify`: verify a .smdc-app package against a public key you trust",
+    )
+    p_verify.add_argument("package", help="Path to the .smdc-app archive (its sidecar is <package>.sig)")
+    p_verify.add_argument(
+        "--public-key",
+        required=True,
+        help="Trusted ML-DSA-87 public key of the signer: hex text, or a file containing it",
+    )
+    p_verify.add_argument("--sidecar", default=None, help="Signature sidecar path (default: <package>.sig)")
+    p_verify.set_defaults(func=cmd_app_verify)
 
     p_app_test = app_subs.add_parser("test", help="Run end-to-end automated self-test of enterprise framework")
     p_app_test.set_defaults(func=cmd_app_test)

@@ -5,12 +5,15 @@
 # software/{agents,mesh,space} hold standalone copies of modules from
 # src/sovereign_dc/ so the Compose overlays can bind-mount or COPY them
 # without installing the package (software/space/Dockerfile relies on the
-# copies being byte-identical). This gate fails when a copy drifts.
+# copies being byte-identical). The Helm chart carries its own copy of the
+# standalone power exporter (Helm can only read files inside the chart). This
+# gate fails when a copy drifts.
 #
 #   scripts/check_mirrors.sh          # check the repository this script is in
 #   scripts/check_mirrors.sh <root>   # check another checkout (used to test the gate)
 #
 # Fix a failure with:  cp src/sovereign_dc/<path> software/<path>
+#                      cp <source> <chart copy>          (CHART_COPIES)
 # ====================================================================
 set -euo pipefail
 
@@ -40,11 +43,20 @@ MIRRORS=(
 # Same relative path under src/sovereign_dc, different content ON PURPOSE:
 # the package __init__ re-exports its API, the standalone one is a docstring
 # only (the overlay containers run the modules as scripts).
-# software/telemetry/power_exporter.py is not listed anywhere: it has no
-# counterpart under src/sovereign_dc (it is a standalone exporter).
+# software/telemetry/power_exporter.py is not listed in either list: it has no
+# byte-identical counterpart under src/sovereign_dc (src/sovereign_dc/telemetry.py
+# is the packaged variant; tests/ compares the blocks the two share).
 INTENTIONALLY_DIFFERENT=(
     agents/__init__.py
     mesh/__init__.py
+)
+
+# ── Chart copies ─────────────────────────────────────────────────────
+# "<source>|<copy>", both relative to the repository root; the copy must be
+# byte-identical to the source. The Helm chart mounts the exporter script from a
+# ConfigMap built with .Files.Get, which cannot reach outside the chart directory.
+CHART_COPIES=(
+    "software/telemetry/power_exporter.py|kubernetes/helm/sovereign-stack/files/power_exporter.py"
 )
 
 [[ -d "$SRC" && -d "$SW" ]] || { echo "error: ${ROOT} is not a repository root (src/sovereign_dc or software missing)" >&2; exit 2; }
@@ -88,8 +100,34 @@ while IFS= read -r path; do
     fi
 done < <(find "${SW}/agents" "${SW}/mesh" "${SW}/space" -name '*.py' -type f | sort)
 
+for pair in "${CHART_COPIES[@]}"; do
+    source_rel="${pair%%|*}"
+    copy_rel="${pair#*|}"
+    if [[ ! -f "${ROOT}/${source_rel}" || ! -f "${ROOT}/${copy_rel}" ]]; then
+        echo "MISSING  ${copy_rel} (chart copy of ${source_rel}; both must exist)" >&2
+        failed=$((failed + 1))
+    elif ! cmp -s "${ROOT}/${source_rel}" "${ROOT}/${copy_rel}"; then
+        echo "DRIFT    ${copy_rel} differs from ${source_rel}" >&2
+        diff -u "${ROOT}/${source_rel}" "${ROOT}/${copy_rel}" | sed -n '1,20p' >&2 || true
+        failed=$((failed + 1))
+    fi
+done
+
+# Every file under a chart's files/ directory must be a listed copy.
+while IFS= read -r path; do
+    rel="${path#"${ROOT}/"}"
+    listed=false
+    for pair in "${CHART_COPIES[@]}"; do
+        [[ "${pair#*|}" == "$rel" ]] && listed=true
+    done
+    if [[ "$listed" == "false" ]]; then
+        echo "UNLISTED ${rel} is not in CHART_COPIES of scripts/check_mirrors.sh" >&2
+        failed=$((failed + 1))
+    fi
+done < <(find "${ROOT}/kubernetes/helm" -path '*/files/*' -type f -not -path '*/__pycache__/*' 2>/dev/null | sort)
+
 if [[ "$failed" -gt 0 ]]; then
-    echo "❌ ${failed} standalone-copy problem(s). Sync with: cp src/sovereign_dc/<path> software/<path>" >&2
+    echo "❌ ${failed} copy problem(s). Sync with: cp src/sovereign_dc/<path> software/<path>   or   cp <source> <chart copy>" >&2
     exit 1
 fi
-echo "✅ ${#MIRRORS[@]} standalone copies under software/ are byte-identical to src/sovereign_dc/."
+echo "✅ ${#MIRRORS[@]} standalone copies under software/ are byte-identical to src/sovereign_dc/; ${#CHART_COPIES[@]} chart copy is byte-identical to its source."

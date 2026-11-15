@@ -55,6 +55,28 @@
 #                         verified, the pass fails and nothing is pruned. Only a
 #                         snapshot that passed gets the dumps-... tag.
 #
+# Complete and incomplete snapshots (both modes). `restic backup` writes a snapshot
+# even when it exits 3 (some files could not be read), so every snapshot is tagged
+# sovereign-snapshot when it is written and classified afterwards:
+#   sovereign-complete    added, together with dumps-<epoch>-<MANIFEST digest>, only
+#                         after restic exited 0 AND the MANIFEST was still the
+#                         verified one. restore.sh restores and verifies "the latest
+#                         snapshot" among these only.
+#   sovereign-incomplete  added when restic exited non-zero after writing a snapshot,
+#                         or when the MANIFEST changed under it. Such a snapshot is
+#                         never picked automatically (restore.sh restore-id <id>
+#                         restores it on request, with a warning).
+#   neither               a run that was killed between the two steps, or a snapshot
+#                         written by an earlier backup.sh. One that carries a dumps-...
+#                         tag (older releases added it only after a clean run) is
+#                         complete and is given sovereign-complete by the next clean
+#                         run; any other is treated as not complete and is never
+#                         removed automatically (restic forget <id> removes it).
+# Retention: the keep policy (7 daily, 4 weekly, 12 monthly, 1 yearly) is applied to
+# the complete snapshots only, so an incomplete snapshot can never be the one that is
+# kept for a day, week or month in place of a complete one. Of the incomplete
+# snapshots the three most recent are kept.
+#
 # Host requirements: root on the Docker host (volume mountpoints are read
 # directly), docker, sqlite3, restic.
 #
@@ -284,6 +306,43 @@ list_has_line() {
         *"${LHL_NL}$2${LHL_NL}"*) return 0 ;;
     esac
     return 1
+}
+
+# Classification of the snapshots in the repository (see the header).
+SNAPSHOT_TAG="sovereign-snapshot"
+COMPLETE_TAG="sovereign-complete"
+INCOMPLETE_TAG="sovereign-incomplete"
+INCOMPLETE_KEEP_LAST=3
+
+# snapshot_rows: reads `restic snapshots --json` on stdin and prints one line per
+# snapshot, in restic's order (oldest first):  <short id>|<time>|<tag>,<tag>,...
+# No JSON tool is assumed (the restic image has none). Every snapshot object ends
+# with its "short_id" member and names its tags before it; text inside JSON strings
+# (paths, excludes) cannot produce `"tags":[`, `"time":"` or `"short_id":"` because a
+# quote inside a string is written `\"`. restore.sh carries the same function.
+snapshot_rows() {
+    tr '}' '\n' | awk '
+        {
+            if (time == "" && match($0, /"time":[ ]*"[^"]*"/)) {
+                time = substr($0, RSTART, RLENGTH); sub(/^"time":[ ]*"/, "", time); sub(/"$/, "", time)
+            }
+            if (match($0, /,"tags":[ ]*\[[^]]*\]/)) {
+                tags = substr($0, RSTART, RLENGTH); sub(/^,"tags":[ ]*\[/, "", tags); sub(/\]$/, "", tags)
+                gsub(/"/, "", tags); gsub(/[ ]*,[ ]*/, ",", tags)
+            }
+            if (match($0, /"short_id":[ ]*"[0-9a-f]+"/)) {
+                id = substr($0, RSTART, RLENGTH); sub(/^"short_id":[ ]*"/, "", id); sub(/"$/, "", id)
+                print id "|" time "|" tags
+                time = ""; tags = ""
+            }
+        }'
+}
+
+# mark_incomplete <run tag>: best effort; a snapshot that carries neither
+# classification tag is treated as not complete as well.
+mark_incomplete() {
+    restic tag --tag "$1" --add "$INCOMPLETE_TAG" >/dev/null 2>&1 \
+        || warn "Could not tag the snapshot of this run ${INCOMPLETE_TAG}; it carries no ${COMPLETE_TAG} tag either, so restore.sh does not pick it automatically."
 }
 
 file_size() { # file_size <file> -> bytes
@@ -1183,7 +1242,7 @@ manifest_fingerprint() {
 skip_if_uploaded() {
     if [ "$(cat "$UPLOAD_STATE" 2>/dev/null || true)" != "$1" ]; then
         # Any mode counts: a host full run (`sh backup.sh`) uploads the same generation.
-        siu_out="$(restic snapshots --tag "sovereign-snapshot,$1" --json 2>/dev/null)" || return 0
+        siu_out="$(restic snapshots --tag "${SNAPSHOT_TAG},$1" --json 2>/dev/null)" || return 0
         case "$siu_out" in
             *'"tree"'*) ;;
             *) return 0 ;;
@@ -1221,10 +1280,11 @@ files_phase() {
 
     # Unique per run (time + process id): the snapshot is found again by this tag below.
     TAG="sovereign-automated-$(date +%Y%m%d_%H%M%S)-$$"
-    # The generation tag is NOT set here: `restic backup` also writes a snapshot when
-    # it exits 3 (some files could not be read), and that one must not count as "this
-    # generation is in the repository". It is added below, once the run is known good.
-    set -- backup --tag "sovereign-snapshot" --tag "$TAG" --tag "mode-${MODE}" \
+    # The generation tag and the completeness tag are NOT set here: `restic backup` also
+    # writes a snapshot when it exits 3 (some files could not be read), and that one must
+    # neither count as "this generation is in the repository" nor be what restore.sh
+    # picks as the latest snapshot. Both are added below, once the run is known good.
+    set -- backup --tag "$SNAPSHOT_TAG" --tag "$TAG" --tag "mode-${MODE}" \
         --exclude "__pycache__"
 
     # Never walk a live database file.
@@ -1288,7 +1348,7 @@ EOF
     # of a parent snapshot (same host, same paths) finds none and would read every
     # static volume file again. Name the newest snapshot of this mode as the parent
     # (best effort: without one the run is only slower).
-    fp_parent="$(restic snapshots --tag "sovereign-snapshot,mode-${MODE}" --json 2>/dev/null \
+    fp_parent="$(restic snapshots --tag "${SNAPSHOT_TAG},mode-${MODE}" --json 2>/dev/null \
         | tr ',' '\n' | sed -n 's/.*"short_id":[[:space:]]*"\([0-9a-f]*\)".*/\1/p' | tail -n 1)" || fp_parent=""
     if [ -n "$fp_parent" ]; then
         set -- "$@" --parent "$fp_parent"
@@ -1296,7 +1356,14 @@ EOF
 
     # A non-zero exit (including 3: some files could not be read) fails the run,
     # and with it everything below: retention never runs after a failed backup.
-    restic "$@"
+    # restic may have written a snapshot all the same (exit 3): classify it.
+    fp_rc=0
+    restic "$@" || fp_rc=$?
+    if [ "$fp_rc" -ne 0 ]; then
+        mark_incomplete "$TAG"
+        printf '\033[1;31m[ERROR]  %s\033[0m\n' "restic backup exited ${fp_rc}. If it wrote a snapshot (exit 3: some files could not be read), that snapshot is tagged ${INCOMPLETE_TAG}: 'restore.sh restore-latest' and '--verify' keep using the last complete snapshot. Nothing was pruned." >&2
+        exit "$fp_rc"
+    fi
 
     # The MANIFEST restic just read must still be the one verified above. In the
     # generation layout it can only have vanished (this run outlived the rotation of
@@ -1305,18 +1372,34 @@ EOF
     # with dump files of another run: fail, and do not prune.
     fp_after="$(manifest_fingerprint)" || fp_after="unreadable"
     if [ "$fp_after" != "$fp_before" ]; then
-        err "The dump manifest ${DUMPS}/MANIFEST changed or disappeared while restic was reading the dumps (verified: ${fp_before}; now: ${fp_after}). The snapshot tagged ${TAG} may hold a MANIFEST and dump files from different runs: do not rely on it ('restore.sh --verify' tells). Nothing was pruned; the next pass backs up the current generation."
+        mark_incomplete "$TAG"
+        err "The dump manifest ${DUMPS}/MANIFEST changed or disappeared while restic was reading the dumps (verified: ${fp_before}; now: ${fp_after}). The snapshot tagged ${TAG} may hold a MANIFEST and dump files from different runs: it is tagged ${INCOMPLETE_TAG} and is not picked by 'restore.sh restore-latest' ('restore.sh --verify <id>' tells what it holds). Nothing was pruned; the next pass backs up the current generation."
     fi
-    # Complete and consistent: mark the snapshot as the upload of this generation.
-    restic tag --tag "${TAG},mode-${MODE}" --add "$fp_dumps_tag" >/dev/null \
-        || err "The snapshot tagged ${TAG} was written, but tagging it ${fp_dumps_tag} failed: the repository does not record this generation as uploaded, and the next pass uploads it again. Nothing was pruned."
+    # Complete and consistent: mark the snapshot as the upload of this generation and
+    # as one that `restore.sh restore-latest` / `--verify` may pick.
+    restic tag --tag "${TAG},mode-${MODE}" --add "$fp_dumps_tag" --add "$COMPLETE_TAG" >/dev/null \
+        || err "The snapshot tagged ${TAG} was written, but tagging it ${fp_dumps_tag} and ${COMPLETE_TAG} failed: the repository does not record this generation as uploaded (the next pass uploads it again) and restore.sh does not treat the snapshot as complete. Nothing was pruned."
     if [ "$MODE" = "container" ]; then
         mkdir -p "$(dirname "$UPLOAD_STATE")" 2>/dev/null || true
         printf '%s\n' "$fp_dumps_tag" >"$UPLOAD_STATE" 2>/dev/null \
             || warn "Cannot write ${UPLOAD_STATE}; the repository is asked again on the next pass."
     fi
 
-    # -- Retention Policy (7 daily, 4 weekly, 12 monthly, 1 yearly) ----
+    # Complete snapshots of an earlier backup.sh carry a dumps-... tag (added only after
+    # a clean run) but no ${COMPLETE_TAG}: give it to them, so that the retention below,
+    # which looks at complete snapshots only, covers them too. Best effort.
+    fp_legacy="$(restic snapshots --tag "$SNAPSHOT_TAG" --json 2>/dev/null | snapshot_rows \
+        | awk -F'|' -v c="$COMPLETE_TAG" '("," $3 ",") ~ /,dumps-/ && index("," $3 ",", "," c ",") == 0 { print $1 }')" || fp_legacy=""
+    for fp_id in $fp_legacy; do
+        if restic tag --add "$COMPLETE_TAG" "$fp_id" >/dev/null 2>&1; then
+            info "snapshot ${fp_id} (complete run of an earlier backup.sh) is now tagged ${COMPLETE_TAG}"
+        else
+            warn "Could not tag snapshot ${fp_id} ${COMPLETE_TAG}; it stays outside the retention policy until a later run succeeds in tagging it."
+        fi
+    done
+
+    # -- Retention Policy (complete snapshots: 7 daily, 4 weekly, 12 monthly, 1 yearly;
+    #    incomplete snapshots: the 3 most recent) --------------------------------------
     if [ -n "$CM_COVERAGE_REDUCED" ]; then
         # The new snapshot covers less than the ones before it. Pruning now could
         # delete the last snapshots that still hold the missing services.
@@ -1326,8 +1409,17 @@ EOF
         # --group-by host: the dump directory is a different path in every snapshot,
         # and grouping by path (restic's default) would put each snapshot in a group
         # of its own, in which nothing is ever removed.
+        # Incomplete snapshots first (no prune yet): only the most recent few are kept.
         restic forget \
-            --tag "sovereign-snapshot" \
+            --tag "$INCOMPLETE_TAG" \
+            --group-by host \
+            --keep-last "$INCOMPLETE_KEEP_LAST"
+        # The keep policy counts complete snapshots only: with `--tag sovereign-snapshot`
+        # the newest snapshot of a day (week, month) would be kept even when it is an
+        # incomplete one, and the complete snapshot of that day would be removed.
+        # Snapshots with neither tag (see the header) are left alone.
+        restic forget \
+            --tag "$COMPLETE_TAG" \
             --group-by host \
             --keep-daily 7 \
             --keep-weekly 4 \
@@ -1337,7 +1429,7 @@ EOF
     fi
 
     log "✅ Backup completed successfully. Current snapshot summary:"
-    restic snapshots --tag "sovereign-snapshot" --compact | tail -n 10
+    restic snapshots --tag "$SNAPSHOT_TAG" --compact | tail -n 10
 }
 
 if [ "$MODE" = "host" ]; then

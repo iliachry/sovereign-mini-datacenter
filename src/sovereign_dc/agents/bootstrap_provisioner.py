@@ -29,7 +29,14 @@ from sovereign_dc.agents.technician_notifier import (
     MessageSeverity,
     TechnicianNotifierChain,
 )
-from sovereign_dc.config import DEFAULT_NODE_ID, default_dtn_db_path
+from sovereign_dc.config import DEFAULT_NODE_ID, default_dtn_db_path, get_config
+from sovereign_dc.hal.power import (
+    METRIC_BATTERY_SOC,
+    METRIC_SIMULATED,
+    METRIC_SOLAR_WATTS,
+    fetch_exporter_metrics,
+    optional_metric,
+)
 
 logger = logging.getLogger("BootstrapProvisioner")
 
@@ -49,10 +56,16 @@ STATUS_READY = "NODE_ONLINE_READY"
 STATUS_DEGRADED = "NODE_ONLINE_DEGRADED"
 NOT_IMPLEMENTED = "NOT_IMPLEMENTED"
 
-SOC_METRIC = "sovereign_battery_soc_percent"
-SOLAR_METRIC = "sovereign_solar_pv_power_watts"
-SIMULATED_METRIC = "sovereign_telemetry_simulated"
-LOW_BATTERY_SOC = 20.0
+SOC_METRIC = METRIC_BATTERY_SOC
+SOLAR_METRIC = METRIC_SOLAR_WATTS
+SIMULATED_METRIC = METRIC_SIMULATED
+LOW_BATTERY_SOC = 20.0  # default of SHEDDING_L3_SOC; the configured value is read by low_battery_soc()
+
+
+def low_battery_soc() -> float:
+    """SoC below which the node reports a low battery: the configured shedding level 3 threshold."""
+    return float(get_config().shedding_l3_soc)
+
 
 _PHASE_KEYS = ("discovery", "network", "services", "sync")
 
@@ -152,31 +165,32 @@ class BootstrapProvisioner:
 
     @staticmethod
     def _read_power_telemetry(url: str) -> dict[str, Any]:
-        """Reads battery / solar readings from the power exporter; absent keys mean unknown."""
+        """Reads battery / solar readings from the power exporter; absent keys mean unknown.
+
+        This is the HAL's reader (``hal.power.fetch_exporter_metrics``), so bootstrap and the
+        HAL cannot disagree about what a measurement is: an exporter that reports
+        ``sovereign_telemetry_source_up 0`` has none, and a ``NaN`` or infinite sample is
+        not a value. ``telemetry_available`` is True only with a finite battery SoC;
+        otherwise ``error`` says why.
+        """
         power: dict[str, Any] = {"telemetry_available": False, "source": url}
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": "smdc-bootstrap"})
-            with urllib.request.urlopen(req, timeout=2) as resp:
-                content = resp.read().decode("utf-8")
-        except Exception as e:
+            metrics = fetch_exporter_metrics(url)
+        except Exception as e:  # unreachable, source down (TelemetryUnavailable), unreadable body
             power["error"] = str(e)
             return power
 
-        for line in content.split("\n"):
-            parts = line.split()
-            if len(parts) != 2 or line.startswith("#"):
-                continue
-            try:
-                value = float(parts[1])
-            except ValueError:
-                continue
-            if parts[0] == SOC_METRIC:
-                power["battery_soc"] = value
-            elif parts[0] == SOLAR_METRIC:
-                power["solar_w"] = value
-            elif parts[0] == SIMULATED_METRIC:
-                power["simulated"] = value >= 1.0
-        power["telemetry_available"] = "battery_soc" in power
+        if METRIC_SIMULATED in metrics:
+            power["simulated"] = metrics[METRIC_SIMULATED] > 0
+        soc = optional_metric(metrics, METRIC_BATTERY_SOC)
+        if soc is None:
+            power["error"] = f"exporter reports no finite {METRIC_BATTERY_SOC}"
+            return power
+        power["battery_soc"] = soc
+        solar = optional_metric(metrics, METRIC_SOLAR_WATTS)
+        if solar is not None:
+            power["solar_w"] = solar
+        power["telemetry_available"] = True
         return power
 
     def _count_spool_bundles(self, spool_db: str) -> int | None:
@@ -282,7 +296,7 @@ class BootstrapProvisioner:
                 details=info,
                 action_required=f"Check the power telemetry exporter at {power_url}.",
             )
-        elif soc < LOW_BATTERY_SOC:
+        elif soc < low_battery_soc():
             self._notify(
                 "hardware",
                 ("HARDWARE_WARNING", info["gpu_detected"]),

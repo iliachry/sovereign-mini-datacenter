@@ -333,9 +333,18 @@ Output:
   • SHA-256 Digest:    <sha256 of the archive>
   • Package Size:      <size> bytes
   • PQC Signature:     NIST FIPS 204 ML-DSA-87 signature attached
+  • Signer Key ID:     <id of the node's signing key>
 ```
 
 The signature and metadata are written to the sidecar `predictive-maint-1.0.0.smdc-app.sig`. Signing is on by default and fails closed: if the ML-DSA-87 signature cannot be produced, the command prints the reason, exits non-zero and leaves neither the archive nor the sidecar behind. An unsigned package is produced only when `--no-pqc` is passed (the output then says `Omitted (--no-pqc)`).
+
+A signature proves something only to someone who checks it. The receiver verifies the package against the signer's public key, obtained from the signer over a trusted channel (it is `pqc_signature.public_key_hex` in a sidecar written on the signing node; the key inside the sidecar that arrives with a package is not trusted by itself):
+
+```bash
+smdc app verify predictive-maint-1.0.0.smdc-app --public-key signer-public-key.hex
+```
+
+The command exits 0 only when the archive's SHA-256 and size match the sidecar and the ML-DSA-87 signature was made by exactly that key; otherwise it prints the reason and exits 1. Nothing else in SMDC runs this check: there is no package installer, and `smdc app register` reads an application directory, not a package.
 
 ---
 

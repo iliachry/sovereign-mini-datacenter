@@ -17,8 +17,36 @@
 # earlier backup.sh hold them directly under the dump directory. Both are found
 # by name.
 #
-# This script never talks to Docker and never writes into a live volume: it
-# extracts into a directory you name (or a temporary one for --verify).
+# WHICH SNAPSHOT. `restic backup` writes a snapshot even when it could not read
+# every file (exit 3), so "the latest snapshot" is not necessarily a usable one.
+# backup.sh classifies every snapshot after the run (see its header):
+#   complete      tagged sovereign-complete - or, for a snapshot of an earlier
+#                 backup.sh, tagged dumps-<epoch>-<digest>, which was only ever
+#                 added after a clean run
+#   incomplete    tagged sovereign-incomplete (restic exited non-zero, or the dump
+#                 MANIFEST changed while it was read)
+#   unclassified  neither tag: an interrupted run, or a snapshot of a backup.sh that
+#                 did not tag yet
+# `restore-latest` and `--verify` without an id use the NEWEST COMPLETE snapshot,
+# name it, and warn about newer snapshots that are not complete. An incomplete or
+# unclassified snapshot is only restored when it is named: `restore-id <id>` and
+# `--verify <id>` do that, with a warning. `list` shows the state of each.
+#
+# WHICH REPOSITORY. RESTIC_REPOSITORY from the environment of this command is used
+# as it is. Otherwise the value in software/.env applies (default
+# /var/backups/sovereign) - and that path means two different places: on the host
+# it is a host directory (written by a host-mode `sh backup.sh`), inside the
+# sovereign_backup container it is the named volume <project>_backup_storage. When
+# the path is that default, this script therefore looks (read-only: `docker inspect`,
+# `docker volume inspect`) for the volume and
+#   - uses the volume's mountpoint when only the volume holds a repository,
+#   - uses the host directory when only that holds one,
+#   - stops when both do: set RESTIC_REPOSITORY in the environment to choose.
+# See "Verifying and restoring" in backup/README.md, also for running this script
+# inside a throwaway container when the volume is not on this filesystem.
+#
+# This script never changes anything through Docker and never writes into a live
+# volume: it extracts into a directory you name (or a temporary one for --verify).
 # ====================================================================
 
 set -euo pipefail
@@ -43,6 +71,9 @@ env_file_value() {
     esac
     printf '%s' "$efv"
 }
+# A repository named in the environment of this command is used as it is (see the header).
+REPOSITORY_FROM_ENVIRONMENT=false
+if [[ -n "${RESTIC_REPOSITORY:-}" ]]; then REPOSITORY_FROM_ENVIRONMENT=true; fi
 for key in RESTIC_REPOSITORY RESTIC_PASSWORD RESTIC_S3_KEY RESTIC_S3_SECRET; do
     if [[ -z "${!key+set}" ]]; then
         value="$(env_file_value "$key")"
@@ -55,12 +86,13 @@ usage() {
 Sovereign Disaster Recovery & Restore CLI
 
 Usage:
-  ./restore.sh list                               List available snapshots
-  ./restore.sh restore-latest <target>            Extract the latest snapshot into <target>
-  ./restore.sh restore-id <snapshot_id> <target>  Extract a specific snapshot into <target>
+  ./restore.sh list                               List the snapshots and whether each is complete
+  ./restore.sh restore-latest <target>            Extract the newest COMPLETE snapshot into <target>
+  ./restore.sh restore-id <snapshot_id> <target>  Extract a specific snapshot into <target> (also an incomplete
+                                                  one, with a warning)
   ./restore.sh plan <target>                      Print the per-service restore steps for an extracted snapshot
-  ./restore.sh --verify [snapshot_id]             Restore the dumps of the latest (or given) snapshot into a
-                                                  temporary directory and check that each one is the file the
+  ./restore.sh --verify [snapshot_id]             Restore the dumps of the newest complete (or the given) snapshot
+                                                  into a temporary directory and check that each one is the file the
                                                   MANIFEST recorded (size, SHA-256) and loads: SQLite
                                                   integrity_check, pg_restore --list, GitLab archive listing.
                                                   Live services are not touched. Non-zero on any failure.
@@ -69,6 +101,10 @@ Usage:
 
 <target> must be an empty or new directory, never a live volume.
 
+A snapshot is complete when backup.sh tagged it after a clean run (restic exit 0, dump MANIFEST unchanged).
+Repository: RESTIC_REPOSITORY from the environment is used as it is; the default /var/backups/sovereign is
+looked for on the host and in the backup container's volume (see the header of this script).
+
 Examples:
   ./restore.sh --verify
   ./restore.sh restore-latest /mnt/restore_target && ./restore.sh plan /mnt/restore_target
@@ -76,8 +112,86 @@ EOF
     exit 1
 }
 
+DEFAULT_REPOSITORY="/var/backups/sovereign"
+BACKUP_CONTAINER="sovereign_backup"
+SNAPSHOT_TAG="sovereign-snapshot"
+COMPLETE_TAG="sovereign-complete"
+INCOMPLETE_TAG="sovereign-incomplete"
+
+# repository_state <dir>: yes | no | missing | unreadable. A local restic repository
+# has a `config` file and a `keys` directory at its root.
+repository_state() {
+    if [[ ! -d "$1" ]]; then echo missing; return 0; fi
+    if [[ ! -r "$1" || ! -x "$1" ]]; then echo unreadable; return 0; fi
+    if [[ -f "$1/config" && -d "$1/keys" ]]; then echo yes; else echo no; fi
+}
+
+# Name of the volume the backup container keeps its repository in: what the
+# container has mounted there if it exists, else <project>_backup_storage.
+backup_volume_name() {
+    local name project
+    name="$(docker inspect --format "{{ range .Mounts }}{{ if and (eq .Type \"volume\") (eq .Destination \"${DEFAULT_REPOSITORY}\") }}{{ .Name }}{{ end }}{{ end }}" "$BACKUP_CONTAINER" 2>/dev/null || true)"
+    if [[ -z "$name" ]]; then
+        project="${COMPOSE_PROJECT_NAME:-$(env_file_value COMPOSE_PROJECT_NAME)}"
+        if [[ -z "$project" ]]; then
+            project="$(docker inspect --format '{{ index .Config.Labels "com.docker.compose.project" }}' sovereign_traefik 2>/dev/null || true)"
+        fi
+        name="${project:-software}_backup_storage"
+    fi
+    printf '%s' "$name"
+}
+
+# Decides what ${DEFAULT_REPOSITORY} means on this host (see WHICH REPOSITORY in the
+# header). Never picks silently between two repositories.
+resolve_repository() {
+    export RESTIC_REPOSITORY="${RESTIC_REPOSITORY:-$DEFAULT_REPOSITORY}"
+    if [[ "$REPOSITORY_FROM_ENVIRONMENT" == "true" || "${RESTIC_REPOSITORY%/}" != "$DEFAULT_REPOSITORY" ]]; then
+        return 0
+    fi
+    local volume="" mountpoint="" host_state volume_state hint
+    host_state="$(repository_state "$DEFAULT_REPOSITORY")"
+    if command -v docker >/dev/null 2>&1; then
+        volume="$(backup_volume_name)"
+        mountpoint="$(docker volume inspect --format '{{ .Mountpoint }}' "$volume" 2>/dev/null || true)"
+    fi
+    # No Docker, no reachable daemon or no backup volume: only the host directory can be meant.
+    if [[ -z "$mountpoint" ]]; then
+        case "$host_state" in
+            yes) return 0 ;;
+            unreadable) err "Cannot read ${DEFAULT_REPOSITORY} as $(id -un): run this script as root (sudo)." ;;
+        esac
+        err "No restic repository at ${DEFAULT_REPOSITORY} on this host, and Docker reports no backup volume${volume:+ named ${volume}} (docker missing, daemon not reachable, or the volume belongs to another Compose project). If the backups are made by the ${BACKUP_CONTAINER} container, the repository is its volume <project>_backup_storage: find its mountpoint with 'docker volume ls' / 'docker volume inspect' and run  sudo RESTIC_REPOSITORY=<mountpoint> bash $0 ...  ; otherwise set RESTIC_REPOSITORY to where the repository is."
+    fi
+    volume_state="$(repository_state "$mountpoint")"
+    hint="Name the repository in the environment of this command, e.g.  sudo RESTIC_REPOSITORY=${mountpoint} bash $0 ...   (the volume)  or  sudo RESTIC_REPOSITORY=${DEFAULT_REPOSITORY} bash $0 ...   (the host directory)."
+    case "${host_state}/${volume_state}" in
+        yes/yes)
+            err "Two restic repositories answer to RESTIC_REPOSITORY=${DEFAULT_REPOSITORY}: the host directory ${DEFAULT_REPOSITORY} (host-mode 'sh backup.sh') and the volume ${volume} of the backup container (mountpoint ${mountpoint}). This script does not guess. ${hint}"
+            ;;
+        yes/no)
+            info "repository: host directory ${DEFAULT_REPOSITORY} (the volume ${volume} holds no repository)"
+            ;;
+        no/yes | missing/yes)
+            export RESTIC_REPOSITORY="$mountpoint"
+            warn "RESTIC_REPOSITORY=${DEFAULT_REPOSITORY} holds no restic repository on this host; using the backup container's volume ${volume} at ${mountpoint} (inside the container that volume is mounted at ${DEFAULT_REPOSITORY})."
+            ;;
+        unreadable/* | */unreadable)
+            err "Cannot read ${DEFAULT_REPOSITORY} and/or the volume ${volume} at ${mountpoint} as $(id -un): run this script as root (sudo), or name the repository. ${hint}"
+            ;;
+        yes/missing)
+            err "The host directory ${DEFAULT_REPOSITORY} holds a restic repository, but the backup container keeps its own in the volume ${volume}, whose mountpoint ${mountpoint} cannot be seen from here (not root, or Docker runs in a VM or on another host), so this script cannot tell which one you mean. ${hint} To read the volume where it is not on this filesystem, run this script in a throwaway container: see 'Verifying and restoring' in backup/README.md."
+            ;;
+        */missing)
+            err "${DEFAULT_REPOSITORY} holds no restic repository on this host, and the mountpoint ${mountpoint} of the backup container's volume ${volume} cannot be seen from here (not root, or Docker runs in a VM or on another host). Run this script as root, or in a throwaway container with the volume mounted: see 'Verifying and restoring' in backup/README.md."
+            ;;
+        *)
+            err "Neither ${DEFAULT_REPOSITORY} on this host nor the backup container's volume ${volume} (${mountpoint}) holds a restic repository: no backup has completed yet, or the repository is elsewhere (set RESTIC_REPOSITORY)."
+            ;;
+    esac
+}
+
 need_restic() {
-    export RESTIC_REPOSITORY="${RESTIC_REPOSITORY:-/var/backups/sovereign}"
+    resolve_repository
     # No default: the password must be the one the repository was created with.
     [[ -n "${RESTIC_PASSWORD:-}" ]] || err "RESTIC_PASSWORD is not set. Set it in software/.env or the environment."
     export RESTIC_PASSWORD
@@ -86,15 +200,104 @@ need_restic() {
     command -v restic >/dev/null 2>&1 || err "restic CLI not found. Install it with: apt-get install restic"
 }
 
-# restic_restore <snapshot|latest> <target> [restic restore options...]
+# snapshot_rows: reads `restic snapshots --json` on stdin and prints one line per
+# snapshot, in restic's order (oldest first):  <short id>|<time>|<tag>,<tag>,...
+# The same function as in backup.sh (no JSON tool is assumed; text inside JSON
+# strings cannot produce `"tags":[`, `"time":"` or `"short_id":"` because a quote
+# inside a string is written `\"`).
+snapshot_rows() {
+    tr '}' '\n' | awk '
+        {
+            if (time == "" && match($0, /"time":[ ]*"[^"]*"/)) {
+                time = substr($0, RSTART, RLENGTH); sub(/^"time":[ ]*"/, "", time); sub(/"$/, "", time)
+            }
+            if (match($0, /,"tags":[ ]*\[[^]]*\]/)) {
+                tags = substr($0, RSTART, RLENGTH); sub(/^,"tags":[ ]*\[/, "", tags); sub(/\]$/, "", tags)
+                gsub(/"/, "", tags); gsub(/[ ]*,[ ]*/, ",", tags)
+            }
+            if (match($0, /"short_id":[ ]*"[0-9a-f]+"/)) {
+                id = substr($0, RSTART, RLENGTH); sub(/^"short_id":[ ]*"/, "", id); sub(/"$/, "", id)
+                print id "|" time "|" tags
+                time = ""; tags = ""
+            }
+        }'
+}
+
+# SNAPSHOT_ROWS: one line per snapshot tagged sovereign-snapshot, oldest first:
+#   <short id>|<time>|<tags>|<complete|incomplete|unclassified>
+SNAPSHOT_ROWS=""
+SNAPSHOTS_LOADED=false
+load_snapshots() {
+    local json
+    if [[ "$SNAPSHOTS_LOADED" == "true" ]]; then return 0; fi
+    json="$(restic snapshots --tag "$SNAPSHOT_TAG" --json)" || err "Cannot list the snapshots of ${RESTIC_REPOSITORY} (see restic's message above)."
+    SNAPSHOT_ROWS="$(snapshot_rows <<<"$json" | awk -F'|' -v c="$COMPLETE_TAG" -v i="$INCOMPLETE_TAG" '
+        {
+            tags = "," $3 ","
+            state = "unclassified"
+            if (index(tags, "," i ",") > 0) state = "incomplete"
+            else if (index(tags, "," c ",") > 0 || index(tags, ",dumps-") > 0) state = "complete"
+            print $1 "|" $2 "|" $3 "|" state
+        }')"
+    SNAPSHOTS_LOADED=true
+}
+
+print_snapshot_rows() { # stdin: rows of SNAPSHOT_ROWS
+    awk -F'|' '{ printf "          %-10s %-36s %-13s %s\n", $1, $2, $4, $3 }'
+}
+
+# Sets SELECTED to the id of the newest complete snapshot; says which one it is and
+# which newer snapshots were passed over. Stops when there is none.
+SELECTED=""
+select_latest_complete() {
+    local newer total
+    load_snapshots
+    SELECTED="$(awk -F'|' '$4 == "complete" { id = $1 } END { print id }' <<<"$SNAPSHOT_ROWS")"
+    if [[ -z "$SELECTED" ]]; then
+        total="$(grep -c . <<<"$SNAPSHOT_ROWS" || true)"
+        if [[ "$total" -eq 0 ]]; then
+            err "${RESTIC_REPOSITORY} holds no snapshot tagged ${SNAPSHOT_TAG}."
+        fi
+        info "snapshots in ${RESTIC_REPOSITORY} (oldest first):"
+        print_snapshot_rows <<<"$SNAPSHOT_ROWS"
+        err "None of the ${total} snapshot(s) is marked complete, so there is no 'latest' this script will pick. Snapshots written by a backup.sh that did not tag yet carry no mark: choose one with './restore.sh list', check it with './restore.sh --verify <id>' and restore it with './restore.sh restore-id <id> <target>'."
+    fi
+    newer="$(awk -F'|' -v chosen="$SELECTED" 'seen { print } $1 == chosen { seen = 1 }' <<<"$SNAPSHOT_ROWS")"
+    if [[ -n "$newer" ]]; then
+        warn "$(grep -c . <<<"$newer") newer snapshot(s) are NOT complete (a backup run failed or was interrupted) and are not used:"
+        print_snapshot_rows <<<"$newer"
+        info "Fix the backup (docker logs ${BACKUP_CONTAINER} / the host job's output). To restore one of them anyway: ./restore.sh restore-id <id> <target>"
+    fi
+    info "selected: snapshot ${SELECTED} ($(awk -F'|' -v chosen="$SELECTED" '$1 == chosen { print $2 }' <<<"$SNAPSHOT_ROWS")), the newest one marked complete"
+}
+
+# warn_unless_complete <snapshot id>: a named snapshot is used as asked, but not quietly
+# when backup.sh did not mark it complete.
+warn_unless_complete() {
+    local row state
+    load_snapshots
+    row="$(awk -F'|' -v id="$1" 'index(id, $1) == 1 || index($1, id) == 1 { print; exit }' <<<"$SNAPSHOT_ROWS")"
+    if [[ -z "$row" ]]; then
+        warn "Snapshot ${1} is not among the snapshots tagged ${SNAPSHOT_TAG}: this script cannot tell whether it is a complete backup."
+        return 0
+    fi
+    state="${row##*|}"
+    case "$state" in
+        complete) ;;
+        incomplete)
+            warn "SNAPSHOT ${1} IS INCOMPLETE: the backup run that wrote it failed (restic could not read every file, or the dump MANIFEST changed while it was read). Files are missing from it or do not belong together. Use it only for what the complete snapshots do not have."
+            ;;
+        *)
+            warn "SNAPSHOT ${1} IS NOT MARKED COMPLETE: it was written by an interrupted run or by a backup.sh that did not tag its snapshots yet. Check it with './restore.sh --verify ${1}' before relying on it."
+            ;;
+    esac
+}
+
+# restic_restore <snapshot id> <target> [restic restore options...]
 restic_restore() {
     local snapshot="$1" target="$2"
     shift 2
-    if [[ "$snapshot" == "latest" ]]; then
-        restic restore latest --tag "sovereign-snapshot" --target "$target" "$@"
-    else
-        restic restore "$snapshot" --target "$target" "$@"
-    fi
+    restic restore "$snapshot" --target "$target" "$@"
 }
 
 prepare_target() {
@@ -218,17 +421,20 @@ verify_recorded() {
 # Number of files of the Nextcloud snapshot that the restic snapshot lists (nothing is restored).
 count_tree_files() {
     local snapshot="$1" dir="$2"
-    if [[ "$snapshot" == "latest" ]]; then
-        restic ls latest --tag "sovereign-snapshot" --long
-    else
-        restic ls "$snapshot" --long
-    fi | grep -E '^-' | grep -c "/${dir}/volume/" || true
+    restic ls "$snapshot" --long | grep -E '^-' | grep -c "/${dir}/volume/" || true
 }
 
 verify_dumps() {
     local snapshot="${1:-latest}" tmp dumps manifest failed=0 checked=0 version
     need_restic
     command -v sqlite3 >/dev/null 2>&1 || err "sqlite3 CLI not found. Install it with: apt-get install sqlite3"
+    if [[ "$snapshot" == "latest" ]]; then
+        log "Choosing the snapshot to verify in ${RESTIC_REPOSITORY}:"
+        select_latest_complete
+        snapshot="$SELECTED"
+    else
+        warn_unless_complete "$snapshot"
+    fi
     tmp="$(mktemp -d "${TMPDIR:-/tmp}/smdc-restore-verify.XXXXXX")"
     # shellcheck disable=SC2064  # expand now: tmp is a local
     trap "rm -rf '${tmp}'" EXIT
@@ -319,7 +525,7 @@ verify_dumps() {
     done <"$manifest"
 
     if [[ "$failed" -gt 0 ]]; then
-        err "${failed} of ${checked} dump(s) cannot be loaded. This snapshot cannot restore those databases."
+        err "${failed} check(s) failed on the ${checked} dump(s) of this snapshot: a dump that fails cannot be loaded, and this snapshot cannot restore that database."
     fi
     [[ "$checked" -gt 0 ]] || err "The MANIFEST lists no successful dump: nothing to restore from."
     log "✅ All ${checked} dump(s) of snapshot '${snapshot}' load. (Skipped entries above were not deployed when the backup ran.)"
@@ -424,13 +630,26 @@ case "$cmd" in
         need_restic
         log "Listing all snapshots in ${RESTIC_REPOSITORY}:"
         restic snapshots
+        load_snapshots
+        log "Backup snapshots (tag ${SNAPSHOT_TAG}), oldest first:"
+        if [[ -n "$SNAPSHOT_ROWS" ]]; then
+            printf '          %-10s %-36s %-13s %s\n' "ID" "TIME" "STATE" "TAGS"
+            print_snapshot_rows <<<"$SNAPSHOT_ROWS"
+        else
+            info "(none)"
+        fi
+        info "complete: backup.sh finished cleanly; used by restore-latest and --verify."
+        info "incomplete: the run failed after restic wrote the snapshot. unclassified: no mark (interrupted run or older backup.sh)."
+        info "incomplete and unclassified snapshots are only restored by id: ./restore.sh restore-id <id> <target>"
         ;;
     restore-latest)
         need_restic
         target="${1:-}"
         prepare_target "$target"
-        log "Extracting the latest snapshot into $target..."
-        restic_restore latest "$target"
+        log "Choosing the snapshot to restore from ${RESTIC_REPOSITORY}:"
+        select_latest_complete
+        log "Extracting snapshot ${SELECTED} into $target..."
+        restic_restore "$SELECTED" "$target"
         log "✅ Extracted to $target. Databases are dumps, not live directories: run './restore.sh plan $target' for the per-service steps."
         ;;
     restore-id)
@@ -439,6 +658,7 @@ case "$cmd" in
         target="${2:-}"
         [[ -n "$snapshot_id" ]] || { echo "Error: Missing snapshot ID."; usage; }
         prepare_target "$target"
+        warn_unless_complete "$snapshot_id"
         log "Extracting snapshot $snapshot_id into $target..."
         restic_restore "$snapshot_id" "$target"
         log "✅ Extracted to $target. Databases are dumps, not live directories: run './restore.sh plan $target' for the per-service steps."

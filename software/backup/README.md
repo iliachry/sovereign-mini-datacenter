@@ -43,13 +43,47 @@ place:
 One condition is only visible **after** the upload: the `MANIFEST` is fingerprinted
 (size and SHA-256) before it is verified and again after `restic backup` returns. If it
 changed or disappeared while restic was reading, the run exits non-zero and does not
-prune; the snapshot it just wrote is named in the error and must not be relied on
-(`restore.sh --verify` tells). The next run or pass backs up the current generation.
+prune; the snapshot it just wrote is named in the error, is tagged
+`sovereign-incomplete` and is never picked by `restore.sh restore-latest` or `--verify`
+(`restore.sh --verify <id>` tells what it holds). The next run or pass backs up the
+current generation.
 
-The retention step (`restic forget --prune --group-by host`) runs only after a successful
-`restic backup` of a run whose coverage is not reduced and whose `MANIFEST` was still the
-verified one. Snapshots are grouped by host only, because the dump directory is a
-different path in every snapshot.
+### Complete and incomplete snapshots
+
+`restic backup` writes a snapshot even when it exits 3 because some files could not be
+read. Every snapshot therefore gets the tag `sovereign-snapshot` when it is written and is
+classified once the outcome is known:
+
+| State | Tag | Set when | `restore.sh` |
+|---|---|---|---|
+| complete | `sovereign-complete` (together with `dumps-<epoch>-<digest>`) | `restic backup` exited 0 **and** the `MANIFEST` was still the verified one afterwards | `restore-latest` and `--verify` use the newest of these |
+| incomplete | `sovereign-incomplete` | `restic backup` exited non-zero after writing a snapshot, or the `MANIFEST` changed or disappeared under it | only by id (`restore-id <id>`, `--verify <id>`), with a warning |
+| unclassified | neither | the run was killed between upload and tagging, or the snapshot was written by an earlier `backup.sh` | only by id, with a warning |
+
+Snapshots written before this classification existed: one that carries a
+`dumps-<epoch>-<digest>` tag (earlier versions added it only after a clean run) counts as
+complete, in `restore.sh` at once and in the repository as soon as the next clean run
+has added `sovereign-complete` to it. One without that tag cannot be told from a failed
+upload: it is never picked automatically and never removed automatically. Restore it by
+id (`restore.sh list`, `restore.sh --verify <id>`, `restore.sh restore-id <id> <target>`)
+and remove it yourself with `restic forget <id>` when it is no longer needed.
+
+### Retention
+
+The retention step runs only after a successful `restic backup` of a run whose coverage
+is not reduced and whose `MANIFEST` was still the verified one. It is two commands,
+both grouped by host only (the dump directory is a different path in every snapshot):
+
+```
+restic forget --tag sovereign-incomplete --group-by host --keep-last 3
+restic forget --tag sovereign-complete   --group-by host --keep-daily 7 --keep-weekly 4 --keep-monthly 12 --keep-yearly 1 --prune
+```
+
+The keep policy counts **complete snapshots only**. Applied to every snapshot it would
+keep the newest snapshot of each day, week and month whatever its state, so an incomplete
+snapshot taken after a complete one on the same day would be kept in its place. Of the
+incomplete snapshots the three most recent are kept (they may hold the only copy of a
+file changed since the last complete run); unclassified snapshots are left alone.
 
 ## What a snapshot contains
 
@@ -243,9 +277,11 @@ container runs one pass of `backup.sh`:
    exit 0 and uploads nothing: **each generation is uploaded exactly once**. The record
    is the repository itself: a snapshot whose `restic backup` exited 0 and whose
    `MANIFEST` was still the verified one afterwards gets the tag
-   `dumps-<epoch>-<first 16 hex digits of the MANIFEST's SHA-256>` (`restic tag --add`).
+   `dumps-<epoch>-<first 16 hex digits of the MANIFEST's SHA-256>` and the tag
+   `sovereign-complete` (one `restic tag --add ... --add ...`).
    A snapshot of a failed pass (restic writes one even when it exits 3 because files
-   were unreadable) never gets it, so that generation is uploaded again. A small cache file
+   were unreadable) never gets them (it is tagged `sovereign-incomplete`), so that
+   generation is uploaded again. A small cache file
    inside the container (`/tmp/smdc-backup.uploaded`, never in the dump directory) saves
    asking the repository on every poll; a re-created container has no cache and asks
    once. If the repository cannot answer that question, the generation is uploaded.
@@ -296,15 +332,77 @@ reads the very volumes the services write, whatever the Compose project name.
 ## Verifying that a backup can be restored
 
 ```bash
-sudo bash software/backup/restore.sh --verify            # latest snapshot
+sudo bash software/backup/restore.sh --verify            # newest COMPLETE snapshot
 sudo bash software/backup/restore.sh --verify <snapshot>
 ```
-Restores the dumps of the snapshot into a temporary directory, compares every restored
+Without an id, `--verify` (and `restore-latest`) takes the newest snapshot that is marked
+complete (see "Complete and incomplete snapshots"), prints its id, and lists every newer
+snapshot that is not complete as a warning: those are failed or interrupted runs, and the
+backup needs attention. When no snapshot is marked complete it stops instead of falling
+back to an unmarked one. With an id it uses that snapshot and warns when it is not
+marked complete.
+
+### Which repository the command reads
+
+`RESTIC_REPOSITORY=/var/backups/sovereign` (the default, and the value in
+`software/env.example`) names two different places:
+
+| Who runs restic | `/var/backups/sovereign` is |
+|---|---|
+| the host job `sh backup.sh` (setup A) | a directory on the host |
+| the `sovereign_backup` container (setup B) | the named volume `<project>_backup_storage`, mounted there **inside the container**; on the host its files are at the volume's mountpoint (`docker volume inspect <project>_backup_storage`), typically `/var/lib/docker/volumes/<project>_backup_storage/_data` |
+
+`restore.sh` runs on the host. With that default path it asks Docker (read-only:
+`docker inspect sovereign_backup`, `docker volume inspect`) where the backup volume is
+and then:
+
+- uses the **volume's mountpoint** when only the volume holds a restic repository, and
+  says so;
+- uses the **host directory** when only that holds one;
+- **stops** when both hold one (setups A and B were both used) and asks you to choose:
+  ```bash
+  sudo RESTIC_REPOSITORY=/var/lib/docker/volumes/<project>_backup_storage/_data bash software/backup/restore.sh --verify   # the container's repository
+  sudo RESTIC_REPOSITORY=/var/backups/sovereign bash software/backup/restore.sh --verify                                 # the host job's repository
+  ```
+- stops when the volume exists but its mountpoint is not a directory it can read: run it
+  as root, or, where Docker runs in a VM or on another machine (Docker Desktop, Colima,
+  a remote context), use the container method below.
+
+A `RESTIC_REPOSITORY` given in the environment of the command, as above, is always used
+exactly as given, and so is any value in `.env` other than the default path (a remote
+`s3:`, `sftp:` or `rest:` repository, or another directory). Both ways need the `restic`
+binary on the host (`apt-get install restic`), plus `sqlite3` and, for the OpenProject
+dump, `postgresql-client`.
+
+**Without restic on the host, or when the volume is not on the host's filesystem:** run
+the script in a throwaway container that mounts what `sovereign_backup` mounts. The
+restic image has neither `bash` nor `sqlite3`, so they are installed first (`apk add`
+needs network access; `coreutils`, `tar` and `gzip` replace the BusyBox applets
+`restore.sh` would otherwise use; add `postgresql-client` when the OpenProject overlay
+is deployed, for `pg_restore`):
+
+```bash
+docker run --rm --entrypoint sh --volumes-from sovereign_backup \
+  -e RESTIC_REPOSITORY=/var/backups/sovereign \
+  restic/restic:0.19.1 -c 'apk add -q bash sqlite coreutils tar gzip && cd /config/backup && bash ./restore.sh --verify'
+```
+
+`--volumes-from sovereign_backup` mounts the repository volume at
+`/var/backups/sovereign` and the deployment directory at `/config`, so `restore.sh`
+reads `RESTIC_PASSWORD` from `/config/.env` itself: the password is not typed, not
+passed with `-e` and not echoed. (If your `.env` is not in that directory, export
+`RESTIC_PASSWORD` in your shell without echoing it, e.g. `read -rs RESTIC_PASSWORD &&
+export RESTIC_PASSWORD`, and add `-e RESTIC_PASSWORD` - the name only - to the
+command.) The container must exist (it may be stopped). To extract instead of verify,
+add a writable bind mount for the target, e.g. `-v /mnt/restore:/restore`, and run
+`bash ./restore.sh restore-latest /restore`.
+
+`--verify` restores the dumps of the snapshot into a temporary directory, compares every restored
 dump file (and the GitLab archive) with the size and SHA-256 in the `MANIFEST`, and
 checks that each one loads: `PRAGMA integrity_check` for every SQLite dump, `pg_restore --list` for the
 OpenProject dump (needs `postgresql-client`), archive listing plus `gzip -t` of the
-database dump for GitLab. It does not talk to Docker and does not touch the running
-services. Non-zero exit when any dump listed in the `MANIFEST` does not load, or when the
+database dump for GitLab. It changes nothing through Docker (it only asks where the
+backup volume is, see above) and does not touch the running services. Non-zero exit when any dump listed in the `MANIFEST` does not load, or when the
 snapshot holds no dumps at all. Needs free space for one GitLab archive in `$TMPDIR`.
 The Nextcloud file copy is not restored by `--verify` (it holds every user file): the
 number of files the snapshot lists under `smdc-nextcloud-files/volume/` is compared with
@@ -324,6 +422,10 @@ sudo bash software/backup/restore.sh list
 sudo bash software/backup/restore.sh restore-latest /mnt/restore   # must be an empty directory
 sudo bash software/backup/restore.sh plan /mnt/restore             # prints the steps below with real paths
 ```
+`list` shows every backup snapshot with its state (complete, incomplete, unclassified).
+`restore-latest` extracts the newest **complete** snapshot and names it; to extract
+another one, incomplete ones included, use `restore.sh restore-id <id> /mnt/restore`.
+The repository is found as described under "Which repository the command reads".
 `restore-latest` only extracts; it never writes into a live volume. In the extracted
 tree, volume files are under `.../<project>_<volume>/_data` (host job) or
 `data/<volume>` (container), the configuration is the `software` / `config` directory,
@@ -430,7 +532,7 @@ under `dash`), not against real services:
 | Nextcloud dump command fails; the file copy fails; the script receives `SIGTERM` during the dump | maintenance mode switched on, then off again; non-zero exit; restic never called |
 | `occ maintenance:mode --off` keeps failing; next run | non-zero exit with the manual command; the next run takes the stale window over and switches it off |
 | Nextcloud in maintenance mode without this script's marker | non-zero exit, maintenance mode left as it was |
-| `restic backup` exits 3 | non-zero exit, `forget --prune` never called |
+| `restic backup` exits 3 | non-zero exit, `forget --prune` never called; the snapshot restic wrote is tagged `sovereign-incomplete` |
 | `BACKUP_NEXTCLOUD_MODE=online`; copy methods `reflink`, `rsync` (with `--link-dest` on the second run) and `copy` | expected commands issued |
 | Dump generations: three dump runs in a row; a failing run; leftovers of a killed run | `current` is a relative symlink to `generations/<epoch>`; the previous generation is kept and the one before it removed; a failed run leaves `current` and the published generation untouched and no `.partial` directory |
 | Container: two passes on one generation; cache file removed; repository query failing | one `restic backup` only; with the cache gone the repository is asked and the generation is not uploaded again; when the query fails the generation is uploaded |
@@ -439,6 +541,9 @@ under `dash`), not against real services:
 | Fixed-name layout of earlier versions: container pass; the directory swapped in place during the pass; host run with a coverage drop; two dump runs after the upgrade | accepted with a warning and uploaded once; the swap is detected after the upload (non-zero exit, no prune); the drop is detected against the old `MANIFEST`; the first run keeps the old directories, the second removes them |
 | `current` is a directory, points outside `generations/`, dangles, or its generation's `MANIFEST` names another creation time | non-zero exit, nothing uploaded |
 | Container: `restic backup` exits 3 (a snapshot is written all the same); `restic tag` fails after a good upload | non-zero exit, no prune, the snapshot does not carry the generation's tag; the next pass uploads the generation again and tags it, the pass after that uploads nothing |
+| Snapshot classification (2026-11-15): a clean run; a run whose `restic backup` exits 3; the `MANIFEST` vanishing after the upload; snapshots of an earlier `backup.sh` with and without a `dumps-` tag; four failing runs followed by a clean one | the clean run's snapshot is tagged `sovereign-complete` and `dumps-…` in one `restic tag` call after the upload; the others are tagged `sovereign-incomplete`; a legacy snapshot with a `dumps-` tag gets `sovereign-complete` once, one without stays untouched; `forget` is issued as the two commands above and never with `--tag sovereign-snapshot`; three incomplete snapshots remain |
+| `restore.sh` (2026-11-15): a complete snapshot followed by an incomplete one; a legacy repository; only untagged snapshots; an empty repository; a snapshot named by id | `--verify` and `restore-latest` restore the complete snapshot, name it and warn about the newer one; a `dumps-`-only snapshot counts as complete; with no complete snapshot both stop without restoring; `restore-id` / `--verify <id>` of an incomplete or untagged snapshot proceed with a warning; `list` shows the states |
+| `restore.sh` repository detection (2026-11-15), with a stand-in for `docker` and the default path pointed into a sandbox: repository only in the volume; only on the host; in both; volume not visible; volume unreadable; neither; Docker down; `RESTIC_REPOSITORY` in the environment; a remote repository in `.env` | the volume's mountpoint is used and announced; the host directory is used; the script stops and names both; it stops and points at the container method; it stops and asks for root; it stops; the path is used as it is; the given value is used and Docker is not asked (last two) |
 
 The generation hand-off was then run with a real restic 0.19.1 repository (Vaultwarden
 and Grafana as the services): the host job published `generations/<epoch>` through
@@ -446,6 +551,22 @@ and Grafana as the services): the host job published `generations/<epoch>` throu
 tagged the snapshot `dumps-<epoch>-<manifest digest>`; a second host run produced a
 second generation and exactly one more snapshot; and `restore.sh --verify` restored
 the dumps of the latest snapshot from the repository and loaded both databases.
+
+The classification was also run on 2026-11-15 against a real restic repository (restic
+0.18.1 built from source; the commands were issued by hand, not by `backup.sh`): a
+complete snapshot, then two whose `restic backup` exited 3 because a file was unreadable
+and whose dump had been damaged. `restic tag --add … --add …`, `restic tag --add … <id>`
+and the JSON reader in both scripts behaved as the stand-in tests assume;
+`restore.sh --verify` and `restore-latest` chose the complete snapshot (the previous
+`restore.sh` verified the damaged one and failed, and extracted a snapshot without the
+unreadable file); and with `--keep-daily 2` the old `forget --tag sovereign-snapshot`
+would have removed the complete snapshot in favour of the incomplete one of the same
+day, while the new command keeps it.
+
+Not verified: the throwaway-container command above as written (it was run by the
+maintainer on a real host with `-e RESTIC_PASSWORD` passed explicitly; the variant that
+lets `restore.sh` read `/config/.env` and the `postgresql-client` addition were not
+re-run), and the repository detection against a real Docker daemon.
 
 Not tested against real services: the Open WebUI, CrowdSec and DTN-spool dumps (their
 containers were not part of the tests), `cp --reflink` on a copy-on-write filesystem,

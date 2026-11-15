@@ -55,6 +55,8 @@ helm install sovereign-stack ./kubernetes/helm/sovereign-stack \
 
 `ai.ollama.defaultModel` is pulled in the background after the Ollama container starts (best effort). Other frequently needed switches: `global.storageClass`, `ingress.enabled`, `ingress.className`, `ai.ollama.gpu.enabled`, `ai.ollama.runtimeClassName` (set to `nvidia` where that RuntimeClass exists) and `space.enabled` (off by default because the `sovereign-space-node` image is not published by this repository's CI).
 
+Every image of a default install is publicly pullable. The power exporter needs no project-built image: the chart mounts its own copy of `software/telemetry/power_exporter.py` (`helm/sovereign-stack/files/power_exporter.py`, kept byte-identical by `scripts/check_mirrors.sh`) from a ConfigMap into the stock `python:3.11-alpine` image, the same way the Compose overlay runs it. To run an image built from `software/telemetry/Dockerfile` instead, set `telemetry.powerExporter.image.repository` (and `.tag`); the ConfigMap is then not created. That image is published to GHCR only when a GitHub release is published, and a GHCR package stays private until its owner makes it public, so check that your cluster can pull it before selecting it.
+
 ### 3. Verify Cluster Health
 ```bash
 kubectl get pods -n sovereign -o wide

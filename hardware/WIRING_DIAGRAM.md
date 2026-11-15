@@ -87,7 +87,7 @@ Each pack has its own positive lead with a Class T fuse at the pack followed by 
 
 ### Battery isolators (DC disconnects)
 
-Victron's installation manual for the MultiPlus-II requires every installation to have a way to disconnect both the AC and the DC circuits; circuit breakers used for overcurrent protection count as disconnects, and where fuses are used "separate disconnect switches are required between the source and the fuses" ([MultiPlus-II manual, installation, section 4.1](https://www.victronenergy.com/media/pg/MultiPlus-II_230V/en/installation.html), checked on 2026-11-14). Fuses protect the battery feeds here, so each pack has its own switch.
+Victron's installation manual for the MultiPlus-II requires every installation to have a way to disconnect both the AC and the DC circuits; circuit breakers used for overcurrent protection count as disconnects, and where fuses are used "separate disconnect switches are required between the source and the fuses" ([MultiPlus-II manual, installation, section 4.1](https://www.victronenergy.com/media/pg/MultiPlus-II_230V/en/installation.html), checked on 2026-11-14). Fuses protect the battery feeds here, so each pack has its own switch. The switch is between the pack and the MEGA fuses in the Lynx and meets the quoted sentence for those fuses. It is downstream of the Class T fuse, which it cannot de-energise: for that fuse the disconnect is the pack's own breaker (see "The pack's own breaker" below), and a pack without one leaves the Class T fuse with no disconnect ahead of it.
 
 | Item | Requirement |
 | :--- | :--- |

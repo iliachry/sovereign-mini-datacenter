@@ -7,7 +7,7 @@
 Developed by **[Metatopia Studio](https://metatopia.gr)** · Author & Lead Architect: **[Ilias Chrysovergis](https://iliachry.gr)** · License: MIT · © 2026
 
 [![CI & Quality Gates](https://github.com/iliachry/sovereign-mini-datacenter/actions/workflows/ci.yml/badge.svg)](https://github.com/iliachry/sovereign-mini-datacenter/actions/workflows/ci.yml)
-[![Quality Gate](https://img.shields.io/badge/Quality%20Gate-Strict%20Enforcement%20(92.4%25%20Cov)-10b981?style=flat&logo=githubactions)](https://github.com/iliachry/sovereign-mini-datacenter/actions/workflows/ci.yml)
+[![Quality Gate](https://img.shields.io/badge/Quality%20Gate-Strict%20Enforcement%20(92.5%25%20Cov)-10b981?style=flat&logo=githubactions)](https://github.com/iliachry/sovereign-mini-datacenter/actions/workflows/ci.yml)
 [![Enterprise Onboarding](https://img.shields.io/badge/Enterprise-Workload%20Coupling%20Framework-8b5cf6?style=flat)](ENTERPRISE_ONBOARDING.md)
 [![Commercialization](https://img.shields.io/badge/Commercialization-Investment%20Thesis-f59e0b?style=flat)](COMMERCIALIZATION.md)
 [![Benchmarks](https://img.shields.io/badge/Benchmarks-Measured%20vs%20Design%20Targets-06b6d4?style=flat)](BENCHMARKS.md)
@@ -165,7 +165,7 @@ sovereign-mini-datacenter/
 │   ├── MANUFACTURING_GUIDE.md   # Laser cut, CNC bend, and assembly instructions
 │   └── render.jpg               # Photorealistic 3D product render
 ├── docs/                        # Interactive Three.js WebGL Digital Twin (ES Modules) & GitHub Pages
-├── tests/                       # 1260 automated unit & integration tests (92.4% coverage)
+├── tests/                       # 1314 automated unit & integration tests (92.5% coverage)
 └── .github/
     └── workflows/
         ├── ci.yml               # Complete CI pipeline + Pytest + GitHub Pages deploy
@@ -230,6 +230,8 @@ smdc app register ./iot-edge                         # Register app on local sov
 smdc app start iot-edge                              # Mark the app running, or paused if load shedding currently pauses its tier (state tracking; no process is launched)
 smdc app status iot-edge                             # Show tracked state (resource figures are manifest estimates)
 smdc app package ./iot-edge --output iot-edge.smdc-app # Package & sign with NIST FIPS 204 ML-DSA-87
+smdc app verify iot-edge.smdc-app --public-key <hex-or-file> # Check archive digest, size and signature against a signer key you trust (exit 1 if not verified; nothing runs this for you)
+smdc verify iot-edge.smdc-app --public-key <hex-or-file>     # Same command, top-level shortcut
 
 # Inspect multi-node global mesh cluster topology
 smdc mesh
@@ -301,7 +303,7 @@ smdc deploy --all
 ### 7. 🏢 Generic Enterprise Workload Coupling Framework (`src/sovereign_dc/enterprise/`)
 * **Declarative Manifests (`smdc-app.yaml`):** Standardized specification defining CPU/GPU/storage quotas, network bindings, persistent NVMe volumes, and power shedding tiers ($L_0 \to L_4$).
 * **Zero-Dependency SDK (`sovereign_dc.enterprise.sdk`):** Lightweight client library for querying node telemetry, publishing custom application metrics, listening for load-shedding pause and resume signals, and spooling space DTN bundles.
-* **Post-Quantum Cryptography Packaging:** Bundling of edge applications into `.smdc-app` archives signed with ML-DSA-87 (the FIPS 204 algorithm, from a pure-Python library that is not FIPS-validated).
+* **Post-Quantum Cryptography Packaging:** Bundling of edge applications into `.smdc-app` archives signed with ML-DSA-87 (the FIPS 204 algorithm, from a pure-Python library that is not FIPS-validated). `smdc app verify` checks a package against a signer public key you supply; there is no installer, so nothing verifies a package unless you run it.
 * **Reference Archetypes (`examples/enterprise_apps/`):** Simulated reference skeletons (manifest plus an `app.py` that shows the SDK wiring and publishes placeholder data; none of them reads a sensor, runs a model, encrypts data or controls a radio) for IoT edge gateways, GPU vision AI inference, spatial digital twins, confidential databases, and O-RAN Near-RT RIC controllers. See [**`ENTERPRISE_ONBOARDING.md`**](ENTERPRISE_ONBOARDING.md) for full developer documentation.
 
 ### 8. 📡 5G RAN & UAV Metaverse Simulation Stack (`src/sovereign_dc/metaverse/`)
@@ -399,18 +401,20 @@ sudo sh software/backup/backup.sh
 # Host dump phase only: schedule this before the sovereign_backup container's run (--with-backup)
 sudo sh software/backup/backup.sh --dump-only
 
-# Prove that the dumps in the latest snapshot load (SQLite integrity_check, pg_restore --list, GitLab archive listing)
+# Prove that the dumps in the newest COMPLETE snapshot load (SQLite integrity_check, pg_restore --list, GitLab archive listing)
 sudo bash software/backup/restore.sh --verify
 
-# List available snapshots
+# List the snapshots and whether each is complete, incomplete (a failed run) or unclassified
 sudo bash software/backup/restore.sh list
 
-# Disaster recovery: extract into an EMPTY directory (never a live volume), then print the per-service restore steps
+# Disaster recovery: extract the newest complete snapshot into an EMPTY directory (never a live volume), then print the per-service restore steps
 sudo bash software/backup/restore.sh restore-latest /mnt/restore_target
 sudo bash software/backup/restore.sh plan /mnt/restore_target
 ```
 
-See [`software/backup/README.md`](software/backup/README.md) for what a snapshot contains, cron scheduling and the per-service restore procedures. `restore.sh --verify` is not a substitute for a restore rehearsal on a spare node.
+`restore.sh` needs `restic` on the host. A snapshot is complete when `backup.sh` tagged it `sovereign-complete` after a clean run; a snapshot of a run in which restic could not read every file is tagged `sovereign-incomplete`, is never picked automatically (`restore.sh restore-id <id> <target>` restores it on request) and does not count in the retention policy. With `--with-backup` the repository is the container's `backup_storage` volume, not the host directory `/var/backups/sovereign`: `restore.sh` finds the volume through `docker volume inspect` and stops if both places hold a repository.
+
+See [`software/backup/README.md`](software/backup/README.md) for what a snapshot contains, cron scheduling, which repository `restore.sh` reads (and how to run it inside a container) and the per-service restore procedures. `restore.sh --verify` is not a substitute for a restore rehearsal on a spare node.
 
 ---
 
@@ -522,7 +526,7 @@ See [`terraform/README.md`](terraform/README.md) for full module documentation a
 ---
 
 ## 🛡️ Quality Gates & Automated Tests
-The project enforces strict automated Quality Gates covering Ruff linting, Ruff formatting, Mypy static typing, Docker Compose multi-stack integrity, and Pytest coverage with 1260 automated tests ($\ge 85\%$ strict threshold, achieving **92.4%** coverage):
+The project enforces strict automated Quality Gates covering Ruff linting, Ruff formatting, Mypy static typing, Docker Compose multi-stack integrity, and Pytest coverage with 1314 automated tests ($\ge 85\%$ strict threshold, achieving **92.5%** coverage):
 
 ```bash
 # Run all quality gates locally
@@ -536,7 +540,7 @@ uv tool run ruff check src/ tests/
 uv tool run ruff format --check src/ tests/
 uv tool run mypy --ignore-missing-imports src/sovereign_dc
 uv run pytest tests/ --cov=src/sovereign_dc --cov-fail-under=85
-bash scripts/check_mirrors.sh      # software/ standalone copies == src/sovereign_dc
+bash scripts/check_mirrors.sh      # software/ standalone copies == src/sovereign_dc; Helm chart copy == its source
 bash scripts/validate_compose.sh   # Compose stacks, bind mounts, storage-identity invariant
 ```
 

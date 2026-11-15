@@ -72,44 +72,92 @@ start_time = time.time()
 # clock, are still exported.
 
 # sovereign_load_shedding_active is 1 at shedding level 3 and above, i.e. while SoC is below
-# the level-3 threshold of the node's one SoC policy (SovereignConfig.shedding_l3_soc, read
-# here from the same SHEDDING_L3_SOC environment variable with the same default).
-SHEDDING_SOC_ENVS = ("SHEDDING_L1_SOC", "SHEDDING_L2_SOC", "SHEDDING_L3_SOC", "SHEDDING_L4_SOC")
-SHEDDING_SOC_DEFAULTS = (50.0, 30.0, 20.0, 10.0)
-SHEDDING_L3_SOC_ENV = SHEDDING_SOC_ENVS[2]
-DEFAULT_LOAD_SHEDDING_SOC_PERCENT = SHEDDING_SOC_DEFAULTS[2]
+# the level-3 threshold of the node's one SoC policy (SovereignConfig.shedding_l3_soc). The
+# policy is read from the same four SHEDDING_L*_SOC environment variables, with the same
+# defaults and by the same code, as in sovereign_dc.config and the sentinel:
+
+# --- shedding thresholds (one rule): begin ----------------------------------------------
+# This sub-block is byte-identical in src/sovereign_dc/config.py, the sentinel
+# (src/sovereign_dc/agents/sentinel_copilot.py and its copy under software/agents/) and the
+# power exporter (src/sovereign_dc/telemetry.py, software/telemetry/power_exporter.py and the
+# Helm chart's copy); tests/ compares them. The standalone scripts are standard-library-only
+# and cannot import the package. It needs only ``math`` and the module's ``logger``.
+SHEDDING_ENV_NAMES = ("SHEDDING_L1_SOC", "SHEDDING_L2_SOC", "SHEDDING_L3_SOC", "SHEDDING_L4_SOC")
+DEFAULT_SHEDDING_THRESHOLDS = (50.0, 30.0, 20.0, 10.0)
+
+
+def shedding_policy_problem(thresholds: tuple[float, ...]) -> str | None:
+    """Why ``thresholds`` (levels 1-4) are not a usable policy, or None when they are.
+
+    Usable means: four finite numbers within 0-100 with L1 > L2 > L3 > L4.
+    """
+    if len(thresholds) != 4:
+        return "four thresholds are needed"
+    for name, value in zip(SHEDDING_ENV_NAMES, thresholds, strict=True):
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+            return f"{name} is not a finite number"
+        if not 0.0 <= value <= 100.0:
+            return f"{name}={value:g} is outside 0-100"
+    for index in range(3):
+        if not thresholds[index] > thresholds[index + 1]:
+            return (
+                f"{SHEDDING_ENV_NAMES[index]}={thresholds[index]:g} is not above "
+                f"{SHEDDING_ENV_NAMES[index + 1]}={thresholds[index + 1]:g}"
+            )
+    return None
+
+
+def checked_shedding_thresholds(settings: tuple[object, ...]) -> tuple[float, float, float, float]:
+    """The node's four SoC thresholds from the raw settings of levels 1-4. The one rule.
+
+    ``settings`` holds, per level, what was configured: an environment string, a YAML value
+    or a number; None or a blank string means "not set" and stands for that level's default.
+    If ANY of the four is not a number, lies outside 0-100, or the order is not
+    SHEDDING_L1_SOC > SHEDDING_L2_SOC > SHEDDING_L3_SOC > SHEDDING_L4_SOC, ALL four defaults
+    are used and one warning names the four variables: a partly applied policy would be
+    worse than the default one, and every reader of the policy must reach the same four
+    numbers from the same settings.
+    """
+    values: list[float] = []
+    for setting, default in zip(settings, DEFAULT_SHEDDING_THRESHOLDS, strict=False):
+        if setting is None or (isinstance(setting, str) and not setting.strip()):
+            values.append(default)
+            continue
+        try:
+            values.append(math.nan if isinstance(setting, bool) else float(setting))  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            values.append(math.nan)
+    problem = shedding_policy_problem(tuple(values)) if len(settings) == 4 else "four thresholds are needed"
+    if problem is None:
+        return (values[0], values[1], values[2], values[3])
+    logger.warning(
+        "Ignoring the load-shedding thresholds %s (%s): they must be numbers within 0-100 with "
+        "%s; using the defaults %s for all four.",
+        ", ".join(f"{name}={setting!r}" for name, setting in zip(SHEDDING_ENV_NAMES, settings, strict=False)),
+        problem,
+        " > ".join(SHEDDING_ENV_NAMES),
+        " / ".join(f"{value:g}" for value in DEFAULT_SHEDDING_THRESHOLDS),
+    )
+    return DEFAULT_SHEDDING_THRESHOLDS
+
+
+# --- shedding thresholds (one rule): end ------------------------------------------------
+SHEDDING_SOC_ENVS = SHEDDING_ENV_NAMES
+SHEDDING_SOC_DEFAULTS = DEFAULT_SHEDDING_THRESHOLDS
+SHEDDING_L3_SOC_ENV = SHEDDING_ENV_NAMES[2]
+DEFAULT_LOAD_SHEDDING_SOC_PERCENT = DEFAULT_SHEDDING_THRESHOLDS[2]
 
 
 def load_shedding_soc_percent() -> float:
     """SoC (percent) below which ``sovereign_load_shedding_active`` is 1: ``SHEDDING_L3_SOC``.
 
-    The four ``SHEDDING_L1_SOC``..``SHEDDING_L4_SOC`` values are one policy. Like the
-    sentinel and the Python services, the exporter uses the defaults for all four when any
-    value is not a number, lies outside 0-100, or the order is not L1 > L2 > L3 > L4, so
-    the flag can never disagree with the level the rest of the node computes.
+    The four ``SHEDDING_L1_SOC``..``SHEDDING_L4_SOC`` values are one policy, resolved by
+    ``checked_shedding_thresholds`` (byte-identical to the copy in ``sovereign_dc.config``
+    and in the sentinel): if any of them is not a number, lies outside 0-100, or the order
+    is not L1 > L2 > L3 > L4, the defaults are used for all four, so for the same
+    environment the flag agrees with the level the rest of the node computes.
     """
-    values: list[float] = []
-    for name, default in zip(SHEDDING_SOC_ENVS, SHEDDING_SOC_DEFAULTS, strict=True):
-        raw = os.getenv(name, "").strip()
-        if not raw:
-            values.append(default)
-            continue
-        try:
-            values.append(float(raw))
-        except ValueError:
-            values.append(math.nan)
-    valid = all(math.isfinite(v) and 0.0 <= v <= 100.0 for v in values) and all(
-        values[i] > values[i + 1] for i in range(len(values) - 1)
-    )
-    if not valid:
-        logger.warning(
-            "Ignoring %s=%s (need numbers within 0-100 with L1 > L2 > L3 > L4); using %s",
-            "/".join(SHEDDING_SOC_ENVS),
-            "/".join(os.getenv(n, "") or "unset" for n in SHEDDING_SOC_ENVS),
-            "/".join(f"{d:g}" for d in SHEDDING_SOC_DEFAULTS),
-        )
-        return DEFAULT_LOAD_SHEDDING_SOC_PERCENT
-    return values[2]
+    return checked_shedding_thresholds(tuple(os.getenv(name) for name in SHEDDING_ENV_NAMES))[2]
 
 
 LOAD_SHEDDING_SOC_PERCENT = load_shedding_soc_percent()

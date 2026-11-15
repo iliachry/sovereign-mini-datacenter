@@ -1,0 +1,14 @@
+{{- if and .Values.telemetry.enabled (not .Values.telemetry.powerExporter.image.repository) }}
+# The exporter script itself (files/power_exporter.py, a byte-identical copy of
+# software/telemetry/power_exporter.py; scripts/check_mirrors.sh fails on drift),
+# mounted into the stock Python image by deployment-telemetry.yaml.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "sovereign-stack.fullname" . }}-power-exporter
+  labels:
+    {{- include "sovereign-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: telemetry
+data:
+  {{- (.Files.Glob "files/power_exporter.py").AsConfig | nindent 2 }}
+{{- end }}

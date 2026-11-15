@@ -1,4 +1,5 @@
 {{- if .Values.telemetry.enabled }}
+{{- $exporter := .Values.telemetry.powerExporter }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -17,11 +18,29 @@ spec:
       labels:
         {{- include "sovereign-stack.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: telemetry
+      {{- if not $exporter.image.repository }}
+      annotations:
+        # Restart the pod when the mounted script changes with a chart upgrade.
+        checksum/power-exporter-script: {{ .Files.Get "files/power_exporter.py" | sha256sum }}
+      {{- end }}
     spec:
       containers:
         - name: power-exporter
-          image: "{{ .Values.telemetry.powerExporter.image.repository }}:{{ .Values.telemetry.powerExporter.image.tag }}"
-          imagePullPolicy: IfNotPresent
+          {{- if $exporter.image.repository }}
+          # Prebuilt image (software/telemetry/Dockerfile): its entrypoint runs the exporter.
+          image: "{{ $exporter.image.repository }}:{{ $exporter.image.tag }}"
+          imagePullPolicy: {{ $exporter.image.pullPolicy | default "IfNotPresent" }}
+          {{- else }}
+          # Stock Python image running the script from the ConfigMap, as the
+          # Compose overlay does (software/telemetry/docker-compose.telemetry.yml).
+          image: "{{ $exporter.runtimeImage.repository }}:{{ $exporter.runtimeImage.tag }}"
+          imagePullPolicy: {{ $exporter.runtimeImage.pullPolicy | default "IfNotPresent" }}
+          command: ["python", "/app/power_exporter.py"]
+          volumeMounts:
+            - name: power-exporter-script
+              mountPath: /app
+              readOnly: true
+          {{- end }}
           ports:
             - name: metrics
               containerPort: {{ .Values.telemetry.powerExporter.port }}
@@ -33,4 +52,25 @@ spec:
               value: "{{ .Values.telemetry.powerExporter.simulate }}"
             - name: ESP32_BRIDGE_URL
               value: {{ .Values.telemetry.powerExporter.bridgeUrl | quote }}
+            - name: SHEDDING_L1_SOC
+              value: {{ .Values.telemetry.powerExporter.shedding.l1Soc | quote }}
+            - name: SHEDDING_L2_SOC
+              value: {{ .Values.telemetry.powerExporter.shedding.l2Soc | quote }}
+            - name: SHEDDING_L3_SOC
+              value: {{ .Values.telemetry.powerExporter.shedding.l3Soc | quote }}
+            - name: SHEDDING_L4_SOC
+              value: {{ .Values.telemetry.powerExporter.shedding.l4Soc | quote }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: metrics
+            periodSeconds: 10
+            timeoutSeconds: 5
+      {{- if not $exporter.image.repository }}
+      volumes:
+        - name: power-exporter-script
+          configMap:
+            name: {{ include "sovereign-stack.fullname" . }}-power-exporter
+            defaultMode: 0444
+      {{- end }}
 {{- end }}

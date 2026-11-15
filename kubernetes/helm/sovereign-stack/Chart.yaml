@@ -2,7 +2,7 @@ apiVersion: v2
 name: sovereign-stack
 description: Production Helm Chart for Sovereign Mini Datacenter (Local AI, Space DTN & Micro-Grid Telemetry)
 type: application
-version: 1.4.0
+version: 1.4.1
 appVersion: "1.4.0"
 keywords:
   - datacenter
