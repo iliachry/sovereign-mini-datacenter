@@ -496,20 +496,15 @@ class EnterpriseManager:
             if runtime.status == AppStatus.RUNNING:
                 return True, f"Application '{app_id}' is already running."
 
+            plan_generation = self._shed_generation
             level, soc = self._shedding_level, self._shedding_soc
             causes = set() if level is None else self._shed_causes(runtime.manifest, level, soc, set())
             runtime.started_at = time.time()
             runtime.health_status = "not_probed"
             runtime.error_message = None
-            if causes:
-                runtime.status = AppStatus.PAUSED
-                self._apply_estimates(runtime, paused=False)  # RAM estimate of a loaded app
-                self._apply_estimates(runtime, paused=True)
-                self._shed_paused[app_id] = causes
-            else:
-                runtime.status = AppStatus.RUNNING
-                self._apply_estimates(runtime, paused=False)
-                self._shed_paused.pop(app_id, None)
+            runtime.status = AppStatus.RUNNING
+            self._apply_estimates(runtime, paused=False)
+            self._shed_paused.pop(app_id, None)
             payload = runtime.to_dict()
 
         self.event_bus.publish(
@@ -518,16 +513,17 @@ class EnterpriseManager:
         if causes:
             soc_text = "" if soc is None else f", battery SoC {soc:.1f}%"
             reason = f"Load shedding level {level}{soc_text} ({' + '.join(sorted(causes))})"
-            logger.warning("Started enterprise app '%s' paused: %s", app_id, reason)
-            paused_payload: dict[str, Any] = {"reason": reason, "paused_by": "load_shedding"}
-            paused_payload.update(payload)
-            self.event_bus.publish(
-                Event(event_type=f"enterprise.{app_id}.paused", source="enterprise_manager", payload=paused_payload)
-            )
-            return True, (
-                f"Application '{app_id}' started but held paused by load shedding: {reason}. "
-                "It resumes automatically when shedding eases (state tracked; no process is supervised by this manager)."
-            )
+            self._pause(app_id, reason, by_shedding=True, causes=causes, plan_generation=plan_generation)
+            with self._lock:
+                tracked = self._runtimes.get(app_id)
+                held_by_shedding = (
+                    tracked is not None and tracked.status == AppStatus.PAUSED and app_id in self._shed_paused
+                )
+            if held_by_shedding:
+                return True, (
+                    f"Application '{app_id}' started but held paused by load shedding: {reason}. "
+                    "It resumes automatically when shedding eases (state tracked; no process is supervised by this manager)."
+                )
         logger.info("Marked enterprise app '%s' running (Power Tier: %s)", app_id, manifest.power.tier.value)
         return True, f"Application '{app_id}' started (state tracked; no process is supervised by this manager)."
 

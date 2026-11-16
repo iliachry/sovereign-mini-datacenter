@@ -562,7 +562,26 @@ def scan_and_index(indexed_files: set[tuple[str, float]]) -> tuple[int, int]:
         return succeeded, failed
 
     known = {path for path, _ in indexed_files} | _reconcile_pending
-    vanished = {path for path in known if path not in present and _is_under_watch_dir(path)}
+    legacy_present = [path for path in sorted(known) if path not in present and os.path.abspath(path) in present]
+    for path in legacy_present:
+        canonical = os.path.abspath(path)
+        if any(k[0] == canonical for k in indexed_files):
+            try:
+                delete_source_points(path)
+            except Exception as e:
+                logger.error("Failed to remove legacy points for %s from the index: %s", path, e)
+                _reconcile_pending.add(path)
+                failed += 1
+            else:
+                _cleanup_pending.discard(path)
+                _reconcile_pending.discard(path)
+                indexed_files.difference_update({k for k in indexed_files if k[0] == path})
+
+    vanished = {
+        path
+        for path in known
+        if path not in present and os.path.abspath(path) not in present and _is_under_watch_dir(path)
+    }
     for path in sorted(vanished):
         if remove_file(path):
             indexed_files.difference_update({k for k in indexed_files if k[0] == path})

@@ -69,9 +69,15 @@ env_file_value() {
     # make it read a line inside that value as an assignment, so such a file is refused.
     if ! awk '{
             line = $0
-            if (sub(/^[ \t]*(export[ \t]+)?[A-Za-z_][A-Za-z0-9_]*[ \t]*[=:][ \t]*/, "", line) == 0) next
+            sub(/\r$/, "", line)
+            if (line ~ /^[ \t]*(#|$)/) next
+            if (sub(/^[ \t]*(export[ \t]+)?[^=: \t]+[ \t]*[=:][ \t]*/, "", line) == 0) next
             quote = substr(line, 1, 1)
-            if ((quote == "\047" || quote == "\"") && index(substr(line, 2), quote) == 0) { open = 1; exit }
+            if (quote == "\047" || quote == "\"") {
+                r1 = substr(line, 2); gsub("\\\\" quote, "", r1)
+                r2 = substr(line, 2); gsub(/\\./, "", r2)
+                if (index(r1, quote) == 0 || index(r2, quote) == 0) { open = 1; exit }
+            }
         } END { exit open ? 1 : 0 }' "$ENV_FILE"; then
         echo "[ERROR]   ${ENV_FILE} holds a quoted value that spans several lines; this script cannot read such a file reliably. Put every value on one line." >&2
         return 2
