@@ -72,7 +72,8 @@ env_file_value() {
             sub(/\r$/, "", line)
             if (line ~ /(\013|\014|\302[\205\240]|\341\232\200|\342\200[\200-\212\250\251\257]|\342\201\237|\343\200\200|\357\273\277)/) { open = 1; exit }
             if (line ~ /^[ \t]*(#|$)/) next
-            if (sub(/^[ \t]*(export[ \t]+)?[^=: \t]+[ \t]*[=:][ \t]*/, "", line) == 0) next
+            if (line ~ /^[^=:]*\r/) { open = 1; exit }
+            if (sub(/^[ \t]*(export[ \t]+)?[^=: \t]+[ \t]*[=:][ \t\r]*/, "", line) == 0) next
             quote = substr(line, 1, 1)
             if (quote == "\047" || quote == "\"") {
                 r1 = substr(line, 2); gsub("\\\\" quote, "", r1)

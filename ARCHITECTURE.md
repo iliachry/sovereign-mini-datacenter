@@ -133,7 +133,7 @@ graph TD
 
 3. **Tier 3: LoRa Meshtastic Out-of-Band Emergency Control Plane (Sub-GHz)**
    * **Physical**: Optional USB/serial Semtech SX1262 LoRa Meshtastic radio (outside the base BOM; bridged on the host by `software/mesh/lora/meshtastic_gateway.py`).
-   * **Protocol**: Meshtastic packet format with hardware-accelerated AES-256-GCM encryption.
+   * **Protocol**: Meshtastic packet format using the channel encryption configured on the radio (AES-256-CTR for pre-shared channel keys).
    * **Capacity**: Node heartbeat telemetry (SoC, load, critical alerts), cryptographic kill/wake signals, emergency cluster state broadcast.
 
 4. **Tier 4: Space DTN / BPv7 Store-and-Forward (RFC 9171)**

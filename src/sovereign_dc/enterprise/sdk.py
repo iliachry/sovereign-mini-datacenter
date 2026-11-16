@@ -13,6 +13,7 @@ import logging
 import math
 import os
 import signal
+import threading
 import time
 from collections.abc import Callable
 from typing import Any
@@ -470,6 +471,7 @@ class AppLifecycleHandler:
         self.on_resume = on_resume
         self._is_running = True
         self._is_paused = False
+        self._lock = threading.RLock()
         self._bus: Any = None
         self._last_state_seq: int = -1
         self._subscribe_power_events()
@@ -489,6 +491,8 @@ class AppLifecycleHandler:
             bus = get_event_bus()
             bus.subscribe(f"enterprise.{self.app_id}.paused", self._on_paused_event)
             bus.subscribe(f"enterprise.{self.app_id}.resumed", self._on_resumed_event)
+            bus.subscribe(f"enterprise.{self.app_id}.started", self._on_started_event)
+            bus.subscribe(f"enterprise.{self.app_id}.stopped", self._on_stopped_event)
             self._bus = bus
         except Exception as e:
             logger.debug("Lifecycle handler for %s could not subscribe to the event bus: %s", self.app_id, e)
@@ -500,6 +504,8 @@ class AppLifecycleHandler:
         try:
             bus.unsubscribe(f"enterprise.{self.app_id}.paused", self._on_paused_event)
             bus.unsubscribe(f"enterprise.{self.app_id}.resumed", self._on_resumed_event)
+            bus.unsubscribe(f"enterprise.{self.app_id}.started", self._on_started_event)
+            bus.unsubscribe(f"enterprise.{self.app_id}.stopped", self._on_stopped_event)
         except Exception as e:
             logger.debug("Lifecycle handler for %s could not unsubscribe: %s", self.app_id, e)
 
@@ -513,12 +519,24 @@ class AppLifecycleHandler:
         return True
 
     def _on_paused_event(self, event: Any) -> None:
-        if self._accept_state_event(event):
-            self.pause()
+        with self._lock:
+            if self._accept_state_event(event):
+                self.pause()
 
     def _on_resumed_event(self, event: Any) -> None:
-        if self._accept_state_event(event):
-            self.resume()
+        with self._lock:
+            if self._accept_state_event(event):
+                self.resume()
+
+    def _on_started_event(self, event: Any) -> None:
+        with self._lock:
+            if self._accept_state_event(event):
+                self._is_paused = False
+
+    def _on_stopped_event(self, event: Any) -> None:
+        with self._lock:
+            if self._accept_state_event(event):
+                self._is_paused = False
 
     def _handle_signal(self, signum: int, frame: Any) -> None:
         logger.info("Received signal %d. Triggering graceful stop for %s...", signum, self.app_id)
@@ -534,25 +552,27 @@ class AppLifecycleHandler:
 
     def pause(self) -> None:
         """Pause workload execution (called on a manager pause event, or directly by the app)."""
-        if not self._is_paused:
-            self._is_paused = True
-            logger.warning("Enterprise app '%s' paused.", self.app_id)
-            if self.on_pause:
-                try:
-                    self.on_pause()
-                except Exception as e:
-                    logger.error("Error in on_pause callback: %s", e)
+        with self._lock:
+            if not self._is_paused:
+                self._is_paused = True
+                logger.warning("Enterprise app '%s' paused.", self.app_id)
+                if self.on_pause:
+                    try:
+                        self.on_pause()
+                    except Exception as e:
+                        logger.error("Error in on_pause callback: %s", e)
 
     def resume(self) -> None:
         """Resume workload execution (called on a manager resume event, or directly by the app)."""
-        if self._is_paused:
-            self._is_paused = False
-            logger.info("Enterprise app '%s' resumed.", self.app_id)
-            if self.on_resume:
-                try:
-                    self.on_resume()
-                except Exception as e:
-                    logger.error("Error in on_resume callback: %s", e)
+        with self._lock:
+            if self._is_paused:
+                self._is_paused = False
+                logger.info("Enterprise app '%s' resumed.", self.app_id)
+                if self.on_resume:
+                    try:
+                        self.on_resume()
+                    except Exception as e:
+                        logger.error("Error in on_resume callback: %s", e)
 
     def stop(self) -> None:
         """Terminate workload run loop."""

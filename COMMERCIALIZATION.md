@@ -183,7 +183,7 @@ mindmap
     Hardware-Software Co-Design
       Dynamic Load Shedding L0 to L4
       Battery-Aware Workload Pausing by Power Tier, GPU throttling not implemented
-      1-Wire & RS485 Native Embedded Telemetry
+      VE.Direct UART & 1-Wire Native Embedded Telemetry
     Space Delay-Tolerant Networking
       RFC 9171 BPv7 Implementation
       Ground Station Pass Prediction
@@ -199,8 +199,8 @@ mindmap
       LUKS2 on the Talos path, node-UUID key
 ```
 
-1. **Energy-Aware Autonomous Workload Scheduler**: Unlike standard Kubernetes clusters that crash during power drops, SMDC dynamically negotiates GPU batch priorities based on real-time solar irradiance and battery BMS State-of-Charge.
-2. **Space DTN Native Stack**: Seamlessly bridges terrestrial 10GbE fiber $\to$ Starlink $\to$ Sub-GHz LoRa $\to$ LEO CubeSat orbital contact passes without dropping packets.
+1. **Energy-Aware Tiered Load Shedding**: Unlike standard clusters that ignore off-grid state of charge, SMDC tracks workloads across priority tiers (`L0`–`L4`) and pauses lower-priority tiers as battery State-of-Charge drops across configurable thresholds (50 / 30 / 20 / 10 %; hardware GPU throttling and cross-node workload dispatch are design targets, not implemented).
+2. **Space DTN Store-and-Forward Stack**: Queues RFC 9171 BPv7-style bundles in local SQLite/NVMe storage for simulated LEO orbital contact passes alongside terrestrial WireGuard mesh and outbound Meshtastic LoRa alert framing (automatic multi-transport failover is a design target, not implemented).
 3. **True Open Architecture**: Zero licensing lock-in empowers government, defense, and privacy-first enterprise clients to audit every line of firmware and software code.
 
 ---
@@ -217,7 +217,7 @@ Slide 06: Unit Economics ───── 67.8% 3-Year TCO Savings ($81.3k saved 
                                $12k-capex cloud + diesel alternative of the TCO table; the website
                                calculator's $2,500/mo cloud-only default gives 13.0 mo)
 Slide 07: Business Model ───── Turnkey Hardware ($31.5k) + Sovereign SaaS ($199/node/mo)
-Slide 08: Traction & Code ──── 1372 Automated Tests, 92.5% Coverage, Ready-to-Deploy Stacks
+Slide 08: Traction & Code ──── 1379 Automated Tests, 92.5% Coverage, Ready-to-Deploy Stacks
 Slide 09: Technology Moat ──── Space DTN (RFC 9171), Energy Load-Shedder, PQC Signatures
 Slide 10: Financials ───────── $1.78M Y1 -> $23.95M Y3 -> $161.25M Y5 (4.7% EBITDA in Y5, scenario)
 Slide 11: Team & Advisory ──── Metatopia Studio: DeepTech Systems, AI & Embedded Engineers

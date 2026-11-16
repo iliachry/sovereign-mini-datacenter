@@ -164,7 +164,8 @@ env_file_value() { # env_file_value KEY -> value of the last KEY= line
             sub(/\r$/, "", line)
             if (line ~ /(\013|\014|\302[\205\240]|\341\232\200|\342\200[\200-\212\250\251\257]|\342\201\237|\343\200\200|\357\273\277)/) { open = 1; exit }
             if (line ~ /^[ \t]*(#|$)/) next
-            if (sub(/^[ \t]*(export[ \t]+)?[^=: \t]+[ \t]*[=:][ \t]*/, "", line) == 0) next
+            if (line ~ /^[^=:]*\r/) { open = 1; exit }
+            if (sub(/^[ \t]*(export[ \t]+)?[^=: \t]+[ \t]*[=:][ \t\r]*/, "", line) == 0) next
             quote = substr(line, 1, 1)
             if (quote == "\047" || quote == "\"") {
                 r1 = substr(line, 2); gsub("\\\\" quote, "", r1)
@@ -471,7 +472,8 @@ acquire_lock() {
     chmod 700 "$DUMP_PARENT"
     if ! mkdir "$LOCK_DIR" 2>/dev/null; then
         al_has_pid=true
-        al_pid="$(cat "${LOCK_DIR}/pid" 2>/dev/null)" || al_has_pid=false
+        al_raw="$(cat "${LOCK_DIR}/pid" 2>/dev/null)" || al_has_pid=false
+        al_pid="$al_raw"
         case "$al_pid" in
             '' | *[!0-9]*) al_pid="" ;;
         esac
@@ -480,8 +482,25 @@ acquire_lock() {
         fi
         warn "Stale lock ${LOCK_DIR} (pid ${al_pid:-unknown} is not running): an earlier run was killed. Taking it over."
         if [ "$al_has_pid" = "true" ]; then
-            mv "${LOCK_DIR}/pid" "${LOCK_DIR}/pid.stale.$$" 2>/dev/null ||                 err "Another backup.sh dump run is taking over ${LOCK_DIR}. Nothing was backed up."
-            rm -f "${LOCK_DIR}/pid.stale.$$"
+            mkdir "${LOCK_DIR}/.takeover" 2>/dev/null ||                 err "Another backup.sh dump run is taking over ${LOCK_DIR}. Nothing was backed up."
+            al_cur="$(cat "${LOCK_DIR}/pid" 2>/dev/null || true)"
+            al_cur_pid="$al_cur"
+            case "$al_cur_pid" in
+                '' | *[!0-9]*) al_cur_pid="" ;;
+            esac
+            if [ "$al_cur" != "$al_raw" ] || { [ -n "$al_cur_pid" ] && kill -0 "$al_cur_pid" 2>/dev/null; }; then
+                rmdir "${LOCK_DIR}/.takeover" 2>/dev/null || true
+                err "Another backup.sh dump run (pid ${al_cur_pid:-unknown}) holds ${LOCK_DIR}. Nothing was backed up."
+            fi
+            al_tmp="${LOCK_DIR}/.pid.$$"
+            if ! printf '%s\n' "$$" >"$al_tmp" 2>/dev/null || ! mv -f "$al_tmp" "${LOCK_DIR}/pid" 2>/dev/null; then
+                rm -f "$al_tmp"
+                rmdir "${LOCK_DIR}/.takeover" 2>/dev/null || true
+                err "Cannot write lock pid in ${LOCK_DIR}. Nothing was backed up."
+            fi
+            rmdir "${LOCK_DIR}/.takeover" 2>/dev/null || true
+            LOCK_HELD=true
+            return 0
         elif [ ! -d "$LOCK_DIR" ]; then
             rm -rf "$LOCK_DIR"
             mkdir "$LOCK_DIR" || err "Cannot create ${LOCK_DIR}. Nothing was backed up."
