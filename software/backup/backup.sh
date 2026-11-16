@@ -187,9 +187,10 @@ env_file_value() { # env_file_value KEY -> value of the last KEY= line
     # Decoded as Docker Compose decodes its .env file, so that this script and the backup
     # container (which gets the value through Compose) use the same password:
     # blanks after `=` are dropped; a single-quoted value is literal; in unquoted and
-    # double-quoted values `$$` is one `$`; a comment starts at a space followed by `#`
-    # (a tab before `#` is part of the value); after a closing quote only such a comment
-    # may follow. What Compose would expand or unescape (a `$NAME` / `${NAME}` reference, a
+    # double-quoted values `$$` is one `$`; in unquoted values a comment starts at a
+    # space followed by `#` (a tab before `#` is part of the value); after a closing
+    # quote only whitespace and a `#` comment may follow. What Compose would expand or
+    # unescape (a `$NAME` / `${NAME}` reference, a
     # backslash inside quotes) is refused here instead of being guessed.
     efv="$(printf '%s' "$efv" | sed -e 's/^[[:space:]]*//')"
     efv_quote=""
@@ -208,9 +209,9 @@ env_file_value() { # env_file_value KEY -> value of the last KEY= line
         case "$efv" in
             *\\*) echo "[ERROR]   $1 in ${ENV_FILE} is quoted and contains a backslash, which Docker Compose may treat as an escape; use a value without backslashes." >&2; return 2 ;;
         esac
-        efv_after="$(printf '%s' "$efv_after" | sed -e 's/^  *#.*$//' -e 's/[[:space:]]*$//')"
+        efv_after="$(printf '%s' "$efv_after" | sed -e 's/^[[:space:]]*#.*$//' -e 's/[[:space:]]*$//')"
         if [ -n "$efv_after" ]; then
-            echo "[ERROR]   $1 in ${ENV_FILE} has text after its closing quote; only a comment (space, then #) may follow." >&2
+            echo "[ERROR]   $1 in ${ENV_FILE} has text after its closing quote; only whitespace and a # comment may follow." >&2
             return 2
         fi
         if [ "$efv_quote" = "'" ]; then

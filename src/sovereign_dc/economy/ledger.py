@@ -1351,18 +1351,28 @@ class Ledger:
             status = ANCHOR_INVALID
         return True, status, len(rows), expected_prev, digest
 
-    def _chain_report(self) -> tuple[bool, str]:
-        with self._lock, self._get_connection() as conn:
+    def _chain_report_on_conn(self, conn: sqlite3.Connection) -> tuple[bool, str]:
+        began = not conn.in_transaction
+        if began:
+            conn.execute("BEGIN")
+        try:
             has_anchor = conn.execute("SELECT 1 FROM chain_anchor WHERE id = 1").fetchone() is not None
             # Only consult (and possibly create) the node identity key when there is an anchor to check.
             key = _node_anchor_key() if has_anchor else None
             ok, status, _, _, _ = self._check_chain(conn, key)
+        finally:
+            if began:
+                conn.commit()
         if ok and status == ANCHOR_UNVERIFIABLE:
             logger.warning(
                 "Ledger %s carries a chain anchor but this node has no persistent identity key to check it",
                 self.db_path,
             )
         return ok, status
+
+    def _chain_report(self) -> tuple[bool, str]:
+        with self._lock, self._get_connection() as conn:
+            return self._chain_report_on_conn(conn)
 
     def chain_anchor_status(self) -> str:
         """Returns the state of the head anchor: "valid", "absent", "invalid" or "unverifiable".
@@ -1441,8 +1451,16 @@ class Ledger:
     def export_state(self) -> dict[str, Any]:
         """Exports ledger snapshot state."""
         with self._lock, self._get_connection() as conn:
-            bal_rows = conn.execute("SELECT address, balance, balance_micro, nonce FROM balances").fetchall()
-            total_transactions = int(conn.execute("SELECT COUNT(*) FROM transactions").fetchone()[0])
+            began = not conn.in_transaction
+            if began:
+                conn.execute("BEGIN")
+            try:
+                bal_rows = conn.execute("SELECT address, balance, balance_micro, nonce FROM balances").fetchall()
+                total_transactions = int(conn.execute("SELECT COUNT(*) FROM transactions").fetchone()[0])
+                chain_ok, anchor_status = self._chain_report_on_conn(conn)
+            finally:
+                if began:
+                    conn.commit()
             balances = {
                 r["address"]: {
                     "balance": _from_micro(self._row_micro(r)),
@@ -1451,7 +1469,6 @@ class Ledger:
                 }
                 for r in bal_rows
             }
-        chain_ok, anchor_status = self._chain_report()
         return {
             "balances": balances,
             "total_transactions": total_transactions,

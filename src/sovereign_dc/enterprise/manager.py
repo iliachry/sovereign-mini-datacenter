@@ -385,50 +385,66 @@ class EnterpriseManager:
             "unknown" if soc is None else f"{soc:.1f}%",
         )
 
-        to_pause: list[tuple[str, set[str]]] = []
-        to_resume: list[str] = []
         with self._lock:
             self._shedding_level = level
             self._shedding_soc = soc
             self._shed_generation += 1
             generation = self._shed_generation
-            for app_id, runtime in self._runtimes.items():
-                previous = self._shed_paused.get(app_id, set())
-                causes = self._shed_causes(runtime.manifest, level, soc, previous)
-                if runtime.status == AppStatus.RUNNING:
-                    if causes:
-                        to_pause.append((app_id, causes))
-                elif runtime.status == AppStatus.PAUSED and app_id in self._shed_paused:
-                    # Paused by shedding: keep the causes current, resume when none is left.
-                    # An operator's pause is not in _shed_paused and stays in force.
-                    if causes:
-                        self._shed_paused[app_id] = causes
-                    else:
-                        to_resume.append(app_id)
-            # Forget apps that are no longer paused (stopped, removed) or no longer tracked.
-            for app_id in list(self._shed_paused):
-                tracked = self._runtimes.get(app_id)
-                if tracked is None or tracked.status != AppStatus.PAUSED:
-                    del self._shed_paused[app_id]
+            max_passes = max(4, len(self._runtimes) + 4)
 
         # The actions run outside the lock (they publish events). A newer shedding event may
         # be handled meanwhile, by a subscriber publishing from inside one of them or by
         # another thread; it recomputes every app, so what is left of this older plan must
-        # not be applied on top of it. Each action therefore re-checks the plan generation
-        # under the same lock in which it changes the app state (see _pause / resume_app).
+        # not be applied on top of it. Each action therefore syncs with the registry and
+        # re-checks the plan generation and current causes under the same lock in which it
+        # changes the app state (see _pause / resume_app). Re-checking in a bounded pass
+        # loop also picks up apps whose manifests were reclassified during an earlier callback.
         soc_text = "" if soc is None else f", battery SoC {soc:.1f}%"
-        for app_id, causes in to_pause:
-            self._pause(
-                app_id,
-                reason=f"Load shedding level {level}{soc_text} ({' + '.join(sorted(causes))})",
-                by_shedding=True,
-                causes=causes,
-                plan_generation=generation,
-            )
-        for app_id in sorted(to_resume):
-            self.resume_app(
-                app_id, reason=f"Load shedding eased to level {level}{soc_text}", plan_generation=generation
-            )
+        paused_in_plan: set[str] = set()
+        resumed_in_plan: set[str] = set()
+        for _ in range(max_passes):
+            to_pause: list[tuple[str, set[str]]] = []
+            to_resume: list[str] = []
+            with self._lock:
+                if self._shed_plan_is_stale(generation):
+                    return
+                for app_id, runtime in self._runtimes.items():
+                    previous = self._shed_paused.get(app_id, set())
+                    causes = self._shed_causes(runtime.manifest, level, soc, previous)
+                    if runtime.status == AppStatus.RUNNING:
+                        if causes and app_id not in paused_in_plan:
+                            to_pause.append((app_id, causes))
+                    elif runtime.status == AppStatus.PAUSED and app_id in self._shed_paused:
+                        # Paused by shedding: keep the causes current, resume when none is left.
+                        # An operator's pause is not in _shed_paused and stays in force.
+                        if causes:
+                            self._shed_paused[app_id] = causes
+                        elif app_id not in resumed_in_plan:
+                            to_resume.append(app_id)
+                # Forget apps that are no longer paused (stopped, removed) or no longer tracked.
+                for app_id in list(self._shed_paused):
+                    tracked = self._runtimes.get(app_id)
+                    if tracked is None or tracked.status != AppStatus.PAUSED:
+                        del self._shed_paused[app_id]
+            if not to_pause and not to_resume:
+                break
+            for app_id, causes in to_pause:
+                paused_in_plan.add(app_id)
+                self._pause(
+                    app_id,
+                    reason=f"Load shedding level {level}{soc_text} ({' + '.join(sorted(causes))})",
+                    by_shedding=True,
+                    causes=causes,
+                    plan_generation=generation,
+                )
+            for app_id in sorted(to_resume):
+                resumed_in_plan.add(app_id)
+                self.resume_app(
+                    app_id, reason=f"Load shedding eased to level {level}{soc_text}", plan_generation=generation
+                )
+            if self._shed_plan_is_stale(generation):
+                return
+            self._sync_with_registry()
 
     def _shed_plan_is_stale(self, generation: int | None) -> bool:
         """True when a newer load-shedding event was handled since ``generation``.
@@ -599,6 +615,11 @@ class EnterpriseManager:
                 )
                 if not current_causes:
                     return False, f"Application '{app_id}' is no longer subject to load shedding."
+                if causes != current_causes:
+                    soc_text = "" if self._shedding_soc is None else f", battery SoC {self._shedding_soc:.1f}%"
+                    reason = (
+                        f"Load shedding level {self._shedding_level}{soc_text} ({' + '.join(sorted(current_causes))})"
+                    )
                 causes = current_causes
 
             runtime.status = AppStatus.PAUSED
@@ -631,16 +652,33 @@ class EnterpriseManager:
         """Resume execution of a paused application.
 
         ``plan_generation`` is set only by the load-shedding handler: the resume is then
-        skipped if a newer shedding event has been handled since that plan was made.
+        skipped if a newer shedding event has been handled since that plan was made, or
+        if the application still has active shedding causes under its current manifest.
         """
+        if plan_generation is not None:
+            self._sync_with_registry()
         with self._lock:
             if self._shed_plan_is_stale(plan_generation):
                 return False, f"Application '{app_id}' left as it is: a newer load-shedding event was handled."
             runtime = self._runtimes.get(app_id)
             if not runtime or runtime.status != AppStatus.PAUSED:
                 return False, f"Application '{app_id}' is not paused."
-            if plan_generation is not None and app_id not in self._shed_paused:
-                return False, f"Application '{app_id}' is paused by operator request, not load shedding."
+            if plan_generation is not None:
+                if app_id not in self._shed_paused:
+                    return False, f"Application '{app_id}' is paused by operator request, not load shedding."
+                current_causes = (
+                    set()
+                    if self._shedding_level is None
+                    else self._shed_causes(
+                        runtime.manifest,
+                        self._shedding_level,
+                        self._shedding_soc,
+                        self._shed_paused.get(app_id, set()),
+                    )
+                )
+                if current_causes:
+                    self._shed_paused[app_id] = current_causes
+                    return False, f"Application '{app_id}' remains subject to load shedding."
 
             runtime.status = AppStatus.RUNNING
             self._apply_estimates(runtime, paused=False)
