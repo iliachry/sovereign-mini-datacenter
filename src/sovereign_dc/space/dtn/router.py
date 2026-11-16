@@ -333,14 +333,21 @@ class DTNRouter:
     def get_queue_stats(self) -> dict[str, Any]:
         """Returns statistics on active queues and priorities."""
         with self._lock, self._get_connection() as conn:
-            cur = conn.cursor()
-            cur.execute(
-                "SELECT count(*), coalesce(sum(length(serialized_data)), 0) FROM outbound_spool WHERE status = 'QUEUED'"
-            )
-            count, total_bytes = cur.fetchone()
+            began = not conn.in_transaction
+            if began:
+                conn.execute("BEGIN")
+            try:
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT count(*), coalesce(sum(length(serialized_data)), 0) FROM outbound_spool WHERE status = 'QUEUED'"
+                )
+                count, total_bytes = cur.fetchone()
 
-            cur.execute("SELECT priority, count(*) FROM outbound_spool WHERE status = 'QUEUED' GROUP BY priority")
-            prio_counts = {row[0]: row[1] for row in cur.fetchall()}
+                cur.execute("SELECT priority, count(*) FROM outbound_spool WHERE status = 'QUEUED' GROUP BY priority")
+                prio_counts = {row[0]: row[1] for row in cur.fetchall()}
+            finally:
+                if began:
+                    conn.commit()
 
         return {
             "queued_bundle_count": count,

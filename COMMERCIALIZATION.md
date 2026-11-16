@@ -217,7 +217,7 @@ Slide 06: Unit Economics ───── 67.8% 3-Year TCO Savings ($81.3k saved 
                                $12k-capex cloud + diesel alternative of the TCO table; the website
                                calculator's $2,500/mo cloud-only default gives 13.0 mo)
 Slide 07: Business Model ───── Turnkey Hardware ($31.5k) + Sovereign SaaS ($199/node/mo)
-Slide 08: Traction & Code ──── 1391 Automated Tests, 92.5% Coverage, Ready-to-Deploy Stacks
+Slide 08: Traction & Code ──── 1394 Automated Tests, 92.5% Coverage, Ready-to-Deploy Stacks
 Slide 09: Technology Moat ──── Space DTN (RFC 9171), Energy Load-Shedder, PQC Signatures
 Slide 10: Financials ───────── $1.78M Y1 -> $23.95M Y3 -> $161.25M Y5 (4.7% EBITDA in Y5, scenario)
 Slide 11: Team & Advisory ──── Metatopia Studio: DeepTech Systems, AI & Embedded Engineers

@@ -7,6 +7,7 @@ manifest scaffolding for enterprise application onboarding.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import logging
 import os
@@ -14,6 +15,7 @@ import shlex
 import shutil
 import tempfile
 import time
+import uuid
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -165,31 +167,92 @@ class EnterpriseRegistry:
             return
 
         excl_path = lock_path.with_name(f"{lock_path.name}.excl")
-        deadline = time.monotonic() + LOCK_TIMEOUT_SECONDS
-        while True:
-            try:
-                fd = os.open(excl_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-                break
-            except FileExistsError:
-                try:
-                    age = time.time() - excl_path.stat().st_mtime
-                except OSError:
-                    continue  # released between the two calls: try again at once
-                if age >= LOCK_STALE_SECONDS:
-                    logger.warning("Removing stale registry lock %s (%.0f s old)", excl_path, age)
-                    with contextlib.suppress(OSError):
-                        excl_path.unlink()
-                    continue
-                if time.monotonic() >= deadline:
-                    raise TimeoutError(f"registry lock {excl_path} is held by another process") from None
-                time.sleep(LOCK_POLL_SECONDS)
+        token_bytes = f"{os.getpid()}:{uuid.uuid4().hex}\n".encode()
+        staging_path = lock_path.with_name(f"{lock_path.name}.tmp.{os.getpid()}.{uuid.uuid4().hex}")
+        st_fd = os.open(staging_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(str(os.getpid()))
+            with os.fdopen(st_fd, "wb") as sf:
+                sf.write(token_bytes)
+                sf.flush()
+        except Exception:
+            with contextlib.suppress(OSError):
+                staging_path.unlink()
+            raise
+
+        acquired = False
+        deadline = time.monotonic() + LOCK_TIMEOUT_SECONDS
+        try:
+            while True:
+                try:
+                    try:
+                        os.link(staging_path, excl_path)
+                    except FileExistsError:
+                        raise
+                    except OSError:
+                        fd = os.open(excl_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                        with os.fdopen(fd, "wb") as f:
+                            f.write(token_bytes)
+                            f.flush()
+                    else:
+                        with contextlib.suppress(OSError):
+                            staging_path.unlink()
+                    acquired = True
+                    break
+                except FileExistsError:
+                    try:
+                        stale_st = excl_path.stat()
+                        stale_bytes = excl_path.read_bytes()
+                    except OSError:
+                        continue  # released between calls: retry at once
+                    age = time.time() - stale_st.st_mtime
+                    if age >= LOCK_STALE_SECONDS:
+                        stale_tag = hashlib.sha256(
+                            f"{stale_st.st_ino}:{stale_st.st_mtime_ns}:".encode() + stale_bytes
+                        ).hexdigest()[:16]
+                        reap_path = lock_path.with_name(f"{lock_path.name}.reap.{stale_tag}")
+                        with contextlib.suppress(OSError):
+                            reap_age = time.time() - reap_path.stat().st_mtime
+                            if reap_age >= max(LOCK_STALE_SECONDS, 5.0):
+                                reap_path.unlink()
+                        try:
+                            reap_fd = os.open(reap_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                        except FileExistsError:
+                            if time.monotonic() >= deadline:
+                                raise TimeoutError(f"registry lock {excl_path} is held by another process") from None
+                            time.sleep(LOCK_POLL_SECONDS)
+                            continue
+                        os.close(reap_fd)
+                        try:
+                            try:
+                                cur_st = excl_path.stat()
+                                cur_bytes = excl_path.read_bytes()
+                            except OSError:
+                                cur_st = None
+                                cur_bytes = b""
+                            if (
+                                cur_st is not None
+                                and (cur_st.st_ino, cur_st.st_mtime_ns, cur_bytes)
+                                == (stale_st.st_ino, stale_st.st_mtime_ns, stale_bytes)
+                                and (time.time() - cur_st.st_mtime) >= LOCK_STALE_SECONDS
+                            ):
+                                logger.warning("Removing stale registry lock %s (%.0f s old)", excl_path, age)
+                                os.replace(staging_path, excl_path)
+                                acquired = True
+                                break
+                        finally:
+                            with contextlib.suppress(OSError):
+                                reap_path.unlink()
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError(f"registry lock {excl_path} is held by another process") from None
+                    time.sleep(LOCK_POLL_SECONDS)
             yield
         finally:
             with contextlib.suppress(OSError):
-                excl_path.unlink()
+                staging_path.unlink()
+            if acquired:
+                with contextlib.suppress(OSError):
+                    if excl_path.read_bytes() == token_bytes:
+                        excl_path.unlink()
 
     def _read_registry_file(self) -> tuple[dict[str, AppManifest], dict[str, Path], list[Any]] | None:
         """Parses the registry file into (apps, manifest paths, unparsed entries).

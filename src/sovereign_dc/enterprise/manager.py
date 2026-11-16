@@ -390,7 +390,7 @@ class EnterpriseManager:
             self._shedding_soc = soc
             self._shed_generation += 1
             generation = self._shed_generation
-            max_passes = max(4, len(self._runtimes) + 4)
+            max_passes = max(8, len(self._runtimes) * 4 + 4)
 
         # The actions run outside the lock (they publish events). A newer shedding event may
         # be handled meanwhile, by a subscriber publishing from inside one of them or by
@@ -398,10 +398,11 @@ class EnterpriseManager:
         # not be applied on top of it. Each action therefore syncs with the registry and
         # re-checks the plan generation and current causes under the same lock in which it
         # changes the app state (see _pause / resume_app). Re-checking in a bounded pass
-        # loop also picks up apps whose manifests were reclassified during an earlier callback.
+        # loop picks up apps reclassified during callbacks while keeping skipped or newly
+        # reclassified apps eligible for reconsideration.
         soc_text = "" if soc is None else f", battery SoC {soc:.1f}%"
-        paused_in_plan: set[str] = set()
-        resumed_in_plan: set[str] = set()
+        paused_in_plan: dict[str, AppManifest] = {}
+        resumed_in_plan: dict[str, AppManifest] = {}
         for _ in range(max_passes):
             to_pause: list[tuple[str, set[str]]] = []
             to_resume: list[str] = []
@@ -412,14 +413,14 @@ class EnterpriseManager:
                     previous = self._shed_paused.get(app_id, set())
                     causes = self._shed_causes(runtime.manifest, level, soc, previous)
                     if runtime.status == AppStatus.RUNNING:
-                        if causes and app_id not in paused_in_plan:
+                        if causes and paused_in_plan.get(app_id) != runtime.manifest:
                             to_pause.append((app_id, causes))
                     elif runtime.status == AppStatus.PAUSED and app_id in self._shed_paused:
                         # Paused by shedding: keep the causes current, resume when none is left.
                         # An operator's pause is not in _shed_paused and stays in force.
                         if causes:
                             self._shed_paused[app_id] = causes
-                        elif app_id not in resumed_in_plan:
+                        elif resumed_in_plan.get(app_id) != runtime.manifest:
                             to_resume.append(app_id)
                 # Forget apps that are no longer paused (stopped, removed) or no longer tracked.
                 for app_id in list(self._shed_paused):
@@ -429,19 +430,29 @@ class EnterpriseManager:
             if not to_pause and not to_resume:
                 break
             for app_id, causes in to_pause:
-                paused_in_plan.add(app_id)
-                self._pause(
+                ok, _ = self._pause(
                     app_id,
                     reason=f"Load shedding level {level}{soc_text} ({' + '.join(sorted(causes))})",
                     by_shedding=True,
                     causes=causes,
                     plan_generation=generation,
                 )
+                if ok:
+                    with self._lock:
+                        rt = self._runtimes.get(app_id)
+                        if rt is not None:
+                            paused_in_plan[app_id] = rt.manifest
+                            resumed_in_plan.pop(app_id, None)
             for app_id in sorted(to_resume):
-                resumed_in_plan.add(app_id)
-                self.resume_app(
+                ok, _ = self.resume_app(
                     app_id, reason=f"Load shedding eased to level {level}{soc_text}", plan_generation=generation
                 )
+                if ok:
+                    with self._lock:
+                        rt = self._runtimes.get(app_id)
+                        if rt is not None:
+                            resumed_in_plan[app_id] = rt.manifest
+                            paused_in_plan.pop(app_id, None)
             if self._shed_plan_is_stale(generation):
                 return
             self._sync_with_registry()
