@@ -45,12 +45,12 @@ def test_concurrent_stale_lock_takeover_admits_only_one_writer(tmp_path: Path) -
         preamble
         + fn
         + """
-mkdir() {
-    if [ "$*" = "$LOCK_DIR/.takeover" ] && [ "${INJECTED:-0}" = 0 ]; then
+ln() {
+    if [ "$1" = "-s" ] && [ "${3:-}" = "$LOCK_DIR/.takeover" ] && [ "${INJECTED:-0}" = 0 ]; then
         INJECTED=1
         /bin/sh "$SECOND" "$DUMP_PARENT"
     fi
-    command mkdir "$@"
+    command ln "$@"
 }
 acquire_lock
 printf "first pid=%s acquired=%s\\n" "$$" "$LOCK_HELD"

@@ -132,9 +132,9 @@ graph TD
    * **Action**: Multi-WAN router auto-routes encrypted mesh overlay traffic over satellite/cellular interfaces.
 
 3. **Tier 3: LoRa Meshtastic Out-of-Band Emergency Control Plane (Sub-GHz)**
-   * **Physical**: Optional USB/serial Semtech SX1262 LoRa Meshtastic radio (outside the base BOM; bridged on the host by `software/mesh/lora/meshtastic_gateway.py`).
+   * **Physical**: Optional USB/serial Semtech SX1262 LoRa Meshtastic radio (outside the base BOM; `software/mesh/lora/meshtastic_gateway.py` provides the JSON packet codec and Space DTN fallback forwarding, while serial/TCP radio attach is not implemented).
    * **Protocol**: Meshtastic packet format using the channel encryption configured on the radio (AES-256-CTR for pre-shared channel keys).
-   * **Capacity**: Node heartbeat telemetry (SoC, load, critical alerts), cryptographic kill/wake signals, emergency cluster state broadcast.
+   * **Capacity**: Outbound alert framing and DTN fallback spooling implemented; live radio heartbeat broadcast and remote kill/wake signals are design targets, not implemented.
 
 4. **Tier 4: Space DTN / BPv7 Store-and-Forward (RFC 9171)**
    * **Trigger**: Complete terrestrial and line-of-sight isolation (Grid Down / Electromagnetic disruption).

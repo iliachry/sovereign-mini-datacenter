@@ -420,6 +420,7 @@ file_size() { # file_size <file> -> bytes
 # ====================================================================
 NC_MAINT_OWNED=false
 LOCK_HELD=false
+TAKEOVER_HELD=false
 
 nc_occ() {
     docker exec -u www-data "$NEXTCLOUD_CONTAINER" php "${NEXTCLOUD_ROOT_IN_CONTAINER}/occ" "$@"
@@ -458,6 +459,11 @@ cleanup() {
             rm -rf "$LOCK_DIR"
         fi
     fi
+    if [ "${TAKEOVER_HELD:-false}" = "true" ] || [ "$(readlink "${LOCK_DIR}/.takeover" 2>/dev/null || true)" = "$$" ]; then
+        if [ "$(readlink "${LOCK_DIR}/.takeover" 2>/dev/null || true)" = "$$" ]; then
+            rm -rf "${LOCK_DIR}/.takeover"
+        fi
+    fi
     exit "$cl_rc"
 }
 trap cleanup EXIT
@@ -482,23 +488,37 @@ acquire_lock() {
         fi
         warn "Stale lock ${LOCK_DIR} (pid ${al_pid:-unknown} is not running): an earlier run was killed. Taking it over."
         if [ "$al_has_pid" = "true" ]; then
-            mkdir "${LOCK_DIR}/.takeover" 2>/dev/null ||                 err "Another backup.sh dump run is taking over ${LOCK_DIR}. Nothing was backed up."
+            if ! ln -s "$$" "${LOCK_DIR}/.takeover" 2>/dev/null; then
+                tk_pid="$(readlink "${LOCK_DIR}/.takeover" 2>/dev/null || true)"
+                case "$tk_pid" in
+                    '' | *[!0-9]*) tk_pid="" ;;
+                esac
+                if [ -n "$tk_pid" ] && kill -0 "$tk_pid" 2>/dev/null; then
+                    err "Another backup.sh dump run (pid ${tk_pid}) is taking over ${LOCK_DIR}. Nothing was backed up."
+                fi
+                mv "${LOCK_DIR}/.takeover" "${LOCK_DIR}/.takeover.stale.$$" 2>/dev/null ||                     err "Another backup.sh dump run is taking over ${LOCK_DIR}. Nothing was backed up."
+                rm -rf "${LOCK_DIR}/.takeover.stale.$$"
+                ln -s "$$" "${LOCK_DIR}/.takeover" 2>/dev/null ||                     err "Another backup.sh dump run is taking over ${LOCK_DIR}. Nothing was backed up."
+            fi
+            TAKEOVER_HELD=true
             al_cur="$(cat "${LOCK_DIR}/pid" 2>/dev/null || true)"
             al_cur_pid="$al_cur"
             case "$al_cur_pid" in
                 '' | *[!0-9]*) al_cur_pid="" ;;
             esac
             if [ "$al_cur" != "$al_raw" ] || { [ -n "$al_cur_pid" ] && kill -0 "$al_cur_pid" 2>/dev/null; }; then
-                rmdir "${LOCK_DIR}/.takeover" 2>/dev/null || true
+                rm -f "${LOCK_DIR}/.takeover"
+                TAKEOVER_HELD=false
                 err "Another backup.sh dump run (pid ${al_cur_pid:-unknown}) holds ${LOCK_DIR}. Nothing was backed up."
             fi
             al_tmp="${LOCK_DIR}/.pid.$$"
             if ! printf '%s\n' "$$" >"$al_tmp" 2>/dev/null || ! mv -f "$al_tmp" "${LOCK_DIR}/pid" 2>/dev/null; then
-                rm -f "$al_tmp"
-                rmdir "${LOCK_DIR}/.takeover" 2>/dev/null || true
+                rm -f "$al_tmp" "${LOCK_DIR}/.takeover"
+                TAKEOVER_HELD=false
                 err "Cannot write lock pid in ${LOCK_DIR}. Nothing was backed up."
             fi
-            rmdir "${LOCK_DIR}/.takeover" 2>/dev/null || true
+            rm -f "${LOCK_DIR}/.takeover"
+            TAKEOVER_HELD=false
             LOCK_HELD=true
             return 0
         elif [ ! -d "$LOCK_DIR" ]; then

@@ -623,6 +623,8 @@ class EnterpriseManager:
             runtime = self._runtimes.get(app_id)
             if not runtime or runtime.status != AppStatus.PAUSED:
                 return False, f"Application '{app_id}' is not paused."
+            if plan_generation is not None and app_id not in self._shed_paused:
+                return False, f"Application '{app_id}' is paused by operator request, not load shedding."
 
             runtime.status = AppStatus.RUNNING
             self._apply_estimates(runtime, paused=False)
