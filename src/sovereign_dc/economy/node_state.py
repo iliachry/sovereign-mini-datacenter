@@ -35,10 +35,17 @@ import contextlib
 import math
 import os
 import shutil
+import sys
 import tempfile
 import threading
 from collections.abc import Iterator
 from dataclasses import dataclass
+from pathlib import Path
+
+try:  # POSIX advisory locks; absent on Windows (see ``_state_lock``).
+    import fcntl
+except ImportError:  # pragma: no cover - Windows fallback
+    fcntl = None  # type: ignore[assignment]
 
 from sovereign_dc.config import get_config, get_state_dir, is_trusted_legacy_file
 from sovereign_dc.economy.ledger import MAX_CREDITS, Ledger, Transaction, credits_to_micro
@@ -117,29 +124,23 @@ def node_state_paths() -> NodeStatePaths:
     )
 
 
+_FCNTL_UNSET = object()
+
+
 @contextlib.contextmanager
 def _state_lock() -> Iterator[None]:
-    """Serialises identity creation and migration across threads and (where flock exists) processes."""
+    """Serialises identity creation and migration across threads and processes."""
+    from sovereign_dc.enterprise.registry import exclusive_file_lock
+
     with _THREAD_LOCK:
         lock_path = os.path.join(get_state_dir(), _LOCK_FILENAME)
+        active_fcntl = None if (fcntl is None or sys.modules.get("fcntl", _FCNTL_UNSET) is None) else fcntl
         try:
-            import fcntl
-        except ImportError:  # pragma: no cover - Windows: the thread lock is all there is
-            yield
-            return
-        try:
-            fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+            with exclusive_file_lock(Path(lock_path), use_fcntl=active_fcntl):
+                yield
         except OSError as err:
-            logger.debug("Could not open %s (%s); continuing with the in-process lock only", lock_path, err)
+            logger.debug("Could not lock %s (%s); continuing with the in-process lock only", lock_path, err)
             yield
-            return
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX)
-            yield
-        finally:
-            with contextlib.suppress(OSError):
-                fcntl.flock(fd, fcntl.LOCK_UN)
-            os.close(fd)
 
 
 def _legacy_cli_tmp_dir() -> str | None:
@@ -242,7 +243,10 @@ def _load_or_create_wallet(path: str, algorithm: AddressType, node_id: str | Non
     if os.path.lexists(path):
         return NodeWallet.load_from_file(path)
     wallet = NodeWallet.create(node_id=node_id or get_config().node_id, algorithm=algorithm)
-    wallet.save_to_file(path)
+    try:
+        wallet.save_to_file(path, overwrite=False)
+    except FileExistsError:
+        return NodeWallet.load_from_file(path)
     return wallet
 
 

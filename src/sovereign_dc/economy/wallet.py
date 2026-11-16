@@ -8,6 +8,7 @@ address encoding, payload signing, and signature verification.
 from __future__ import annotations
 
 import base64
+import contextlib
 import enum
 import hashlib
 import hmac
@@ -15,6 +16,7 @@ import json
 import os
 import re
 import secrets
+import uuid
 from typing import Any
 
 from cryptography.hazmat.primitives import hashes, serialization
@@ -193,10 +195,12 @@ class NodeWallet:
             "public_key": self.keypair.public_key_hex,
         }
 
-    def save_to_file(self, filepath: str, password: str | None = None) -> None:
+    def save_to_file(self, filepath: str, password: str | None = None, *, overwrite: bool = True) -> None:
         """Exports the wallet to a JSON file (with AES-256-GCM encryption if password supplied)."""
         abs_path = os.path.abspath(filepath)
         os.makedirs(os.path.dirname(abs_path), exist_ok=True)
+        if not overwrite and os.path.lexists(abs_path):
+            raise FileExistsError(abs_path)
 
         data: dict[str, Any] = {
             "node_id": self.node_id,
@@ -229,19 +233,39 @@ class NodeWallet:
             data["encrypted"] = False
             data["private_key_enc"] = base64.b64encode(self.keypair.private_key_bytes).decode("ascii")
 
-        # Create (or truncate) the key file owner-only from the first byte: the mode is applied
-        # at open() and re-asserted with fchmod() so a pre-existing file loses any wider mode
-        # *before* key material is written. A failure to restrict the mode is fatal.
-        fd = os.open(abs_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        try:
-            if hasattr(os, "fchmod"):  # absent on Windows before Python 3.13; ACLs apply there
-                os.fchmod(fd, 0o600)
-            f = os.fdopen(fd, "w", encoding="utf-8")
-        except BaseException:
-            os.close(fd)
-            raise
-        with f:
-            json.dump(data, f, indent=2)
+        def _write_mode_0600(fd: int) -> None:
+            try:
+                if hasattr(os, "fchmod"):  # absent on Windows before Python 3.13; ACLs apply there
+                    os.fchmod(fd, 0o600)
+                f = os.fdopen(fd, "w", encoding="utf-8")
+            except BaseException:
+                os.close(fd)
+                raise
+            with f:
+                json.dump(data, f, indent=2)
+                f.flush()
+
+        if overwrite:
+            # Create (or truncate) the key file owner-only from the first byte: the mode is applied
+            # at open() and re-asserted with fchmod() so a pre-existing file loses any wider mode
+            # *before* key material is written. A failure to restrict the mode is fatal.
+            fd = os.open(abs_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            _write_mode_0600(fd)
+        else:
+            tmp_path = f"{abs_path}.tmp.{os.getpid()}.{uuid.uuid4().hex}"
+            fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            try:
+                _write_mode_0600(fd)
+                try:
+                    os.link(tmp_path, abs_path)
+                except FileExistsError:
+                    raise
+                except OSError:
+                    excl_fd = os.open(abs_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                    _write_mode_0600(excl_fd)
+            finally:
+                with contextlib.suppress(OSError):
+                    os.unlink(tmp_path)
         logger.info("Saved wallet %s to %s", self.address, abs_path)
 
     @classmethod

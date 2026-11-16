@@ -540,18 +540,31 @@ class EnterpriseManager:
         self.event_bus.publish(
             Event(event_type=f"enterprise.{app_id}.started", source="enterprise_manager", payload=payload)
         )
-        if causes:
+        if causes or level is not None:
             soc_text = "" if soc is None else f", battery SoC {soc:.1f}%"
-            reason = f"Load shedding level {level}{soc_text} ({' + '.join(sorted(causes))})"
+            reason = (
+                f"Load shedding level {level}{soc_text} ({' + '.join(sorted(causes))})"
+                if causes
+                else f"Load shedding level {level}{soc_text}"
+            )
             self._pause(app_id, reason, by_shedding=True, causes=causes, plan_generation=plan_generation)
             with self._lock:
                 tracked = self._runtimes.get(app_id)
                 held_by_shedding = (
                     tracked is not None and tracked.status == AppStatus.PAUSED and app_id in self._shed_paused
                 )
+                active_causes = set(self._shed_paused.get(app_id, set()))
+                eff_level = self._shedding_level
+                eff_soc = self._shedding_soc
             if held_by_shedding:
+                eff_soc_text = "" if eff_soc is None else f", battery SoC {eff_soc:.1f}%"
+                eff_reason = (
+                    f"Load shedding level {eff_level}{eff_soc_text} ({' + '.join(sorted(active_causes))})"
+                    if active_causes
+                    else reason
+                )
                 return True, (
-                    f"Application '{app_id}' started but held paused by load shedding: {reason}. "
+                    f"Application '{app_id}' started but held paused by load shedding: {eff_reason}. "
                     "It resumes automatically when shedding eases (state tracked; no process is supervised by this manager)."
                 )
         logger.info("Marked enterprise app '%s' running (Power Tier: %s)", app_id, manifest.power.tier.value)

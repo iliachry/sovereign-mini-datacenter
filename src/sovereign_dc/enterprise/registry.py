@@ -13,6 +13,7 @@ import logging
 import os
 import shlex
 import shutil
+import sys
 import tempfile
 import time
 import uuid
@@ -52,6 +53,155 @@ DEFAULT_APP_DIRECTORIES: list[Path] = [
 LOCK_TIMEOUT_SECONDS = 30.0
 LOCK_STALE_SECONDS = 60.0
 LOCK_POLL_SECONDS = 0.05
+_FCNTL_UNSET = object()
+
+
+def _claim_reap_file(base_reap: Path, timeout_s: float, stale_seconds: float, poll_seconds: float) -> Path | None:
+    """Claims an exclusive ``.reap`` marker via ``O_EXCL``, advancing past expired ones."""
+    candidate = base_reap
+    hop = 0
+    claim_deadline = time.monotonic() + max(timeout_s, 0.0)
+    while True:
+        try:
+            fd = os.open(candidate, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            try:
+                age = time.time() - candidate.stat().st_mtime
+            except OSError:
+                continue
+            if age >= max(stale_seconds, 5.0) and hop < 3:
+                hop += 1
+                candidate = base_reap.with_name(f"{base_reap.name}.r{hop}")
+                continue
+            if time.monotonic() >= claim_deadline:
+                return None
+            time.sleep(min(poll_seconds, 0.005))
+            continue
+        os.close(fd)
+        return candidate
+
+
+def _cleanup_reap_family(base_reap: Path) -> None:
+    with contextlib.suppress(OSError):
+        for marker in base_reap.parent.glob(f"{base_reap.name}*"):
+            with contextlib.suppress(OSError):
+                marker.unlink()
+
+
+@contextlib.contextmanager
+def exclusive_file_lock(
+    lock_path: Path,
+    *,
+    use_fcntl: Any = _FCNTL_UNSET,
+    stale_seconds: float | None = None,
+    timeout_seconds: float | None = None,
+    poll_seconds: float | None = None,
+) -> Iterator[None]:
+    """Cross-process exclusive lock at ``lock_path`` (``flock`` on POSIX, token ``O_EXCL`` otherwise)."""
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    active_fcntl = fcntl if use_fcntl is _FCNTL_UNSET else use_fcntl
+    if active_fcntl is not None and ("fcntl" not in sys.modules or sys.modules["fcntl"] is not None):
+        fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            active_fcntl.flock(fd, active_fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                active_fcntl.flock(fd, active_fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
+        return
+
+    stale_s = LOCK_STALE_SECONDS if stale_seconds is None else stale_seconds
+    timeout_s = LOCK_TIMEOUT_SECONDS if timeout_seconds is None else timeout_seconds
+    poll_s = LOCK_POLL_SECONDS if poll_seconds is None else poll_seconds
+
+    excl_path = lock_path.with_name(f"{lock_path.name}.excl")
+    token_bytes = f"{os.getpid()}:{uuid.uuid4().hex}\n".encode()
+    my_tag = hashlib.sha256(token_bytes).hexdigest()[:16]
+    staging_path = lock_path.with_name(f"{lock_path.name}.tmp.{os.getpid()}.{uuid.uuid4().hex}")
+    st_fd = os.open(staging_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(st_fd, "wb") as sf:
+            sf.write(token_bytes)
+            sf.flush()
+    except Exception:
+        with contextlib.suppress(OSError):
+            staging_path.unlink()
+        raise
+
+    acquired = False
+    deadline = time.monotonic() + timeout_s
+    try:
+        while True:
+            try:
+                try:
+                    os.link(staging_path, excl_path)
+                except FileExistsError:
+                    raise
+                except OSError:
+                    fd = os.open(excl_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                    with os.fdopen(fd, "wb") as f:
+                        f.write(token_bytes)
+                        f.flush()
+                else:
+                    with contextlib.suppress(OSError):
+                        staging_path.unlink()
+                acquired = True
+                break
+            except FileExistsError:
+                try:
+                    stale_st = excl_path.stat()
+                    stale_bytes = excl_path.read_bytes()
+                except OSError:
+                    continue  # released between calls: retry at once
+                age = time.time() - stale_st.st_mtime
+                if age >= stale_s:
+                    stale_tag = hashlib.sha256(stale_bytes).hexdigest()[:16]
+                    base_reap = lock_path.with_name(f"{lock_path.name}.reap.{stale_tag}")
+                    claimed = _claim_reap_file(base_reap, max(deadline - time.monotonic(), 0.0), stale_s, poll_s)
+                    if claimed is None:
+                        if time.monotonic() >= deadline:
+                            raise TimeoutError(f"registry lock {excl_path} is held by another process") from None
+                        continue
+                    try:
+                        try:
+                            cur_st = excl_path.stat()
+                            cur_bytes = excl_path.read_bytes()
+                        except OSError:
+                            cur_st = None
+                            cur_bytes = b""
+                        if (
+                            cur_st is not None
+                            and cur_bytes == stale_bytes
+                            and (cur_st.st_ino, cur_st.st_mtime_ns) == (stale_st.st_ino, stale_st.st_mtime_ns)
+                            and (time.time() - cur_st.st_mtime) >= stale_s
+                        ):
+                            logger.warning("Removing stale registry lock %s (%.0f s old)", excl_path, age)
+                            os.replace(staging_path, excl_path)
+                            acquired = True
+                            break
+                    finally:
+                        _cleanup_reap_family(base_reap)
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(f"registry lock {excl_path} is held by another process") from None
+                time.sleep(poll_s)
+        yield
+    finally:
+        with contextlib.suppress(OSError):
+            staging_path.unlink()
+        if acquired:
+            my_base_reap = lock_path.with_name(f"{lock_path.name}.reap.{my_tag}")
+            claimed_rel = _claim_reap_file(my_base_reap, max(stale_s, 5.0), stale_s, poll_s)
+            try:
+                if claimed_rel is not None:
+                    with contextlib.suppress(OSError):
+                        if excl_path.read_bytes() == token_bytes:
+                            excl_path.unlink()
+            finally:
+                if claimed_rel is not None:
+                    _cleanup_reap_family(my_base_reap)
+
 
 # Files written by ``EnterpriseRegistry.create_project_scaffold`` (manifests always, the sample
 # code only with ``create_sample_code``).
@@ -147,112 +297,20 @@ class EnterpriseRegistry:
 
         POSIX: ``flock(LOCK_EX)`` on ``<registry>.lock`` (released by the kernel if the
         holder dies; the lock file itself is left in place on purpose, removing it would let
-        two writers lock different inodes). Without ``fcntl``: an ``O_EXCL`` lock file
-        ``<registry>.lock.excl`` that is removed on release; one older than
-        ``LOCK_STALE_SECONDS`` is taken over, and waiting longer than
-        ``LOCK_TIMEOUT_SECONDS`` raises ``TimeoutError``.
+        two writers lock different inodes). Without ``fcntl``: an ownership-safe ``O_EXCL``
+        lock file ``<registry>.lock.excl`` whose stale takeover and release both serialize on a
+        per-token ``.reap.<tag>`` claim; waiting longer than ``LOCK_TIMEOUT_SECONDS`` raises
+        ``TimeoutError``.
         """
-        self.registry_file.parent.mkdir(parents=True, exist_ok=True)
         lock_path = self.registry_file.with_name(f"{self.registry_file.name}.lock")
-        if fcntl is not None:
-            fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
-            try:
-                fcntl.flock(fd, fcntl.LOCK_EX)
-                try:
-                    yield
-                finally:
-                    fcntl.flock(fd, fcntl.LOCK_UN)
-            finally:
-                os.close(fd)
-            return
-
-        excl_path = lock_path.with_name(f"{lock_path.name}.excl")
-        token_bytes = f"{os.getpid()}:{uuid.uuid4().hex}\n".encode()
-        staging_path = lock_path.with_name(f"{lock_path.name}.tmp.{os.getpid()}.{uuid.uuid4().hex}")
-        st_fd = os.open(staging_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        try:
-            with os.fdopen(st_fd, "wb") as sf:
-                sf.write(token_bytes)
-                sf.flush()
-        except Exception:
-            with contextlib.suppress(OSError):
-                staging_path.unlink()
-            raise
-
-        acquired = False
-        deadline = time.monotonic() + LOCK_TIMEOUT_SECONDS
-        try:
-            while True:
-                try:
-                    try:
-                        os.link(staging_path, excl_path)
-                    except FileExistsError:
-                        raise
-                    except OSError:
-                        fd = os.open(excl_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-                        with os.fdopen(fd, "wb") as f:
-                            f.write(token_bytes)
-                            f.flush()
-                    else:
-                        with contextlib.suppress(OSError):
-                            staging_path.unlink()
-                    acquired = True
-                    break
-                except FileExistsError:
-                    try:
-                        stale_st = excl_path.stat()
-                        stale_bytes = excl_path.read_bytes()
-                    except OSError:
-                        continue  # released between calls: retry at once
-                    age = time.time() - stale_st.st_mtime
-                    if age >= LOCK_STALE_SECONDS:
-                        stale_tag = hashlib.sha256(
-                            f"{stale_st.st_ino}:{stale_st.st_mtime_ns}:".encode() + stale_bytes
-                        ).hexdigest()[:16]
-                        reap_path = lock_path.with_name(f"{lock_path.name}.reap.{stale_tag}")
-                        with contextlib.suppress(OSError):
-                            reap_age = time.time() - reap_path.stat().st_mtime
-                            if reap_age >= max(LOCK_STALE_SECONDS, 5.0):
-                                reap_path.unlink()
-                        try:
-                            reap_fd = os.open(reap_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-                        except FileExistsError:
-                            if time.monotonic() >= deadline:
-                                raise TimeoutError(f"registry lock {excl_path} is held by another process") from None
-                            time.sleep(LOCK_POLL_SECONDS)
-                            continue
-                        os.close(reap_fd)
-                        try:
-                            try:
-                                cur_st = excl_path.stat()
-                                cur_bytes = excl_path.read_bytes()
-                            except OSError:
-                                cur_st = None
-                                cur_bytes = b""
-                            if (
-                                cur_st is not None
-                                and (cur_st.st_ino, cur_st.st_mtime_ns, cur_bytes)
-                                == (stale_st.st_ino, stale_st.st_mtime_ns, stale_bytes)
-                                and (time.time() - cur_st.st_mtime) >= LOCK_STALE_SECONDS
-                            ):
-                                logger.warning("Removing stale registry lock %s (%.0f s old)", excl_path, age)
-                                os.replace(staging_path, excl_path)
-                                acquired = True
-                                break
-                        finally:
-                            with contextlib.suppress(OSError):
-                                reap_path.unlink()
-                    if time.monotonic() >= deadline:
-                        raise TimeoutError(f"registry lock {excl_path} is held by another process") from None
-                    time.sleep(LOCK_POLL_SECONDS)
+        with exclusive_file_lock(
+            lock_path,
+            use_fcntl=fcntl,
+            stale_seconds=LOCK_STALE_SECONDS,
+            timeout_seconds=LOCK_TIMEOUT_SECONDS,
+            poll_seconds=LOCK_POLL_SECONDS,
+        ):
             yield
-        finally:
-            with contextlib.suppress(OSError):
-                staging_path.unlink()
-            if acquired:
-                with contextlib.suppress(OSError):
-                    if excl_path.read_bytes() == token_bytes:
-                        excl_path.unlink()
 
     def _read_registry_file(self) -> tuple[dict[str, AppManifest], dict[str, Path], list[Any]] | None:
         """Parses the registry file into (apps, manifest paths, unparsed entries).
