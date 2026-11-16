@@ -258,6 +258,7 @@ class EnterpriseManager:
         self._shed_paused: dict[str, set[str]] = {}
         # Incremented for every handled load-shedding event (see _shed_plan_is_stale).
         self._shed_generation = 0
+        self._state_seq = 0
         # Level and battery SoC of the last load-shedding event this manager understood
         # (None until the first one / while the SoC is unknown); applied by start_app().
         self._shedding_level: int | None = None
@@ -505,7 +506,9 @@ class EnterpriseManager:
             runtime.status = AppStatus.RUNNING
             self._apply_estimates(runtime, paused=False)
             self._shed_paused.pop(app_id, None)
+            self._state_seq += 1
             payload = runtime.to_dict()
+            payload["state_seq"] = self._state_seq
 
         self.event_bus.publish(
             Event(event_type=f"enterprise.{app_id}.started", source="enterprise_manager", payload=payload)
@@ -545,7 +548,9 @@ class EnterpriseManager:
             runtime.metrics_source = METRICS_SOURCE_NONE
             runtime.health_status = "stopped"
             self._shed_paused.pop(app_id, None)
+            self._state_seq += 1
             payload = runtime.to_dict()
+            payload["state_seq"] = self._state_seq
 
         logger.info("Marked enterprise app '%s' stopped", app_id)
         self.event_bus.publish(
@@ -586,7 +591,12 @@ class EnterpriseManager:
                 self._shed_paused[app_id] = set(causes) if causes else {CAUSE_TIER}
             else:
                 self._shed_paused.pop(app_id, None)
-            payload = {"reason": reason, "paused_by": "load_shedding" if by_shedding else "operator"}
+            self._state_seq += 1
+            payload = {
+                "reason": reason,
+                "paused_by": "load_shedding" if by_shedding else "operator",
+                "state_seq": self._state_seq,
+            }
             payload.update(runtime.to_dict())
 
         logger.warning("Paused enterprise app '%s': %s", app_id, reason)
@@ -617,7 +627,8 @@ class EnterpriseManager:
             runtime.status = AppStatus.RUNNING
             self._apply_estimates(runtime, paused=False)
             self._shed_paused.pop(app_id, None)
-            payload = {"reason": reason}
+            self._state_seq += 1
+            payload = {"reason": reason, "state_seq": self._state_seq}
             payload.update(runtime.to_dict())
 
         logger.info("Resumed enterprise app '%s': %s", app_id, reason)

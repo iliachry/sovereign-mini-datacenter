@@ -132,13 +132,13 @@ graph TD
    * **Action**: Multi-WAN router auto-routes encrypted mesh overlay traffic over satellite/cellular interfaces.
 
 3. **Tier 3: LoRa Meshtastic Out-of-Band Emergency Control Plane (Sub-GHz)**
-   * **Physical**: Semtech SX1262 LoRa transceiver driven by the ESP32 bridge.
+   * **Physical**: Optional USB/serial Semtech SX1262 LoRa Meshtastic radio (outside the base BOM; bridged on the host by `software/mesh/lora/meshtastic_gateway.py`).
    * **Protocol**: Meshtastic packet format with hardware-accelerated AES-256-GCM encryption.
    * **Capacity**: Node heartbeat telemetry (SoC, load, critical alerts), cryptographic kill/wake signals, emergency cluster state broadcast.
 
 4. **Tier 4: Space DTN / BPv7 Store-and-Forward (RFC 9171)**
    * **Trigger**: Complete terrestrial and line-of-sight isolation (Grid Down / Electromagnetic disruption).
-   * **Mechanism**: The node's `smdc.space` orbital propagator predicts LEO/MEO satellite relay passes with a simplified circular-orbit model (not SGP4; pass times are approximate). Encrypted bundles are queued in persistent NVMe storage and burst-transmitted during Acquisition of Signal (AOS) to Loss of Signal (LOS) windows.
+   * **Mechanism**: The node's `smdc.space` orbital propagator predicts LEO/MEO satellite relay passes with a simplified circular-orbit model (not SGP4; pass times are approximate). Unencrypted, SHA-256 digest-verified bundles are queued in persistent NVMe storage and burst-transmitted during simulated Acquisition of Signal (AOS) to Loss of Signal (LOS) windows (encrypt sensitive payloads before submission).
 
 ---
 

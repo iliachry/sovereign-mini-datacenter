@@ -471,6 +471,7 @@ class AppLifecycleHandler:
         self._is_running = True
         self._is_paused = False
         self._bus: Any = None
+        self._last_state_seq: int = -1
         self._subscribe_power_events()
 
         # Register OS signal handlers for graceful shutdown
@@ -502,11 +503,22 @@ class AppLifecycleHandler:
         except Exception as e:
             logger.debug("Lifecycle handler for %s could not unsubscribe: %s", self.app_id, e)
 
+    def _accept_state_event(self, event: Any) -> bool:
+        payload = getattr(event, "payload", None)
+        seq = payload.get("state_seq") if isinstance(payload, dict) else None
+        if isinstance(seq, int) and not isinstance(seq, bool):
+            if seq < self._last_state_seq:
+                return False
+            self._last_state_seq = seq
+        return True
+
     def _on_paused_event(self, event: Any) -> None:
-        self.pause()
+        if self._accept_state_event(event):
+            self.pause()
 
     def _on_resumed_event(self, event: Any) -> None:
-        self.resume()
+        if self._accept_state_event(event):
+            self.resume()
 
     def _handle_signal(self, signum: int, frame: Any) -> None:
         logger.info("Received signal %d. Triggering graceful stop for %s...", signum, self.app_id)

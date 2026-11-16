@@ -159,9 +159,10 @@ env_file_value() { # env_file_value KEY -> value of the last KEY= line
     # `KEY=`, `KEY =`, `export KEY=`, `KEY: `.
     # This reader works line by line. A quoted value that continues on the next line would
     # make it read a line inside that value as an assignment, so such a file is refused.
-    if ! awk '{
+    if ! LC_ALL=C awk '{
             line = $0
             sub(/\r$/, "", line)
+            if (line ~ /(\013|\014|\302[\205\240]|\341\232\200|\342\200[\200-\212\250\251\257]|\342\201\237|\343\200\200|\357\273\277)/) { open = 1; exit }
             if (line ~ /^[ \t]*(#|$)/) next
             if (sub(/^[ \t]*(export[ \t]+)?[^=: \t]+[ \t]*[=:][ \t]*/, "", line) == 0) next
             quote = substr(line, 1, 1)
@@ -171,7 +172,7 @@ env_file_value() { # env_file_value KEY -> value of the last KEY= line
                 if (index(r1, quote) == 0 || index(r2, quote) == 0) { open = 1; exit }
             }
         } END { exit open ? 1 : 0 }' "$ENV_FILE"; then
-        echo "[ERROR]   ${ENV_FILE} holds a quoted value that spans several lines; this script cannot read such a file reliably. Put every value on one line." >&2
+        echo "[ERROR]   ${ENV_FILE} holds a quoted value that spans several lines or non-standard whitespace/BOM; this script cannot read such a file reliably. Put every value on one ASCII-whitespace line." >&2
         return 2
     fi
     efv="$(sed -n -E "s/^[[:space:]]*(export[[:space:]]+)?$1[[:space:]]*[=:]//p" "$ENV_FILE" | tail -n 1)"
@@ -452,7 +453,9 @@ cleanup() {
             rm -rf "$GEN_NEW"
         fi
         rm -f "${CURRENT_LINK}.new.$$"
-        rm -rf "$LOCK_DIR"
+        if [ "$(cat "${LOCK_DIR}/pid" 2>/dev/null || true)" = "$$" ]; then
+            rm -rf "$LOCK_DIR"
+        fi
     fi
     exit "$cl_rc"
 }
@@ -467,7 +470,8 @@ acquire_lock() {
     mkdir -p "$DUMP_PARENT"
     chmod 700 "$DUMP_PARENT"
     if ! mkdir "$LOCK_DIR" 2>/dev/null; then
-        al_pid="$(cat "${LOCK_DIR}/pid" 2>/dev/null || true)"
+        al_has_pid=true
+        al_pid="$(cat "${LOCK_DIR}/pid" 2>/dev/null)" || al_has_pid=false
         case "$al_pid" in
             '' | *[!0-9]*) al_pid="" ;;
         esac
@@ -475,11 +479,24 @@ acquire_lock() {
             err "Another backup.sh dump run (pid ${al_pid}) holds ${LOCK_DIR}. If that process is not a backup, remove the directory and retry. Nothing was backed up."
         fi
         warn "Stale lock ${LOCK_DIR} (pid ${al_pid:-unknown} is not running): an earlier run was killed. Taking it over."
-        rm -rf "$LOCK_DIR"
-        mkdir "$LOCK_DIR" || err "Cannot create ${LOCK_DIR}. Nothing was backed up."
+        if [ "$al_has_pid" = "true" ]; then
+            mv "${LOCK_DIR}/pid" "${LOCK_DIR}/pid.stale.$$" 2>/dev/null ||                 err "Another backup.sh dump run is taking over ${LOCK_DIR}. Nothing was backed up."
+            rm -f "${LOCK_DIR}/pid.stale.$$"
+        elif [ ! -d "$LOCK_DIR" ]; then
+            rm -rf "$LOCK_DIR"
+            mkdir "$LOCK_DIR" || err "Cannot create ${LOCK_DIR}. Nothing was backed up."
+        fi
+    fi
+    al_tmp="${LOCK_DIR}/.pid.$$"
+    printf '%s\n' "$$" >"$al_tmp" 2>/dev/null || err "Cannot write lock pid in ${LOCK_DIR}. Nothing was backed up."
+    al_linked=true
+    ln "$al_tmp" "${LOCK_DIR}/pid" 2>/dev/null || al_linked=false
+    rm -f "$al_tmp"
+    if [ "$al_linked" != "true" ] || [ "$(cat "${LOCK_DIR}/pid" 2>/dev/null || true)" != "$$" ]; then
+        al_holder="$(cat "${LOCK_DIR}/pid" 2>/dev/null || true)"
+        err "Another backup.sh dump run (pid ${al_holder:-unknown}) holds ${LOCK_DIR}. If that process is not a backup, remove the directory and retry. Nothing was backed up."
     fi
     LOCK_HELD=true
-    printf '%s\n' "$$" >"${LOCK_DIR}/pid"
 }
 
 # ====================================================================

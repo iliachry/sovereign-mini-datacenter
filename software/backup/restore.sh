@@ -67,9 +67,10 @@ env_file_value() {
     # `KEY=`, `KEY =`, `export KEY=`, `KEY: `.
     # This reader works line by line. A quoted value that continues on the next line would
     # make it read a line inside that value as an assignment, so such a file is refused.
-    if ! awk '{
+    if ! LC_ALL=C awk '{
             line = $0
             sub(/\r$/, "", line)
+            if (line ~ /(\013|\014|\302[\205\240]|\341\232\200|\342\200[\200-\212\250\251\257]|\342\201\237|\343\200\200|\357\273\277)/) { open = 1; exit }
             if (line ~ /^[ \t]*(#|$)/) next
             if (sub(/^[ \t]*(export[ \t]+)?[^=: \t]+[ \t]*[=:][ \t]*/, "", line) == 0) next
             quote = substr(line, 1, 1)
@@ -79,7 +80,7 @@ env_file_value() {
                 if (index(r1, quote) == 0 || index(r2, quote) == 0) { open = 1; exit }
             }
         } END { exit open ? 1 : 0 }' "$ENV_FILE"; then
-        echo "[ERROR]   ${ENV_FILE} holds a quoted value that spans several lines; this script cannot read such a file reliably. Put every value on one line." >&2
+        echo "[ERROR]   ${ENV_FILE} holds a quoted value that spans several lines or non-standard whitespace/BOM; this script cannot read such a file reliably. Put every value on one ASCII-whitespace line." >&2
         return 2
     fi
     efv="$(sed -n -E "s/^[[:space:]]*(export[[:space:]]+)?$1[[:space:]]*[=:]//p" "$ENV_FILE" | tail -n 1)"
