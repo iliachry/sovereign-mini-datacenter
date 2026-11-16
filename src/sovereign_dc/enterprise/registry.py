@@ -94,25 +94,24 @@ class EnterpriseRegistry:
         # Changes made through this instance that are not in the file yet, in order:
         # (_SET, app_id, manifest, manifest_path | None) or (_DELETE, app_id, None, None).
         self._pending: list[tuple[str, str, AppManifest | None, Path | None]] = []
-        # (mtime_ns, size) and backup path of the unparseable file already copied aside, so
-        # re-reading the same broken file (every save reloads) does not copy it again.
-        self._corrupt_backup: tuple[tuple[int, int], Path] | None = None
+        # (mtime_ns, size, ino) and backup path of the unparseable file already copied aside,
+        # so re-reading the same broken file (every save reloads) does not copy it again.
+        self._corrupt_backup: tuple[tuple[int, int, int], Path] | None = None
         # Why the most recent save_registry() call failed; None after a successful one.
         self.last_save_error: str | None = None
-        # (mtime_ns, size) of the registry file when this instance last read it; lookups
-        # re-read the file when it differs, so a long-running process (the MCP server, the
-        # dashboard) sees what another `smdc` process registered after it started.
-        self._loaded_signature: tuple[int, int] | None = None
+        # (mtime_ns, size, ino) of the registry file when this instance last read or saved it;
+        # lookups re-read the file when it differs, so a long-running process sees changes made
+        # by another `smdc` process.
+        self._loaded_signature: tuple[int, int, int] | None = None
         self.load_registry()
-        self._loaded_signature = self._file_signature()
 
-    def _file_signature(self) -> tuple[int, int] | None:
-        """(mtime_ns, size) of the registry file, or None when it cannot be read."""
+    def _file_signature(self) -> tuple[int, int, int] | None:
+        """(mtime_ns, size, ino) of the registry file, or None when it cannot be read."""
         try:
             stat = self.registry_file.stat()
         except OSError:
             return None
-        return stat.st_mtime_ns, stat.st_size
+        return stat.st_mtime_ns, stat.st_size, stat.st_ino
 
     def refresh(self) -> None:
         """Re-reads the registry file if it changed since this instance last read it.
@@ -121,8 +120,9 @@ class EnterpriseRegistry:
         """
         signature = self._file_signature()
         if signature != self._loaded_signature:
-            self._loaded_signature = signature
-            if signature is not None:
+            if signature is None:
+                self._loaded_signature = None
+            else:
                 self.load_registry()
 
     def _backup_unreadable_registry(self) -> Path | None:
@@ -201,20 +201,22 @@ class EnterpriseRegistry:
         apps: dict[str, AppManifest] = {}
         paths: dict[str, Path] = {}
         unparsed: list[Any] = []
-        if not self.registry_file.exists():
-            self._save_blocked = False
-            return apps, paths, unparsed
+        read_sig: tuple[int, int, int] | None = None
         try:
             with open(self.registry_file, encoding="utf-8") as f:
+                st = os.fstat(f.fileno())
+                read_sig = (st.st_mtime_ns, st.st_size, st.st_ino)
                 data = json.load(f)
             if not isinstance(data, dict) or not isinstance(data.get("apps", []), list):
                 raise ValueError("registry root must be an object with an 'apps' list")
+        except FileNotFoundError:
+            self._save_blocked = False
+            self._loaded_signature = None
+            return apps, paths, unparsed
         except Exception as e:
             backup: Path | None = None
-            signature: tuple[int, int] | None = None
-            with contextlib.suppress(OSError):
-                st = self.registry_file.stat()
-                signature = (st.st_mtime_ns, st.st_size)
+            signature = read_sig if read_sig is not None else self._file_signature()
+            self._loaded_signature = signature
             known = self._corrupt_backup
             if known is not None and signature == known[0] and known[1].exists():
                 backup = known[1]
@@ -230,6 +232,7 @@ class EnterpriseRegistry:
             )
             return None
         self._save_blocked = False
+        self._loaded_signature = read_sig
 
         for index, app_data in enumerate(data.get("apps", [])):
             try:
@@ -311,9 +314,13 @@ class EnterpriseRegistry:
                 )
                 with os.fdopen(fd, "w", encoding="utf-8") as f:
                     json.dump({"version": "1.0.0", "apps": apps_payload}, f, indent=2)
+                    f.flush()
+                    st = os.fstat(f.fileno())
+                    saved_sig = (st.st_mtime_ns, st.st_size, st.st_ino)
                 os.replace(tmp_name, self.registry_file)
                 tmp_name = None
                 self._pending.clear()
+                self._loaded_signature = saved_sig
             logger.debug("Saved %d apps to %s", len(self._apps), self.registry_file)
             return True
         except Exception as e:

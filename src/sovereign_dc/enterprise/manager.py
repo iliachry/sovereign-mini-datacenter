@@ -578,12 +578,28 @@ class EnterpriseManager:
         causes: set[str] | None = None,
         plan_generation: int | None = None,
     ) -> tuple[bool, str]:
+        if by_shedding and plan_generation is not None:
+            self._sync_with_registry()
         with self._lock:
             if self._shed_plan_is_stale(plan_generation):
                 return False, f"Application '{app_id}' left as it is: a newer load-shedding event was handled."
             runtime = self._runtimes.get(app_id)
             if not runtime or runtime.status != AppStatus.RUNNING:
                 return False, f"Application '{app_id}' is not currently running."
+            if by_shedding and plan_generation is not None:
+                current_causes = (
+                    set()
+                    if self._shedding_level is None
+                    else self._shed_causes(
+                        runtime.manifest,
+                        self._shedding_level,
+                        self._shedding_soc,
+                        self._shed_paused.get(app_id, set()),
+                    )
+                )
+                if not current_causes:
+                    return False, f"Application '{app_id}' is no longer subject to load shedding."
+                causes = current_causes
 
             runtime.status = AppStatus.PAUSED
             self._apply_estimates(runtime, paused=True)
