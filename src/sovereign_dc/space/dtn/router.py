@@ -79,7 +79,12 @@ def _is_trusted_legacy_file(path: str) -> bool:
         st = os.lstat(path)
     except OSError:
         return False
-    return stat.S_ISREG(st.st_mode) and st.st_uid == os.getuid() and not (st.st_mode & 0o022)
+    if not stat.S_ISREG(st.st_mode):
+        return False
+    getuid = getattr(os, "getuid", None)
+    if not callable(getuid):
+        return True
+    return bool(st.st_uid == getuid() and not (st.st_mode & 0o022))
 
 
 def default_spool_path() -> str:

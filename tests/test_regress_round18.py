@@ -119,6 +119,8 @@ def test_windows_registry_lock_release_never_deletes_replacement_owner_lock(
 
     orig_read_reg = EnterpriseRegistry._read_registry_file
     orig_claim = registry_mod._claim_reap_file
+    orig_alive = registry_mod._is_token_owner_alive
+    dead_tokens: set[bytes] = set()
     a_at_release = threading.Event()
     b_replaced = threading.Event()
     a_released = threading.Event()
@@ -128,7 +130,8 @@ def test_windows_registry_lock_release_never_deletes_replacement_owner_lock(
     def wrapped_read(self: EnterpriseRegistry):  # type: ignore[no-untyped-def]
         name = threading.current_thread().name
         if name == "writer-a" and excl_path.exists():
-            # Simulate writer A having stayed past LOCK_STALE_SECONDS before reaching finally:.
+            # Simulate writer A having stalled & appearing dead past LOCK_STALE_SECONDS before reaching finally:.
+            dead_tokens.add(excl_path.read_bytes())
             stale_ts = time.time() - (registry_mod.LOCK_STALE_SECONDS + 30.0)
             os.utime(excl_path, (stale_ts, stale_ts))
         elif name == "writer-b":
@@ -145,15 +148,26 @@ def test_windows_registry_lock_release_never_deletes_replacement_owner_lock(
             events_order.append("b_exit")
         return res
 
-    def wrapped_claim(base_reap: Path, timeout_s: float, stale_seconds: float, poll_seconds: float) -> Path | None:
+    def wrapped_claim(
+        base_reap: Path,
+        timeout_s: float,
+        stale_seconds: float,
+        poll_seconds: float,
+        owner_token: bytes = b"",
+    ) -> Path | None:
         if threading.current_thread().name == "writer-a" and not a_at_release.is_set():
             # Pause A right at release before claiming its reap lock.
             a_at_release.set()
             assert b_replaced.wait(timeout=5.0)
-        return orig_claim(base_reap, timeout_s, stale_seconds, poll_seconds)
+        return orig_claim(base_reap, timeout_s, stale_seconds, poll_seconds, owner_token)
 
     monkeypatch.setattr(EnterpriseRegistry, "_read_registry_file", wrapped_read)
     monkeypatch.setattr(registry_mod, "_claim_reap_file", wrapped_claim)
+    monkeypatch.setattr(
+        registry_mod,
+        "_is_token_owner_alive",
+        lambda raw: False if raw in dead_tokens else orig_alive(raw),
+    )
 
     results: dict[str, tuple[bool, list[str]]] = {}
 

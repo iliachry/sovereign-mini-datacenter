@@ -524,9 +524,6 @@ class EnterpriseManager:
             if runtime.status == AppStatus.RUNNING:
                 return True, f"Application '{app_id}' is already running."
 
-            plan_generation = self._shed_generation
-            level, soc = self._shedding_level, self._shedding_soc
-            causes = set() if level is None else self._shed_causes(runtime.manifest, level, soc, set())
             runtime.started_at = time.time()
             runtime.health_status = "not_probed"
             runtime.error_message = None
@@ -540,14 +537,19 @@ class EnterpriseManager:
         self.event_bus.publish(
             Event(event_type=f"enterprise.{app_id}.started", source="enterprise_manager", payload=payload)
         )
-        if causes or level is not None:
-            soc_text = "" if soc is None else f", battery SoC {soc:.1f}%"
-            reason = (
-                f"Load shedding level {level}{soc_text} ({' + '.join(sorted(causes))})"
-                if causes
-                else f"Load shedding level {level}{soc_text}"
+        self._sync_with_registry()
+        with self._lock:
+            post_runtime = self._runtimes.get(app_id)
+            cur_level, cur_soc, cur_gen = self._shedding_level, self._shedding_soc, self._shed_generation
+            post_causes = (
+                set()
+                if post_runtime is None or post_runtime.status != AppStatus.RUNNING or cur_level is None
+                else self._shed_causes(post_runtime.manifest, cur_level, cur_soc, self._shed_paused.get(app_id, set()))
             )
-            self._pause(app_id, reason, by_shedding=True, causes=causes, plan_generation=plan_generation)
+        if post_causes:
+            soc_text = "" if cur_soc is None else f", battery SoC {cur_soc:.1f}%"
+            reason = f"Load shedding level {cur_level}{soc_text} ({' + '.join(sorted(post_causes))})"
+            self._pause(app_id, reason, by_shedding=True, causes=post_causes, plan_generation=cur_gen)
             with self._lock:
                 tracked = self._runtimes.get(app_id)
                 held_by_shedding = (

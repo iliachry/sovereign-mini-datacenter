@@ -15,6 +15,7 @@ import shlex
 import shutil
 import sys
 import tempfile
+import threading
 import time
 import uuid
 from collections.abc import Iterator
@@ -56,8 +57,71 @@ LOCK_POLL_SECONDS = 0.05
 _FCNTL_UNSET = object()
 
 
-def _claim_reap_file(base_reap: Path, timeout_s: float, stale_seconds: float, poll_seconds: float) -> Path | None:
-    """Claims an exclusive ``.reap`` marker via ``O_EXCL``, advancing past expired ones."""
+def _is_pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        try:
+            import ctypes
+
+            kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+            handle = kernel32.OpenProcess(0x1000, False, pid)
+            if not handle:
+                get_last_error = getattr(ctypes, "GetLastError", lambda: 0)
+                return bool(get_last_error() == 5)
+            try:
+                exit_code = ctypes.c_ulong()
+                if kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+                    return bool(exit_code.value == 259)
+                return True
+            finally:
+                kernel32.CloseHandle(handle)
+        except Exception:
+            return False
+    if os.name == "posix" and hasattr(os, "kill"):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        except OSError:
+            return False
+        return True
+    return False
+
+
+def _is_token_owner_alive(raw: bytes) -> bool:
+    """True when a lock/reap marker's ``pid[:tid:uuid]`` owner is still alive."""
+    text = raw.decode("utf-8", errors="ignore").strip().splitlines()
+    if not text:
+        return False
+    parts = text[0].split(":")
+    try:
+        pid = int(parts[0])
+    except (ValueError, IndexError):
+        return False
+    if pid <= 0:
+        return False
+    if pid == os.getpid():
+        if len(parts) < 2:
+            return False
+        try:
+            tid = int(parts[1])
+        except ValueError:
+            return False
+        return any(t.ident == tid and t.is_alive() for t in threading.enumerate())
+    return _is_pid_alive(pid)
+
+
+def _claim_reap_file(
+    base_reap: Path,
+    timeout_s: float,
+    stale_seconds: float,
+    poll_seconds: float,
+    owner_token: bytes = b"",
+) -> Path | None:
+    """Claims an exclusive ``.reap`` marker via ``O_EXCL``, advancing only past dead/expired ones."""
     candidate = base_reap
     hop = 0
     claim_deadline = time.monotonic() + max(timeout_s, 0.0)
@@ -66,10 +130,15 @@ def _claim_reap_file(base_reap: Path, timeout_s: float, stale_seconds: float, po
             fd = os.open(candidate, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         except FileExistsError:
             try:
-                age = time.time() - candidate.stat().st_mtime
+                reap_st = candidate.stat()
+                reap_bytes = candidate.read_bytes()
             except OSError:
+                if time.monotonic() >= claim_deadline:
+                    return None
+                time.sleep(min(poll_seconds, 0.005))
                 continue
-            if age >= max(stale_seconds, 5.0) and hop < 3:
+            age = time.time() - reap_st.st_mtime
+            if age >= max(stale_seconds, 5.0) and hop < 3 and not _is_token_owner_alive(reap_bytes):
                 hop += 1
                 candidate = base_reap.with_name(f"{base_reap.name}.r{hop}")
                 continue
@@ -77,7 +146,19 @@ def _claim_reap_file(base_reap: Path, timeout_s: float, stale_seconds: float, po
                 return None
             time.sleep(min(poll_seconds, 0.005))
             continue
-        os.close(fd)
+        try:
+            if owner_token:
+                with os.fdopen(fd, "wb") as rf:
+                    rf.write(owner_token)
+                    rf.flush()
+            else:
+                os.close(fd)
+        except Exception:
+            with contextlib.suppress(OSError):
+                candidate.unlink()
+            raise
+        with contextlib.suppress(OSError):
+            os.utime(candidate, None)
         return candidate
 
 
@@ -117,7 +198,7 @@ def exclusive_file_lock(
     poll_s = LOCK_POLL_SECONDS if poll_seconds is None else poll_seconds
 
     excl_path = lock_path.with_name(f"{lock_path.name}.excl")
-    token_bytes = f"{os.getpid()}:{uuid.uuid4().hex}\n".encode()
+    token_bytes = f"{os.getpid()}:{threading.get_ident()}:{uuid.uuid4().hex}\n".encode()
     my_tag = hashlib.sha256(token_bytes).hexdigest()[:16]
     staging_path = lock_path.with_name(f"{lock_path.name}.tmp.{os.getpid()}.{uuid.uuid4().hex}")
     st_fd = os.open(staging_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -147,6 +228,8 @@ def exclusive_file_lock(
                 else:
                     with contextlib.suppress(OSError):
                         staging_path.unlink()
+                with contextlib.suppress(OSError):
+                    os.utime(excl_path, None)
                 acquired = True
                 break
             except FileExistsError:
@@ -156,10 +239,12 @@ def exclusive_file_lock(
                 except OSError:
                     continue  # released between calls: retry at once
                 age = time.time() - stale_st.st_mtime
-                if age >= stale_s:
+                if age >= stale_s and not _is_token_owner_alive(stale_bytes):
                     stale_tag = hashlib.sha256(stale_bytes).hexdigest()[:16]
                     base_reap = lock_path.with_name(f"{lock_path.name}.reap.{stale_tag}")
-                    claimed = _claim_reap_file(base_reap, max(deadline - time.monotonic(), 0.0), stale_s, poll_s)
+                    claimed = _claim_reap_file(
+                        base_reap, max(deadline - time.monotonic(), 0.0), stale_s, poll_s, token_bytes
+                    )
                     if claimed is None:
                         if time.monotonic() >= deadline:
                             raise TimeoutError(f"registry lock {excl_path} is held by another process") from None
@@ -176,9 +261,12 @@ def exclusive_file_lock(
                             and cur_bytes == stale_bytes
                             and (cur_st.st_ino, cur_st.st_mtime_ns) == (stale_st.st_ino, stale_st.st_mtime_ns)
                             and (time.time() - cur_st.st_mtime) >= stale_s
+                            and not _is_token_owner_alive(cur_bytes)
                         ):
                             logger.warning("Removing stale registry lock %s (%.0f s old)", excl_path, age)
                             os.replace(staging_path, excl_path)
+                            with contextlib.suppress(OSError):
+                                os.utime(excl_path, None)
                             acquired = True
                             break
                     finally:
@@ -192,7 +280,7 @@ def exclusive_file_lock(
             staging_path.unlink()
         if acquired:
             my_base_reap = lock_path.with_name(f"{lock_path.name}.reap.{my_tag}")
-            claimed_rel = _claim_reap_file(my_base_reap, max(stale_s, 5.0), stale_s, poll_s)
+            claimed_rel = _claim_reap_file(my_base_reap, max(stale_s, 5.0), stale_s, poll_s, token_bytes)
             try:
                 if claimed_rel is not None:
                     with contextlib.suppress(OSError):

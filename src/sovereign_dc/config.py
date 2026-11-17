@@ -163,13 +163,24 @@ def compute_shedding_level(
 _SHEDDING_THRESHOLD_FIELDS = tuple(name.lower() for name in SHEDDING_ENV_NAMES)
 
 
+def _current_uid() -> int | None:
+    """Current POSIX user ID, or ``None`` on platforms without ``os.getuid`` (Windows)."""
+    getuid = getattr(os, "getuid", None)
+    return int(getuid()) if callable(getuid) else None
+
+
 def _is_private_dir(path: str) -> bool:
     """True if ``path`` is a real directory (not a symlink) owned by us with mode 0700."""
     try:
         st = os.lstat(path)
     except OSError:
         return False
-    return stat.S_ISDIR(st.st_mode) and st.st_uid == os.getuid() and stat.S_IMODE(st.st_mode) == 0o700
+    if not stat.S_ISDIR(st.st_mode):
+        return False
+    uid = _current_uid()
+    if uid is None:
+        return True
+    return st.st_uid == uid and stat.S_IMODE(st.st_mode) == 0o700
 
 
 def get_state_dir() -> str:
@@ -197,14 +208,16 @@ def get_state_dir() -> str:
     if _FALLBACK_STATE_DIR is not None and _is_private_dir(_FALLBACK_STATE_DIR):
         return _FALLBACK_STATE_DIR
 
-    fallback = os.path.join(tempfile.gettempdir(), f"smdc-{os.getuid()}")
+    uid = _current_uid()
+    uid_tag = str(uid) if uid is not None else "local"
+    fallback = os.path.join(tempfile.gettempdir(), f"smdc-{uid_tag}")
     try:
         os.mkdir(fallback, 0o700)
     except OSError:
         pass  # Already exists (or cannot be created): decided by the check below.
     if not _is_private_dir(fallback):
         logger.warning("Not trusting pre-existing state directory %s; using a private temporary directory", fallback)
-        fallback = tempfile.mkdtemp(prefix=f"smdc-{os.getuid()}-")
+        fallback = tempfile.mkdtemp(prefix=f"smdc-{uid_tag}-")
     _FALLBACK_STATE_DIR = fallback
     return fallback
 
@@ -219,7 +232,12 @@ def is_trusted_legacy_file(path: str) -> bool:
         st = os.lstat(path)
     except OSError:
         return False
-    return stat.S_ISREG(st.st_mode) and st.st_uid == os.getuid() and not (st.st_mode & 0o022)
+    if not stat.S_ISREG(st.st_mode):
+        return False
+    uid = _current_uid()
+    if uid is None:
+        return True
+    return st.st_uid == uid and not (st.st_mode & 0o022)
 
 
 def _legacy_tmp_paths(filename: str) -> list[str]:

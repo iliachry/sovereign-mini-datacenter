@@ -132,15 +132,16 @@ def _state_lock() -> Iterator[None]:
     """Serialises identity creation and migration across threads and processes."""
     from sovereign_dc.enterprise.registry import exclusive_file_lock
 
-    with _THREAD_LOCK:
+    with _THREAD_LOCK, contextlib.ExitStack() as stack:
         lock_path = os.path.join(get_state_dir(), _LOCK_FILENAME)
         active_fcntl = None if (fcntl is None or sys.modules.get("fcntl", _FCNTL_UNSET) is None) else fcntl
         try:
-            with exclusive_file_lock(Path(lock_path), use_fcntl=active_fcntl):
-                yield
+            stack.enter_context(exclusive_file_lock(Path(lock_path), use_fcntl=active_fcntl))
+        except TimeoutError:
+            raise
         except OSError as err:
             logger.debug("Could not lock %s (%s); continuing with the in-process lock only", lock_path, err)
-            yield
+        yield
 
 
 def _legacy_cli_tmp_dir() -> str | None:
