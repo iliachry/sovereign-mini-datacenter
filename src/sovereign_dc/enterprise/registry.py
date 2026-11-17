@@ -162,6 +162,11 @@ def _claim_reap_file(
         return candidate
 
 
+def _is_windows_sharing_error(err: OSError) -> bool:
+    """True when ``err`` is a Windows sharing/access lock violation (winerror 5/32/33)."""
+    return getattr(err, "winerror", None) in (5, 32, 33)
+
+
 def _cleanup_reap_family(base_reap: Path) -> None:
     with contextlib.suppress(OSError):
         for marker in base_reap.parent.glob(f"{base_reap.name}*"):
@@ -241,7 +246,7 @@ def exclusive_file_lock(
                         raise TimeoutError(f"registry lock {excl_path} is held by another process") from None
                     continue  # released between calls: retry until deadline
                 except OSError as err:
-                    if os.name == "nt" and getattr(err, "winerror", None) in (5, 32, 33):
+                    if _is_windows_sharing_error(err):
                         if time.monotonic() >= deadline:
                             raise TimeoutError(f"registry lock {excl_path} is held by another process") from err
                         time.sleep(poll_s)
@@ -292,9 +297,19 @@ def exclusive_file_lock(
             claimed_rel = _claim_reap_file(my_base_reap, max(stale_s, 5.0), stale_s, poll_s, token_bytes)
             try:
                 if claimed_rel is not None:
-                    with contextlib.suppress(OSError):
-                        if excl_path.read_bytes() == token_bytes:
-                            excl_path.unlink()
+                    release_deadline = time.monotonic() + min(max(timeout_s, 1.0), max(stale_s, 5.0))
+                    while True:
+                        try:
+                            if excl_path.read_bytes() == token_bytes:
+                                excl_path.unlink()
+                            break
+                        except FileNotFoundError:
+                            break
+                        except OSError as err:
+                            if _is_windows_sharing_error(err) and time.monotonic() < release_deadline:
+                                time.sleep(min(poll_s, 0.005))
+                                continue
+                            break
             finally:
                 if claimed_rel is not None:
                     _cleanup_reap_family(my_base_reap)
@@ -332,6 +347,7 @@ class EnterpriseRegistry:
 
     def __init__(self, registry_file: Path | None = None) -> None:
         self.registry_file = registry_file or (Path.home() / ".smdc" / "enterprise_registry.json")
+        self._lock = threading.RLock()
         self._apps: dict[str, AppManifest] = {}
         self._app_paths: dict[str, Path] = {}
         # Registry entries that could not be parsed; written back verbatim on save so one
@@ -367,12 +383,13 @@ class EnterpriseRegistry:
 
         This instance's own unsaved changes are kept on top (see ``load_registry``).
         """
-        signature = self._file_signature()
-        if signature != self._loaded_signature:
-            if signature is None:
-                self._loaded_signature = None
-            else:
-                self.load_registry()
+        with self._lock:
+            signature = self._file_signature()
+            if signature != self._loaded_signature:
+                if signature is None:
+                    self._loaded_signature = None
+                else:
+                    self.load_registry()
 
     def _backup_unreadable_registry(self) -> Path | None:
         """Copies an unparseable registry file aside. Returns the backup path, or None on failure."""
@@ -492,12 +509,13 @@ class EnterpriseRegistry:
         copied to ``<name>.corrupt-<timestamp>`` before any later save may replace it; the
         instance then keeps the view it had (empty for a new instance).
         """
-        loaded = self._read_registry_file()
-        if loaded is None:
-            return
-        self._apps, self._app_paths, self._unparsed_entries = loaded
-        self._apply_pending()
-        logger.debug("Loaded %d apps from registry cache %s", len(self._apps), self.registry_file)
+        with self._lock:
+            loaded = self._read_registry_file()
+            if loaded is None:
+                return
+            self._apps, self._app_paths, self._unparsed_entries = loaded
+            self._apply_pending()
+            logger.debug("Loaded %d apps from registry cache %s", len(self._apps), self.registry_file)
 
     def save_registry(self) -> bool:
         """Merges this instance's unsaved changes into the registry file (atomic replace).
@@ -509,46 +527,50 @@ class EnterpriseRegistry:
         ``last_save_error`` says why (lock timeout, unwritable directory, unreadable file).
         """
         tmp_name: str | None = None
-        self.last_save_error = None
-        try:
-            with self._exclusive_lock():
-                self.load_registry()
-                if self._save_blocked:
-                    self.last_save_error = (
-                        f"registry file {self.registry_file} failed to parse and could not be backed up; "
-                        "repair or move the file, then retry"
+        with self._lock:
+            self.last_save_error = None
+            try:
+                with self._exclusive_lock():
+                    self.load_registry()
+                    if self._save_blocked:
+                        self.last_save_error = (
+                            f"registry file {self.registry_file} failed to parse and could not be backed up; "
+                            "repair or move the file, then retry"
+                        )
+                        logger.error("Not saving registry: %s", self.last_save_error)
+                        return False
+                    committed_ids = {id(item) for item in self._pending}
+                    apps_payload: list[Any] = []
+                    for app_id, manifest in self._apps.items():
+                        app_dict = manifest.to_dict()
+                        if app_id in self._app_paths:
+                            app_dict["manifest_path"] = str(self._app_paths[app_id])
+                        apps_payload.append(app_dict)
+                    apps_payload.extend(self._unparsed_entries)
+                    fd, tmp_name = tempfile.mkstemp(
+                        prefix=f".{self.registry_file.name}.", suffix=".tmp", dir=self.registry_file.parent
                     )
-                    logger.error("Not saving registry: %s", self.last_save_error)
-                    return False
-                apps_payload: list[Any] = []
-                for app_id, manifest in self._apps.items():
-                    app_dict = manifest.to_dict()
-                    if app_id in self._app_paths:
-                        app_dict["manifest_path"] = str(self._app_paths[app_id])
-                    apps_payload.append(app_dict)
-                apps_payload.extend(self._unparsed_entries)
-                fd, tmp_name = tempfile.mkstemp(
-                    prefix=f".{self.registry_file.name}.", suffix=".tmp", dir=self.registry_file.parent
+                    with os.fdopen(fd, "w", encoding="utf-8") as f:
+                        json.dump({"version": "1.0.0", "apps": apps_payload}, f, indent=2)
+                        f.flush()
+                        st = os.fstat(f.fileno())
+                        saved_sig = (st.st_mtime_ns, st.st_size, st.st_ino)
+                    os.replace(tmp_name, self.registry_file)
+                    tmp_name = None
+                    self._pending = [item for item in self._pending if id(item) not in committed_ids]
+                    self._loaded_signature = saved_sig
+                logger.debug("Saved %d apps to %s", len(self._apps), self.registry_file)
+                return True
+            except Exception as e:
+                self.last_save_error = (
+                    f"registry file {self.registry_file} could not be written: {e or type(e).__name__}"
                 )
-                with os.fdopen(fd, "w", encoding="utf-8") as f:
-                    json.dump({"version": "1.0.0", "apps": apps_payload}, f, indent=2)
-                    f.flush()
-                    st = os.fstat(f.fileno())
-                    saved_sig = (st.st_mtime_ns, st.st_size, st.st_ino)
-                os.replace(tmp_name, self.registry_file)
-                tmp_name = None
-                self._pending.clear()
-                self._loaded_signature = saved_sig
-            logger.debug("Saved %d apps to %s", len(self._apps), self.registry_file)
-            return True
-        except Exception as e:
-            self.last_save_error = f"registry file {self.registry_file} could not be written: {e or type(e).__name__}"
-            logger.error("Failed to save registry cache %s: %s", self.registry_file, e)
-            return False
-        finally:
-            if tmp_name is not None:
-                with contextlib.suppress(OSError):
-                    os.unlink(tmp_name)
+                logger.error("Failed to save registry cache %s: %s", self.registry_file, e)
+                return False
+            finally:
+                if tmp_name is not None:
+                    with contextlib.suppress(OSError):
+                        os.unlink(tmp_name)
 
     def discover_apps(self, search_dirs: list[Path] | None = None) -> list[AppManifest]:
         """Scan directories for `smdc-app.yaml` / `smdc-app.json` manifests.
@@ -559,18 +581,25 @@ class EnterpriseRegistry:
         dirs = search_dirs or DEFAULT_APP_DIRECTORIES
         discovered_map: dict[str, AppManifest] = {}
 
-        for d in dirs:
-            if not d.exists() or not d.is_dir():
-                continue
-            for pattern in ["smdc-app.yaml", "smdc-app.yml", "smdc-app.json", "**/smdc-app.yaml", "**/smdc-app.json"]:
-                for match in d.glob(pattern):
-                    manifest = self.load_manifest_file(match)
-                    if manifest and manifest.app_id not in discovered_map:
-                        self.register_app(manifest, manifest_path=match, persist=False)
-                        discovered_map[manifest.app_id] = manifest
+        with self._lock:
+            for d in dirs:
+                if not d.exists() or not d.is_dir():
+                    continue
+                for pattern in [
+                    "smdc-app.yaml",
+                    "smdc-app.yml",
+                    "smdc-app.json",
+                    "**/smdc-app.yaml",
+                    "**/smdc-app.json",
+                ]:
+                    for match in d.glob(pattern):
+                        manifest = self.load_manifest_file(match)
+                        if manifest and manifest.app_id not in discovered_map:
+                            self.register_app(manifest, manifest_path=match, persist=False)
+                            discovered_map[manifest.app_id] = manifest
 
-        self.save_registry()
-        return list(discovered_map.values())
+            self.save_registry()
+            return list(discovered_map.values())
 
     def load_manifest_file(self, path: Path | str) -> AppManifest | None:
         """Parse and validate a manifest file from disk (YAML or JSON)."""
@@ -612,20 +641,25 @@ class EnterpriseRegistry:
 
         path = Path(manifest_path) if manifest_path else None
         app_id = manifest.app_id
-        had_app, previous_app = app_id in self._apps, self._apps.get(app_id)
-        had_path, previous_path = app_id in self._app_paths, self._app_paths.get(app_id)
-        entry = (_SET, app_id, manifest, path)
-        self._pending.append(entry)
-        self._apps[app_id] = manifest
-        if path is not None:
-            self._app_paths[app_id] = path
+        with self._lock:
+            had_app, previous_app = app_id in self._apps, self._apps.get(app_id)
+            had_path, previous_path = app_id in self._app_paths, self._app_paths.get(app_id)
+            entry = (_SET, app_id, manifest, path)
+            self._pending.append(entry)
+            self._apps[app_id] = manifest
+            if path is not None:
+                self._app_paths[app_id] = path
 
-        if persist and not self.save_registry():
-            reason = self.last_save_error or f"registry file {self.registry_file} could not be written"
-            self._discard_pending(entry)
-            self._restore_entry(app_id, had_app, previous_app, had_path, previous_path)
-            logger.error("Not registering '%s': %s", app_id, reason)
-            return False, [f"registration was not saved: {reason}"]
+            if persist and not self.save_registry():
+                reason = self.last_save_error or f"registry file {self.registry_file} could not be written"
+                self._discard_pending(entry)
+                self._restore_entry(app_id, had_app, previous_app, had_path, previous_path)
+                saved_error = self.last_save_error
+                self._loaded_signature = None
+                self.load_registry()
+                self.last_save_error = saved_error
+                logger.error("Not registering '%s': %s", app_id, reason)
+                return False, [f"registration was not saved: {reason}"]
         logger.info("Registered enterprise application '%s' (%s)", manifest.name, app_id)
         return True, []
 
@@ -659,37 +693,45 @@ class EnterpriseRegistry:
         With ``persist``, a removal that could not be saved is taken back and reports False
         too; ``last_save_error`` then holds the reason (it is None for "not registered").
         """
-        self.last_save_error = None
-        self.load_registry()
-        if app_id in self._apps:
-            previous_app = self._apps[app_id]
-            had_path, previous_path = app_id in self._app_paths, self._app_paths.get(app_id)
-            entry: tuple[str, str, AppManifest | None, Path | None] = (_DELETE, app_id, None, None)
-            self._pending.append(entry)
-            del self._apps[app_id]
-            self._app_paths.pop(app_id, None)
-            if persist and not self.save_registry():
-                self._discard_pending(entry)
-                self._restore_entry(app_id, True, previous_app, had_path, previous_path)
-                logger.error("Not unregistering '%s': %s", app_id, self.last_save_error)
-                return False
-            logger.info("Unregistered enterprise app %s", app_id)
-            return True
+        with self._lock:
+            self.last_save_error = None
+            self.load_registry()
+            if app_id in self._apps:
+                previous_app = self._apps[app_id]
+                had_path, previous_path = app_id in self._app_paths, self._app_paths.get(app_id)
+                entry: tuple[str, str, AppManifest | None, Path | None] = (_DELETE, app_id, None, None)
+                self._pending.append(entry)
+                del self._apps[app_id]
+                self._app_paths.pop(app_id, None)
+                if persist and not self.save_registry():
+                    self._discard_pending(entry)
+                    self._restore_entry(app_id, True, previous_app, had_path, previous_path)
+                    saved_error = self.last_save_error
+                    self._loaded_signature = None
+                    self.load_registry()
+                    self.last_save_error = saved_error
+                    logger.error("Not unregistering '%s': %s", app_id, self.last_save_error)
+                    return False
+                logger.info("Unregistered enterprise app %s", app_id)
+                return True
         return False
 
     def get_app(self, app_id: str) -> AppManifest | None:
         """Retrieve manifest for a registered app by ID (re-reading the file if it changed)."""
-        self.refresh()
-        return self._apps.get(app_id)
+        with self._lock:
+            self.refresh()
+            return self._apps.get(app_id)
 
     def get_app_path(self, app_id: str) -> Path | None:
         """Get filesystem path to registered manifest."""
-        return self._app_paths.get(app_id)
+        with self._lock:
+            return self._app_paths.get(app_id)
 
     def list_apps(self) -> list[AppManifest]:
         """Return all registered application manifests (re-reading the file if it changed)."""
-        self.refresh()
-        return list(self._apps.values())
+        with self._lock:
+            self.refresh()
+            return list(self._apps.values())
 
     @staticmethod
     def _parse_yaml(content: str) -> dict[str, Any]:
