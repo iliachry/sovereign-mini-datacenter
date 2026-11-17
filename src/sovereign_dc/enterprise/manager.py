@@ -341,7 +341,7 @@ class EnterpriseManager:
         if soc is None:
             if CAUSE_SOC_FLOOR in previous:
                 causes.add(CAUSE_SOC_FLOOR)
-        elif soc < floor or (CAUSE_SOC_FLOOR in previous and soc < floor + SOC_FLOOR_HYSTERESIS_PERCENT):
+        elif soc < floor or (CAUSE_SOC_FLOOR in previous and soc < min(100.0, floor + SOC_FLOOR_HYSTERESIS_PERCENT)):
             causes.add(CAUSE_SOC_FLOOR)
         return causes
 

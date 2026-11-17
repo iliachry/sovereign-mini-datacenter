@@ -121,8 +121,33 @@ if ! is_number "$LOCK_TIMEOUT" || ! num_test "$LOCK_TIMEOUT" ">" 0; then
     exit 2
 fi
 
+current_boot_id() {
+    local b=""
+    if [[ -r /proc/sys/kernel/random/boot_id ]]; then
+        IFS= read -r b </proc/sys/kernel/random/boot_id || b=""
+        b="${b//[^A-Za-z0-9-]/}"
+    elif command -v sysctl >/dev/null 2>&1; then
+        b="$(sysctl -n kern.boottime 2>/dev/null || true)"
+        if [[ "$b" =~ sec[[:space:]]*=[[:space:]]*([0-9]+) ]]; then
+            b="mac-${BASH_REMATCH[1]}"
+        else
+            b=""
+        fi
+    elif [[ -x /usr/sbin/sysctl ]]; then
+        b="$(/usr/sbin/sysctl -n kern.boottime 2>/dev/null || true)"
+        if [[ "$b" =~ sec[[:space:]]*=[[:space:]]*([0-9]+) ]]; then
+            b="mac-${BASH_REMATCH[1]}"
+        else
+            b=""
+        fi
+    fi
+    printf '%s' "$b"
+}
+
+BOOT_ID="$(current_boot_id)"
 LOCK_FILE="${STATE_FILE}.lock"
-LOCK_TOKEN="$$.${RANDOM:-0}.${SECONDS:-0}"
+LOCK_VALUE="$$:${RANDOM:-0}.${SECONDS:-0}${BOOT_ID:+:boot=${BOOT_ID}}"
+SELF_REAP_VALUE="$$${BOOT_ID:+:boot=${BOOT_ID}}"
 LOCK_HELD=0
 REAP_CLAIM=""
 REAP_GUARD=""
@@ -132,6 +157,13 @@ extract_lock_pid() {
     pid="${raw%%:*}"
     if [[ "$pid" =~ ^[0-9]+$ && "$pid" -gt 0 ]]; then
         printf '%s' "$pid"
+    fi
+}
+
+extract_lock_boot() {
+    local raw="${1:-}"
+    if [[ "$raw" == *":boot="* ]]; then
+        printf '%s' "${raw##*:boot=}"
     fi
 }
 
@@ -154,13 +186,24 @@ process_alive() {
     esac
 }
 
+lock_value_alive() {
+    local raw="${1:-}" pid="" holder_boot=""
+    pid="$(extract_lock_pid "$raw")"
+    [[ -n "$pid" ]] || return 1
+    holder_boot="$(extract_lock_boot "$raw")"
+    if [[ -n "$holder_boot" && -n "$BOOT_ID" && "$holder_boot" != "$BOOT_ID" ]]; then
+        return 1
+    fi
+    process_alive "$pid"
+}
+
 cleanup_reap_links() {
     rm -f "${LOCK_FILE}.reap.$$" "${LOCK_FILE}.claim.$$"
-    if [[ -n "$REAP_GUARD" && "$(readlink "$REAP_GUARD" 2>/dev/null || true)" == "$$" ]]; then
+    if [[ -n "$REAP_GUARD" && "$(readlink "$REAP_GUARD" 2>/dev/null || true)" == "$SELF_REAP_VALUE" ]]; then
         rm -f "$REAP_GUARD"
     fi
     REAP_GUARD=""
-    if [[ -n "$REAP_CLAIM" && "$(readlink "$REAP_CLAIM" 2>/dev/null || true)" == "$$" ]]; then
+    if [[ -n "$REAP_CLAIM" && "$(readlink "$REAP_CLAIM" 2>/dev/null || true)" == "$SELF_REAP_VALUE" ]]; then
         rm -f "$REAP_CLAIM"
     fi
     REAP_CLAIM=""
@@ -169,7 +212,7 @@ cleanup_reap_links() {
 release_run_lock() {
     cleanup_reap_links
     if [[ "$LOCK_HELD" -eq 1 ]]; then
-        if [[ "$(readlink "$LOCK_FILE" 2>/dev/null || true)" == "$$:${LOCK_TOKEN}" ]]; then
+        if [[ "$(readlink "$LOCK_FILE" 2>/dev/null || true)" == "$LOCK_VALUE" ]]; then
             rm -f "$LOCK_FILE"
         fi
         LOCK_HELD=0
@@ -177,16 +220,16 @@ release_run_lock() {
 }
 
 try_reap_stale_lock() {
-    local holder_raw="$1" holder_tag="" tk_raw="" tk_pid=""
-    local rc_link="" rc_try=0 rc_claimed=0 prev_link="" prev_raw="" rp_raw="" rp_pid=""
-    local now_raw="" now_pid=""
+    local holder_raw="$1" holder_tag="" tk_raw=""
+    local rc_link="" rc_try=0 rc_claimed=0 prev_link="" prev_raw="" rp_raw=""
+    local now_raw=""
     holder_tag="$(sanitize_lock_tag "$holder_raw")"
 
-    if ln -s "$$" "${LOCK_FILE}.reap" 2>/dev/null; then
+    if ln -s "$SELF_REAP_VALUE" "${LOCK_FILE}.reap" 2>/dev/null; then
         REAP_CLAIM="${LOCK_FILE}.reap"
     else
         if [[ ! -L "${LOCK_FILE}.reap" && -e "${LOCK_FILE}.reap" ]]; then
-            if ln -s "$$" "${LOCK_FILE}.reap.dir.${holder_tag}" 2>/dev/null; then
+            if ln -s "$SELF_REAP_VALUE" "${LOCK_FILE}.reap.dir.${holder_tag}" 2>/dev/null; then
                 REAP_GUARD="${LOCK_FILE}.reap.dir.${holder_tag}"
                 if [[ ! -L "${LOCK_FILE}.reap" && -e "${LOCK_FILE}.reap" ]]; then
                     rm -rf "${LOCK_FILE}.reap"
@@ -196,22 +239,20 @@ try_reap_stale_lock() {
             return 1
         fi
         tk_raw="$(readlink "${LOCK_FILE}.reap" 2>/dev/null || true)"
-        tk_pid="$(extract_lock_pid "$tk_raw")"
-        if [[ -z "$tk_raw" ]] || { [[ -n "$tk_pid" ]] && process_alive "$tk_pid"; }; then
+        if [[ -z "$tk_raw" ]] || lock_value_alive "$tk_raw"; then
             return 1
         fi
         rc_link="${LOCK_FILE}.reap.guard.${holder_tag}.$(sanitize_lock_tag "$tk_raw")"
         prev_link="${LOCK_FILE}.reap"
         prev_raw="$tk_raw"
         while [[ "$rc_try" -lt 4 ]]; do
-            if ln -s "$$" "$rc_link" 2>/dev/null; then
+            if ln -s "$SELF_REAP_VALUE" "$rc_link" 2>/dev/null; then
                 REAP_GUARD="$rc_link"
                 rc_claimed=1
                 break
             fi
             rp_raw="$(readlink "$rc_link" 2>/dev/null || true)"
-            rp_pid="$(extract_lock_pid "$rp_raw")"
-            if [[ -z "$rp_raw" ]] || { [[ -n "$rp_pid" ]] && process_alive "$rp_pid"; }; then
+            if [[ -z "$rp_raw" ]] || lock_value_alive "$rp_raw"; then
                 break
             fi
             prev_link="$rc_link"
@@ -234,7 +275,7 @@ try_reap_stale_lock() {
         if [[ -L "${LOCK_FILE}.reap" && -d "${LOCK_FILE}.reap" ]]; then
             rm -f "${LOCK_FILE}.reap"
         fi
-        if ! ln -s "$$" "${LOCK_FILE}.reap.$$" 2>/dev/null ||
+        if ! ln -s "$SELF_REAP_VALUE" "${LOCK_FILE}.reap.$$" 2>/dev/null ||
             ! mv -f "${LOCK_FILE}.reap.$$" "${LOCK_FILE}.reap" 2>/dev/null; then
             cleanup_reap_links
             return 1
@@ -242,16 +283,14 @@ try_reap_stale_lock() {
         REAP_CLAIM="${LOCK_FILE}.reap"
     fi
 
-    if [[ ! -L "${LOCK_FILE}.reap" ]] || [[ "$(readlink "${LOCK_FILE}.reap" 2>/dev/null || true)" != "$$" ]]; then
+    if [[ ! -L "${LOCK_FILE}.reap" ]] || [[ "$(readlink "${LOCK_FILE}.reap" 2>/dev/null || true)" != "$SELF_REAP_VALUE" ]]; then
         cleanup_reap_links
         return 1
     fi
 
     now_raw="$(readlink "$LOCK_FILE" 2>/dev/null || true)"
-    now_pid="$(extract_lock_pid "$now_raw")"
     if [[ -n "$holder_raw" ]]; then
-        if [[ ! -L "$LOCK_FILE" ]] || [[ "$now_raw" != "$holder_raw" ]] ||
-            { [[ -n "$now_pid" ]] && process_alive "$now_pid"; }; then
+        if [[ ! -L "$LOCK_FILE" ]] || [[ "$now_raw" != "$holder_raw" ]] || lock_value_alive "$now_raw"; then
             cleanup_reap_links
             return 1
         fi
@@ -267,12 +306,12 @@ try_reap_stale_lock() {
     fi
 
     rm -f "${LOCK_FILE}.claim.$$"
-    if ! ln -s "$$:${LOCK_TOKEN}" "${LOCK_FILE}.claim.$$" 2>/dev/null ||
+    if ! ln -s "$LOCK_VALUE" "${LOCK_FILE}.claim.$$" 2>/dev/null ||
         ! mv -f "${LOCK_FILE}.claim.$$" "$LOCK_FILE" 2>/dev/null; then
         cleanup_reap_links
         return 1
     fi
-    if [[ "$(readlink "$LOCK_FILE" 2>/dev/null || true)" != "$$:${LOCK_TOKEN}" ]]; then
+    if [[ "$(readlink "$LOCK_FILE" 2>/dev/null || true)" != "$LOCK_VALUE" ]]; then
         cleanup_reap_links
         return 1
     fi
@@ -288,20 +327,19 @@ acquire_run_lock() {
     mkdir -p "$(dirname "$LOCK_FILE")"
     max_ticks="$(awk -v t="$LOCK_TIMEOUT" 'BEGIN { m = int(t / 0.05 + 0.999999); print (m < 1 ? 1 : m) }')"
     while true; do
-        if ln -s "$$:${LOCK_TOKEN}" "$LOCK_FILE" 2>/dev/null; then
+        if ln -s "$LOCK_VALUE" "$LOCK_FILE" 2>/dev/null; then
             LOCK_HELD=1
             return 0
         fi
         holder_raw="$(readlink "$LOCK_FILE" 2>/dev/null || true)"
-        holder_pid="$(extract_lock_pid "$holder_raw")"
-        if { [[ -n "$holder_raw" ]] && { [[ -z "$holder_pid" ]] || ! process_alive "$holder_pid"; }; } ||
+        if { [[ -n "$holder_raw" ]] && ! lock_value_alive "$holder_raw"; } ||
             { [[ -z "$holder_raw" ]] && [[ ! -L "$LOCK_FILE" && -e "$LOCK_FILE" ]]; }; then
             if try_reap_stale_lock "$holder_raw"; then
                 return 0
             fi
             holder_raw="$(readlink "$LOCK_FILE" 2>/dev/null || true)"
-            holder_pid="$(extract_lock_pid "$holder_raw")"
         fi
+        holder_pid="$(extract_lock_pid "$holder_raw")"
         if [[ "$waited_ticks" -ge "$max_ticks" ]]; then
             warn "Timed out after ${LOCK_TIMEOUT}s waiting for active load_shedder.sh lock (${LOCK_FILE}, PID ${holder_pid:-unknown}); no load-shedding decision made (any existing pause is held)."
             exit 0

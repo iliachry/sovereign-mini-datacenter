@@ -152,7 +152,7 @@ class PowerPolicy:
 
     - ``tier``: the shedding level from which the app is marked PAUSED (see ``PowerPriority``).
     - ``min_battery_soc``: when the event carries ``battery_soc``, the app is paused while
-      that SoC is below this value and resumed at or above it plus 2 points of hysteresis.
+      that SoC is below this value and resumed at or above it plus 2 points of hysteresis (capped at 100 %).
       Ignored for ``L0_CRITICAL``.
 
     Reserved, not enforced (validated and stored only; see ``POWER_POLICY_RESERVED_NOTICE``):

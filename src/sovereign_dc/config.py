@@ -140,10 +140,11 @@ def compute_shedding_level(
     level-N threshold (the boundary itself belongs to the lower level).
 
     With ``previous_level`` (the level decided on the previous evaluation) the level rises
-    exactly as in the plain mapping, but is left only once SoC is ``hysteresis`` points
-    above that level's threshold: with thresholds 50 / 30 / 20 / 10 and hysteresis 2, a
-    node at level 2 stays there until SoC reaches 32, so a SoC hovering around 30 does
-    not toggle the level (and with it applications) on every poll.
+    exactly as in the plain mapping, but is left only once SoC reaches ``min(100.0,
+    threshold + hysteresis)``: with thresholds 50 / 30 / 20 / 10 and hysteresis 2, a node
+    at level 2 stays there until SoC reaches 32, so a SoC hovering around 30 does not
+    toggle the level (and with it applications) on every poll, while 100 % SoC always
+    clears any level whose threshold is at or below 100 %.
     """
     level = 0
     for index, threshold in enumerate(thresholds):
@@ -152,7 +153,7 @@ def compute_shedding_level(
     if previous_level is None or hysteresis <= 0.0 or previous_level <= level:
         return level
     held = min(int(previous_level), len(thresholds))
-    while held > level and soc >= thresholds[held - 1] + hysteresis:
+    while held > level and soc >= min(100.0, thresholds[held - 1] + hysteresis):
         held -= 1
     return held
 
@@ -479,7 +480,7 @@ class SovereignConfig:
         Stateless callers (a dashboard label, a recommendation) omit ``previous_level`` and
         get the plain mapping. A caller that tracks the level over time passes the level it
         decided last: the level is then left only once SoC is ``shedding_hysteresis_soc``
-        points above its threshold (see ``compute_shedding_level``).
+        points above its threshold, capped at 100 % (see ``compute_shedding_level``).
 
         Returns:
             0 (L0 Nominal) through 4 (L4 Blackout Safe).

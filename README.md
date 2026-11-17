@@ -165,7 +165,7 @@ sovereign-mini-datacenter/
 │   ├── MANUFACTURING_GUIDE.md   # Laser cut, CNC bend, and assembly instructions
 │   └── render.jpg               # Photorealistic 3D product render
 ├── docs/                        # Interactive Three.js WebGL Digital Twin (ES Modules) & GitHub Pages
-├── tests/                       # 1433 automated unit & integration tests (92.2% coverage)
+├── tests/                       # 1437 automated unit & integration tests (92.2% coverage)
 └── .github/
     └── workflows/
         ├── ci.yml               # Complete CI pipeline + Pytest + GitHub Pages deploy
@@ -275,7 +275,7 @@ smdc deploy --all
 ### 1. 🤖 Autonomous Local AI Agents (`software/agents/`)
 * **Nextcloud Knowledge Indexer:** Worker that polls `DOCS_WATCH_DIR` every 30 s, reads plain-text files (`.md`, `.txt`, `.csv`, `.json`, `.py`, `.sh`; it does not extract text from PDF or Office documents), splits them into chunks, embeds each chunk via Ollama (`nomic-embed-text`) and stores the vectors in the Qdrant collection `sovereign_knowledge`. It defers indexing while the sentinel mode is `ECO_PRESERVATION` or `CRITICAL_SHEDDING`.
 * **GitLab Automated Code Reviewer:** Polling worker (every 60 s; there is no webhook) that lists open Merge Requests through the GitLab API, sends the first 4,000 characters of each diff to a local model (`qwen2.5-coder`) and posts one summary note per MR revision (not inline comments). Without `GITLAB_API_TOKEN` it reviews nothing.
-* **Datacenter Sentinel Copilot:** Rule-based worker (no LLM) that polls the power exporter every `SENTINEL_POLL_INTERVAL_SECONDS` (default 30), maps battery state of charge to a shedding level 0–4 (below 50 / 30 / 20 / 10 %, `SHEDDING_L1_SOC`..`SHEDDING_L4_SOC`) and to an operating mode (`NORMAL`; `SOLAR_SURPLUS_COMPUTE` at level 0 with PV power above 1000 W and SoC above 75 %; `ECO_PRESERVATION` from level 2), leaves a level only once SoC is `SHEDDING_HYSTERESIS_SOC` points (default 2) above its threshold so that a hovering SoC does not toggle it, writes that mode to the shared mode file and publishes a `load_shedding.changed` event with mode, level and SoC on the in-process event bus. Its clear-sky time-of-day estimate (not a weather forecast) is only logged. It does not schedule, throttle or stop workloads itself: the knowledge indexer reads the mode file and defers indexing, and an `EnterpriseManager` running in the same process marks apps paused by power tier (state tracking only; table in [`ENTERPRISE_ONBOARDING.md`](ENTERPRISE_ONBOARDING.md), section 3).
+* **Datacenter Sentinel Copilot:** Rule-based worker (no LLM) that polls the power exporter every `SENTINEL_POLL_INTERVAL_SECONDS` (default 30), maps battery state of charge to a shedding level 0–4 (below 50 / 30 / 20 / 10 %, `SHEDDING_L1_SOC`..`SHEDDING_L4_SOC`) and to an operating mode (`NORMAL`; `SOLAR_SURPLUS_COMPUTE` at level 0 with PV power above 1000 W and SoC above 75 %; `ECO_PRESERVATION` from level 2), leaves a level only once SoC is `SHEDDING_HYSTERESIS_SOC` points (default 2) above its threshold (capped at 100 %) so that a hovering SoC does not toggle it, writes that mode to the shared mode file and publishes a `load_shedding.changed` event with mode, level and SoC on the in-process event bus. Its clear-sky time-of-day estimate (not a weather forecast) is only logged. It does not schedule, throttle or stop workloads itself: the knowledge indexer reads the mode file and defers indexing, and an `EnterpriseManager` running in the same process marks apps paused by power tier (state tracking only; table in [`ENTERPRISE_ONBOARDING.md`](ENTERPRISE_ONBOARDING.md), section 3).
 
 ### 2. 🔌 ESP32 Microcontroller Hardware Bridge (`firmware/`)
 * C++ Arduino and ESPHome firmware reading physical **Victron VE.Direct** serial streams (checksum-validated) and **DS18B20 1-Wire** coolant temperature probes, broadcasting via HTTP `/metrics` (and MQTT in the ESPHome flavour). RS485 Modbus BMS reading is not implemented.
@@ -526,7 +526,7 @@ See [`terraform/README.md`](terraform/README.md) for full module documentation a
 ---
 
 ## 🛡️ Quality Gates & Automated Tests
-The project enforces strict automated Quality Gates covering Ruff linting, Ruff formatting, Mypy static typing, Docker Compose multi-stack integrity, and Pytest coverage with 1433 automated tests ($\ge 85\%$ strict threshold, achieving **92.2%** coverage):
+The project enforces strict automated Quality Gates covering Ruff linting, Ruff formatting, Mypy static typing, Docker Compose multi-stack integrity, and Pytest coverage with 1437 automated tests ($\ge 85\%$ strict threshold, achieving **92.2%** coverage):
 
 ```bash
 # Run all quality gates locally

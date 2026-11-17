@@ -205,10 +205,11 @@ def compute_shedding_level(
     level-N threshold (the boundary itself belongs to the lower level).
 
     With ``previous_level`` (the level decided on the previous evaluation) the level rises
-    exactly as in the plain mapping, but is left only once SoC is ``hysteresis`` points
-    above that level's threshold: with thresholds 50 / 30 / 20 / 10 and hysteresis 2, a
-    node at level 2 stays there until SoC reaches 32, so a SoC hovering around 30 does
-    not toggle the level (and with it applications) on every poll.
+    exactly as in the plain mapping, but is left only once SoC reaches ``min(100.0,
+    threshold + hysteresis)``: with thresholds 50 / 30 / 20 / 10 and hysteresis 2, a node
+    at level 2 stays there until SoC reaches 32, so a SoC hovering around 30 does not
+    toggle the level (and with it applications) on every poll, while 100 % SoC always
+    clears any level whose threshold is at or below 100 %.
     """
     level = 0
     for index, threshold in enumerate(thresholds):
@@ -217,7 +218,7 @@ def compute_shedding_level(
     if previous_level is None or hysteresis <= 0.0 or previous_level <= level:
         return level
     held = min(int(previous_level), len(thresholds))
-    while held > level and soc >= thresholds[held - 1] + hysteresis:
+    while held > level and soc >= min(100.0, thresholds[held - 1] + hysteresis):
         held -= 1
     return held
 
@@ -287,7 +288,7 @@ def shedding_level(
 
     ``thresholds`` defaults to ``SHEDDING_THRESHOLDS`` (the environment at start-up). With
     ``previous_level`` the level is left only once SoC is ``SHEDDING_HYSTERESIS`` points
-    above its threshold (``compute_shedding_level``); without it this is the plain mapping.
+    above its threshold, capped at 100 % (``compute_shedding_level``); without it this is the plain mapping.
     """
     return compute_shedding_level(
         soc, SHEDDING_THRESHOLDS if thresholds is None else thresholds, previous_level, SHEDDING_HYSTERESIS
