@@ -37,7 +37,7 @@ place:
 | The daemon has no volume named `<project>_*` for the resolved Compose project, or no database at all was dumped (every service `skipped`) | A wrong `COMPOSE_PROJECT_NAME` or the wrong host: project-scoped volumes are looked up as `<project>_<volume>`, and with the wrong name every one of them would look "not deployed". `BACKUP_ALLOW_COVERAGE_DROP=1` accepts it |
 | A dump file named in the `MANIFEST` is missing, has another size, or (container mode) another SHA-256; the Nextcloud copy has another number of files or belongs to another run | The dump directory was damaged or only partly copied after the dump |
 | Nextcloud is already in maintenance mode and this script did not switch it on | An upgrade or an administrator is at work; the script leaves it alone |
-| Another dump run holds the lock `BACKUP_DUMP_DIR/.smdc-backup.lock` | A lock whose process no longer exists is taken over with a warning |
+| Another dump run holds the lock `BACKUP_DUMP_DIR/.smdc-backup.lock` | A lock whose process no longer exists (or was written on an earlier OS boot) is taken over with a warning |
 | `BACKUP_DUMP_DIR/current` is not a symlink to `generations/<epoch>`, or the `MANIFEST` in a generation names another creation time than the generation's directory | The dump directory was rearranged by hand |
 
 One condition is only visible **after** the upload: the `MANIFEST` is fingerprinted

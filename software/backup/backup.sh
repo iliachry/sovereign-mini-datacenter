@@ -461,14 +461,21 @@ cleanup() {
             rm -rf "$LOCK_DIR"
         fi
     fi
-    if [ "${TAKEOVER_HELD:-false}" = "true" ] || [ "$(readlink "${LOCK_DIR}/.takeover" 2>/dev/null || true)" = "$$" ]; then
-        if [ -L "${LOCK_DIR}/.takeover" ] && [ "$(readlink "${LOCK_DIR}/.takeover" 2>/dev/null || true)" = "$$" ]; then
-            rm -f "${LOCK_DIR}/.takeover"
+    cl_tk="$(readlink "${LOCK_DIR}/.takeover" 2>/dev/null || true)"
+    if [ "${TAKEOVER_HELD:-false}" = "true" ] || [ "${cl_tk%%:*}" = "$$" ]; then
+        if [ -L "${LOCK_DIR}/.takeover" ]; then
+            cl_tk="$(readlink "${LOCK_DIR}/.takeover" 2>/dev/null || true)"
+            if [ "${cl_tk%%:*}" = "$$" ]; then
+                rm -f "${LOCK_DIR}/.takeover"
+            fi
         fi
     fi
     rm -f "${LOCK_DIR}/.takeover.$$"
-    if [ -n "${REAP_LINK:-}" ] && [ "$(readlink "$REAP_LINK" 2>/dev/null || true)" = "$$" ]; then
-        rm -f "$REAP_LINK"
+    if [ -n "${REAP_LINK:-}" ]; then
+        cl_rp="$(readlink "$REAP_LINK" 2>/dev/null || true)"
+        if [ "${cl_rp%%:*}" = "$$" ]; then
+            rm -f "$REAP_LINK"
+        fi
     fi
     exit "$cl_rc"
 }
@@ -478,8 +485,21 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 # One dump run at a time: two would overwrite each other's files and fight over
-# Nextcloud's maintenance mode. A lock whose process is gone is stale and is taken over.
+# Nextcloud's maintenance mode. A lock whose process is gone or from a prior OS boot
+# is stale and is taken over.
 acquire_lock() {
+    al_self_boot=""
+    if [ -r /proc/sys/kernel/random/boot_id ]; then
+        al_self_boot="$(tr -cd 'A-Za-z0-9_-' </proc/sys/kernel/random/boot_id 2>/dev/null || true)"
+    fi
+    if [ -z "$al_self_boot" ]; then
+        al_bt="$(sysctl -n kern.boottime 2>/dev/null || /usr/sbin/sysctl -n kern.boottime 2>/dev/null || true)"
+        al_self_boot="$(printf '%s' "$al_bt" | tr -cd 'A-Za-z0-9_-')"
+    fi
+    al_tk_target="$$"
+    if [ -n "$al_self_boot" ]; then
+        al_tk_target="$$:boot=${al_self_boot}"
+    fi
     mkdir -p "$DUMP_PARENT"
     chmod 700 "$DUMP_PARENT"
     if ! mkdir "$LOCK_DIR" 2>/dev/null; then
@@ -489,30 +509,73 @@ acquire_lock() {
         case "$al_pid" in
             '' | *[!0-9]*) al_pid="" ;;
         esac
-        if [ -n "$al_pid" ] && kill -0 "$al_pid" 2>/dev/null; then
+        al_boot_raw="$(cat "${LOCK_DIR}/boot" 2>/dev/null || true)"
+        al_boot=""
+        if [ -n "$al_pid" ] && [ "${al_boot_raw%%:*}" = "$al_pid" ]; then
+            al_boot="${al_boot_raw#*:}"
+        fi
+        al_stale_boot=false
+        if [ -n "$al_boot" ] && [ -n "$al_self_boot" ] && [ "$al_boot" != "$al_self_boot" ]; then
+            al_stale_boot=true
+        fi
+        al_alive=false
+        if [ "$al_stale_boot" != "true" ] && [ -n "$al_pid" ]; then
+            if al_kerr="$(kill -0 "$al_pid" 2>&1)"; then
+                al_alive=true
+            else
+                case "$al_kerr" in
+                    *[Pp]ermitted* | *[Pp]ermission* | *EPERM*) al_alive=true ;;
+                esac
+            fi
+        fi
+        if [ "$al_alive" = "true" ]; then
             err "Another backup.sh dump run (pid ${al_pid}) holds ${LOCK_DIR}. If that process is not a backup, remove the directory and retry. Nothing was backed up."
         fi
-        warn "Stale lock ${LOCK_DIR} (pid ${al_pid:-unknown} is not running): an earlier run was killed. Taking it over."
+        warn "Stale lock ${LOCK_DIR} (pid ${al_pid:-unknown} is not running or from a prior boot): an earlier run was killed. Taking it over."
         if [ "$al_has_pid" = "true" ]; then
             if [ -d "${LOCK_DIR}/.takeover" ] && [ ! -L "${LOCK_DIR}/.takeover" ]; then
                 rc_link="${LOCK_DIR}/.takeover.reap.${al_pid:-none}.dir"
                 rc_try=0
                 rc_claimed=false
                 while [ "$rc_try" -lt 3 ]; do
-                    if ln -s "$$" "$rc_link" 2>/dev/null; then
+                    if ln -s "$al_tk_target" "$rc_link" 2>/dev/null; then
                         REAP_LINK="$rc_link"
                         rc_claimed=true
                         break
                     fi
-                    rp_pid="$(readlink "$rc_link" 2>/dev/null || true)"
+                    rp_raw="$(readlink "$rc_link" 2>/dev/null || true)"
+                    case "$rp_raw" in
+                        *:boot=*)
+                            rp_pid="${rp_raw%%:boot=*}"
+                            rp_boot="${rp_raw#*:boot=}"
+                            ;;
+                        *)
+                            rp_pid="$rp_raw"
+                            rp_boot=""
+                            ;;
+                    esac
                     case "$rp_pid" in
                         '' | *[!0-9]*) rp_pid="" ;;
                     esac
-                    if [ -n "$rp_pid" ] && kill -0 "$rp_pid" 2>/dev/null; then
-                        err "Another backup.sh dump run (pid ${rp_pid}) is taking over ${LOCK_DIR}. Nothing was backed up."
-                    fi
                     if [ -z "$rp_pid" ]; then
                         err "Another backup.sh dump run is taking over ${LOCK_DIR}. Nothing was backed up."
+                    fi
+                    rp_stale_boot=false
+                    if [ -n "$rp_boot" ] && [ -n "$al_self_boot" ] && [ "$rp_boot" != "$al_self_boot" ]; then
+                        rp_stale_boot=true
+                    fi
+                    rp_alive=false
+                    if [ "$rp_stale_boot" != "true" ]; then
+                        if al_kerr="$(kill -0 "$rp_pid" 2>&1)"; then
+                            rp_alive=true
+                        else
+                            case "$al_kerr" in
+                                *[Pp]ermitted* | *[Pp]ermission* | *EPERM*) rp_alive=true ;;
+                            esac
+                        fi
+                    fi
+                    if [ "$rp_alive" = "true" ]; then
+                        err "Another backup.sh dump run (pid ${rp_pid}) is taking over ${LOCK_DIR}. Nothing was backed up."
                     fi
                     rc_link="${rc_link}.${rp_pid}"
                     rc_try=$((rc_try + 1))
@@ -520,7 +583,7 @@ acquire_lock() {
                 if [ "$rc_claimed" != "true" ]; then
                     err "Another backup.sh dump run is taking over ${LOCK_DIR}. Nothing was backed up."
                 fi
-                if [ "$(cat "${LOCK_DIR}/pid" 2>/dev/null || true)" != "$al_raw" ]; then
+                if [ "$(cat "${LOCK_DIR}/pid" 2>/dev/null || true)" != "$al_raw" ] || [ "$(cat "${LOCK_DIR}/boot" 2>/dev/null || true)" != "$al_boot_raw" ]; then
                     rm -f "$REAP_LINK"
                     REAP_LINK=""
                     err "Another backup.sh dump run holds ${LOCK_DIR}. Nothing was backed up."
@@ -531,33 +594,80 @@ acquire_lock() {
                 rm -f "$REAP_LINK"
                 REAP_LINK=""
             fi
-            if ! ln -s "$$" "${LOCK_DIR}/.takeover" 2>/dev/null; then
+            if ! ln -s "$al_tk_target" "${LOCK_DIR}/.takeover" 2>/dev/null; then
                 tk_raw="$(readlink "${LOCK_DIR}/.takeover" 2>/dev/null || true)"
-                tk_pid="$tk_raw"
+                case "$tk_raw" in
+                    *:boot=*)
+                        tk_pid="${tk_raw%%:boot=*}"
+                        tk_boot="${tk_raw#*:boot=}"
+                        ;;
+                    *)
+                        tk_pid="$tk_raw"
+                        tk_boot=""
+                        ;;
+                esac
                 case "$tk_pid" in
                     '' | *[!0-9]*) tk_pid="" ;;
                 esac
-                if [ -n "$tk_pid" ] && kill -0 "$tk_pid" 2>/dev/null; then
+                tk_stale_boot=false
+                if [ -n "$tk_boot" ] && [ -n "$al_self_boot" ] && [ "$tk_boot" != "$al_self_boot" ]; then
+                    tk_stale_boot=true
+                fi
+                tk_alive=false
+                if [ "$tk_stale_boot" != "true" ] && [ -n "$tk_pid" ]; then
+                    if al_kerr="$(kill -0 "$tk_pid" 2>&1)"; then
+                        tk_alive=true
+                    else
+                        case "$al_kerr" in
+                            *[Pp]ermitted* | *[Pp]ermission* | *EPERM*) tk_alive=true ;;
+                        esac
+                    fi
+                fi
+                if [ "$tk_alive" = "true" ]; then
                     err "Another backup.sh dump run (pid ${tk_pid}) is taking over ${LOCK_DIR}. Nothing was backed up."
                 fi
                 rc_link="${LOCK_DIR}/.takeover.reap.${al_pid:-none}.tk.${tk_pid:-none}"
                 rc_try=0
                 rc_claimed=false
                 while [ "$rc_try" -lt 3 ]; do
-                    if ln -s "$$" "$rc_link" 2>/dev/null; then
+                    if ln -s "$al_tk_target" "$rc_link" 2>/dev/null; then
                         REAP_LINK="$rc_link"
                         rc_claimed=true
                         break
                     fi
-                    rp_pid="$(readlink "$rc_link" 2>/dev/null || true)"
+                    rp_raw="$(readlink "$rc_link" 2>/dev/null || true)"
+                    case "$rp_raw" in
+                        *:boot=*)
+                            rp_pid="${rp_raw%%:boot=*}"
+                            rp_boot="${rp_raw#*:boot=}"
+                            ;;
+                        *)
+                            rp_pid="$rp_raw"
+                            rp_boot=""
+                            ;;
+                    esac
                     case "$rp_pid" in
                         '' | *[!0-9]*) rp_pid="" ;;
                     esac
-                    if [ -n "$rp_pid" ] && kill -0 "$rp_pid" 2>/dev/null; then
-                        err "Another backup.sh dump run (pid ${rp_pid}) is taking over ${LOCK_DIR}. Nothing was backed up."
-                    fi
                     if [ -z "$rp_pid" ]; then
                         err "Another backup.sh dump run is taking over ${LOCK_DIR}. Nothing was backed up."
+                    fi
+                    rp_stale_boot=false
+                    if [ -n "$rp_boot" ] && [ -n "$al_self_boot" ] && [ "$rp_boot" != "$al_self_boot" ]; then
+                        rp_stale_boot=true
+                    fi
+                    rp_alive=false
+                    if [ "$rp_stale_boot" != "true" ]; then
+                        if al_kerr="$(kill -0 "$rp_pid" 2>&1)"; then
+                            rp_alive=true
+                        else
+                            case "$al_kerr" in
+                                *[Pp]ermitted* | *[Pp]ermission* | *EPERM*) rp_alive=true ;;
+                            esac
+                        fi
+                    fi
+                    if [ "$rp_alive" = "true" ]; then
+                        err "Another backup.sh dump run (pid ${rp_pid}) is taking over ${LOCK_DIR}. Nothing was backed up."
                     fi
                     rc_link="${rc_link}.${rp_pid}"
                     rc_try=$((rc_try + 1))
@@ -565,37 +675,69 @@ acquire_lock() {
                 if [ "$rc_claimed" != "true" ]; then
                     err "Another backup.sh dump run is taking over ${LOCK_DIR}. Nothing was backed up."
                 fi
-                if [ "$(cat "${LOCK_DIR}/pid" 2>/dev/null || true)" != "$al_raw" ] || [ ! -L "${LOCK_DIR}/.takeover" ] || [ "$(readlink "${LOCK_DIR}/.takeover" 2>/dev/null || true)" != "$tk_raw" ]; then
+                if [ "$(cat "${LOCK_DIR}/pid" 2>/dev/null || true)" != "$al_raw" ] || [ "$(cat "${LOCK_DIR}/boot" 2>/dev/null || true)" != "$al_boot_raw" ] || [ ! -L "${LOCK_DIR}/.takeover" ] || [ "$(readlink "${LOCK_DIR}/.takeover" 2>/dev/null || true)" != "$tk_raw" ]; then
                     rm -f "$REAP_LINK"
                     REAP_LINK=""
                     err "Another backup.sh dump run is taking over ${LOCK_DIR}. Nothing was backed up."
                 fi
                 rm -f "${LOCK_DIR}/.takeover.$$"
-                if ! ln -s "$$" "${LOCK_DIR}/.takeover.$$" 2>/dev/null || ! mv -f "${LOCK_DIR}/.takeover.$$" "${LOCK_DIR}/.takeover" 2>/dev/null; then
+                if ! ln -s "$al_tk_target" "${LOCK_DIR}/.takeover.$$" 2>/dev/null || ! mv -f "${LOCK_DIR}/.takeover.$$" "${LOCK_DIR}/.takeover" 2>/dev/null; then
                     rm -f "${LOCK_DIR}/.takeover.$$" "$REAP_LINK"
                     REAP_LINK=""
                     err "Another backup.sh dump run is taking over ${LOCK_DIR}. Nothing was backed up."
                 fi
             fi
-            if [ ! -L "${LOCK_DIR}/.takeover" ] || [ "$(readlink "${LOCK_DIR}/.takeover" 2>/dev/null || true)" != "$$" ]; then
+            if [ ! -L "${LOCK_DIR}/.takeover" ] || [ "$(readlink "${LOCK_DIR}/.takeover" 2>/dev/null || true)" != "$al_tk_target" ]; then
                 rm -f "${LOCK_DIR}/.takeover.$$" "${REAP_LINK:-}"
                 REAP_LINK=""
                 err "Another backup.sh dump run is taking over ${LOCK_DIR}. Nothing was backed up."
             fi
             TAKEOVER_HELD=true
             al_cur="$(cat "${LOCK_DIR}/pid" 2>/dev/null || true)"
+            al_cur_boot_raw="$(cat "${LOCK_DIR}/boot" 2>/dev/null || true)"
             al_cur_pid="$al_cur"
             case "$al_cur_pid" in
                 '' | *[!0-9]*) al_cur_pid="" ;;
             esac
-            if [ "$al_cur" != "$al_raw" ] || { [ -n "$al_cur_pid" ] && kill -0 "$al_cur_pid" 2>/dev/null; }; then
+            al_cur_boot=""
+            if [ -n "$al_cur_pid" ] && [ "${al_cur_boot_raw%%:*}" = "$al_cur_pid" ]; then
+                al_cur_boot="${al_cur_boot_raw#*:}"
+            fi
+            al_cur_stale_boot=false
+            if [ -n "$al_cur_boot" ] && [ -n "$al_self_boot" ] && [ "$al_cur_boot" != "$al_self_boot" ]; then
+                al_cur_stale_boot=true
+            fi
+            al_cur_alive=false
+            if [ "$al_cur_stale_boot" != "true" ] && [ -n "$al_cur_pid" ]; then
+                if al_kerr="$(kill -0 "$al_cur_pid" 2>&1)"; then
+                    al_cur_alive=true
+                else
+                    case "$al_kerr" in
+                        *[Pp]ermitted* | *[Pp]ermission* | *EPERM*) al_cur_alive=true ;;
+                    esac
+                fi
+            fi
+            if [ "$al_cur" != "$al_raw" ] || [ "$al_cur_boot_raw" != "$al_boot_raw" ] || [ "$al_cur_alive" = "true" ]; then
                 rm -f "${LOCK_DIR}/.takeover" "${REAP_LINK:-}"
                 REAP_LINK=""
                 TAKEOVER_HELD=false
                 err "Another backup.sh dump run (pid ${al_cur_pid:-unknown}) holds ${LOCK_DIR}. Nothing was backed up."
             fi
+            if [ -n "$al_self_boot" ]; then
+                al_bt_tmp="${LOCK_DIR}/.boot.$$"
+                if ! printf '%s:%s
+' "$$" "$al_self_boot" >"$al_bt_tmp" 2>/dev/null || ! mv -f "$al_bt_tmp" "${LOCK_DIR}/boot" 2>/dev/null; then
+                    rm -f "$al_bt_tmp" "${LOCK_DIR}/.takeover" "${REAP_LINK:-}"
+                    REAP_LINK=""
+                    TAKEOVER_HELD=false
+                    err "Cannot write lock boot marker in ${LOCK_DIR}. Nothing was backed up."
+                fi
+            else
+                rm -f "${LOCK_DIR}/boot"
+            fi
             al_tmp="${LOCK_DIR}/.pid.$$"
-            if ! printf '%s\n' "$$" >"$al_tmp" 2>/dev/null || ! mv -f "$al_tmp" "${LOCK_DIR}/pid" 2>/dev/null; then
+            if ! printf '%s
+' "$$" >"$al_tmp" 2>/dev/null || ! mv -f "$al_tmp" "${LOCK_DIR}/pid" 2>/dev/null; then
                 rm -f "$al_tmp" "${LOCK_DIR}/.takeover" "${REAP_LINK:-}"
                 REAP_LINK=""
                 TAKEOVER_HELD=false
@@ -612,13 +754,22 @@ acquire_lock() {
         fi
     fi
     al_tmp="${LOCK_DIR}/.pid.$$"
-    printf '%s\n' "$$" >"$al_tmp" 2>/dev/null || err "Cannot write lock pid in ${LOCK_DIR}. Nothing was backed up."
+    printf '%s
+' "$$" >"$al_tmp" 2>/dev/null || err "Cannot write lock pid in ${LOCK_DIR}. Nothing was backed up."
     al_linked=true
     ln "$al_tmp" "${LOCK_DIR}/pid" 2>/dev/null || al_linked=false
     rm -f "$al_tmp"
     if [ "$al_linked" != "true" ] || [ "$(cat "${LOCK_DIR}/pid" 2>/dev/null || true)" != "$$" ]; then
         al_holder="$(cat "${LOCK_DIR}/pid" 2>/dev/null || true)"
         err "Another backup.sh dump run (pid ${al_holder:-unknown}) holds ${LOCK_DIR}. If that process is not a backup, remove the directory and retry. Nothing was backed up."
+    fi
+    if [ -n "$al_self_boot" ]; then
+        al_bt_tmp="${LOCK_DIR}/.boot.$$"
+        if ! printf '%s:%s
+' "$$" "$al_self_boot" >"$al_bt_tmp" 2>/dev/null || ! mv -f "$al_bt_tmp" "${LOCK_DIR}/boot" 2>/dev/null; then
+            rm -f "$al_bt_tmp" "${LOCK_DIR}/pid"
+            err "Cannot write lock boot marker in ${LOCK_DIR}. Nothing was backed up."
+        fi
     fi
     LOCK_HELD=true
 }
