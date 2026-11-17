@@ -779,67 +779,87 @@ class EnterpriseRegistry:
         category: AppCategory = AppCategory.CUSTOM,
         runtime: RuntimeType = RuntimeType.PROCESS,
         entrypoint: str = "python3 app.py",
-        gpu_required: bool = False,
-        power_tier: PowerPriority = PowerPriority.L1_STANDARD,
+        gpu_required: bool | None = None,
+        power_tier: PowerPriority | None = None,
         ports: list[int] | None = None,
     ) -> AppManifest:
         """Generate a pre-configured turnkey manifest template for a given archetype."""
+        default_tier = {
+            AppCategory.IOT: PowerPriority.L0_CRITICAL,
+            AppCategory.AI_INFERENCE: PowerPriority.L2_BACKGROUND,
+        }.get(category, PowerPriority.L1_STANDARD)
+        tier = power_tier if power_tier is not None else default_tier
+        use_gpu = (category == AppCategory.AI_INFERENCE) if gpu_required is None else bool(gpu_required)
+
         if category == AppCategory.IOT:
+            app_ports = list(ports) if ports is not None else [8081]
             resources = ResourceQuotas(
-                cpu_cores=0.5, ram_mb=256, gpu_vram_mb=0, storage_mb=512, gpu_required=False, max_power_w=8.0
+                cpu_cores=0.5,
+                ram_mb=256,
+                gpu_vram_mb=1024 if use_gpu else 0,
+                storage_mb=512,
+                gpu_required=use_gpu,
+                max_power_w=8.0,
             )
-            power = PowerPolicy(tier=PowerPriority.L0_CRITICAL, min_battery_soc=15.0, min_solar_watts=0.0)
-            network = NetworkPolicy(ports=ports or [8081], expose_wireguard=True, lora_heartbeat=True)
-            health = HealthProbe(type="http", endpoint="/health", port=8081)
+            power = PowerPolicy(tier=tier, min_battery_soc=15.0, min_solar_watts=0.0)
+            network = NetworkPolicy(ports=app_ports, expose_wireguard=True, lora_heartbeat=True)
+            health = HealthProbe(type="http", endpoint="/health", port=app_ports[0] if app_ports else 8081)
         elif category == AppCategory.AI_INFERENCE:
+            app_ports = list(ports) if ports is not None else [8000]
             resources = ResourceQuotas(
                 cpu_cores=4.0,
                 ram_mb=4096,
-                gpu_vram_mb=4096,
+                gpu_vram_mb=4096 if use_gpu else 0,
                 storage_mb=8192,
-                gpu_required=True,
+                gpu_required=use_gpu,
                 max_power_w=65.0,
             )
             power = PowerPolicy(
-                tier=power_tier if power_tier != PowerPriority.L1_STANDARD else PowerPriority.L2_BACKGROUND,
+                tier=tier,
                 min_battery_soc=45.0,
                 min_solar_watts=300.0,
             )
-            network = NetworkPolicy(ports=ports or [8000], expose_wireguard=True)
-            health = HealthProbe(type="http", endpoint="/v1/health", port=8000)
+            network = NetworkPolicy(ports=app_ports, expose_wireguard=True)
+            health = HealthProbe(type="http", endpoint="/v1/health", port=app_ports[0] if app_ports else 8000)
         elif category == AppCategory.SPATIAL_MEDIA:
+            app_ports = list(ports) if ports is not None else [8085]
             resources = ResourceQuotas(
                 cpu_cores=2.0,
                 ram_mb=2048,
-                gpu_vram_mb=2048,
+                gpu_vram_mb=0 if gpu_required is False else 2048,
                 storage_mb=4096,
-                gpu_required=gpu_required,
+                gpu_required=use_gpu,
                 max_power_w=40.0,
             )
-            power = PowerPolicy(tier=PowerPriority.L1_STANDARD, min_battery_soc=30.0)
-            network = NetworkPolicy(ports=ports or [8085], expose_wireguard=True)
-            health = HealthProbe(type="http", endpoint="/health", port=8085)
+            power = PowerPolicy(tier=tier, min_battery_soc=30.0)
+            network = NetworkPolicy(ports=app_ports, expose_wireguard=True)
+            health = HealthProbe(type="http", endpoint="/health", port=app_ports[0] if app_ports else 8085)
         elif category == AppCategory.DISTRIBUTED:
+            app_ports = list(ports) if ports is not None else [9000, 9001]
             resources = ResourceQuotas(
-                cpu_cores=2.0, ram_mb=2048, gpu_vram_mb=0, storage_mb=4096, gpu_required=False, max_power_w=20.0
+                cpu_cores=2.0,
+                ram_mb=2048,
+                gpu_vram_mb=1024 if use_gpu else 0,
+                storage_mb=4096,
+                gpu_required=use_gpu,
+                max_power_w=20.0,
             )
-            power = PowerPolicy(tier=PowerPriority.L1_STANDARD, min_battery_soc=25.0)
-            network = NetworkPolicy(
-                ports=ports or [9000, 9001], expose_wireguard=True, space_dtn_enabled=True, lora_heartbeat=True
-            )
-            health = HealthProbe(type="tcp", endpoint="localhost", port=9000)
+            power = PowerPolicy(tier=tier, min_battery_soc=25.0)
+            network = NetworkPolicy(ports=app_ports, expose_wireguard=True, space_dtn_enabled=True, lora_heartbeat=True)
+            health = HealthProbe(type="tcp", endpoint="localhost", port=app_ports[0] if app_ports else 9000)
         else:
+            app_ports = list(ports) if ports is not None else [8080]
             resources = ResourceQuotas(
                 cpu_cores=1.0,
                 ram_mb=512,
-                gpu_vram_mb=1024 if gpu_required else 0,
+                gpu_vram_mb=1024 if use_gpu else 0,
                 storage_mb=1024,
-                gpu_required=gpu_required,
+                gpu_required=use_gpu,
                 max_power_w=25.0,
             )
-            power = PowerPolicy(tier=power_tier, min_battery_soc=30.0)
-            network = NetworkPolicy(ports=ports or [8080], expose_wireguard=True)
-            health = HealthProbe(type="http", endpoint="/health", port=8080)
+            power = PowerPolicy(tier=tier, min_battery_soc=30.0)
+            network = NetworkPolicy(ports=app_ports, expose_wireguard=True)
+            health = HealthProbe(type="http", endpoint="/health", port=app_ports[0] if app_ports else 8080)
 
         return AppManifest(
             name=name,

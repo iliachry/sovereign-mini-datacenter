@@ -957,18 +957,22 @@ def tool_scaffold_enterprise_app(params: dict[str, Any]) -> dict[str, Any]:
     except ValueError:
         runtime = RuntimeType.PROCESS
 
+    raw_tier = params.get("power_tier")
     try:
-        power_tier = PowerPriority(str(params.get("power_tier", "L1_STANDARD")))
+        power_tier = None if raw_tier is None else PowerPriority(str(raw_tier))
     except ValueError:
         power_tier = PowerPriority.L1_STANDARD
+
+    raw_gpu = params.get("gpu_required")
+    gpu_required = None if raw_gpu is None else bool(raw_gpu)
 
     manifest = EnterpriseRegistry.scaffold_manifest(
         name=name,
         app_id=app_id,
         category=category,
         runtime=runtime,
-        entrypoint=str(params.get("entrypoint", "python3 app.py")),
-        gpu_required=bool(params.get("gpu_required", False)),
+        entrypoint="python3 app.py" if params.get("entrypoint") is None else str(params["entrypoint"]),
+        gpu_required=gpu_required,
         power_tier=power_tier,
     )
     errors = manifest.validate()

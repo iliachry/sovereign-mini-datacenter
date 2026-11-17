@@ -1807,10 +1807,14 @@ def cmd_app_init(args):
     except ValueError:
         runtime = RuntimeType.PROCESS
 
+    raw_tier = getattr(args, "power_tier", None)
     try:
-        power_tier = PowerPriority(args.power_tier)
+        power_tier = None if raw_tier is None else PowerPriority(raw_tier)
     except ValueError:
         power_tier = PowerPriority.L1_STANDARD
+
+    raw_gpu = getattr(args, "gpu", None)
+    gpu_required = None if raw_gpu is None else bool(raw_gpu)
 
     target_dir = Path(args.target_dir or f"./apps/{app_id}")
     manifest = EnterpriseRegistry.scaffold_manifest(
@@ -1819,7 +1823,7 @@ def cmd_app_init(args):
         category=category,
         runtime=runtime,
         entrypoint=args.entrypoint or "python3 app.py",
-        gpu_required=args.gpu,
+        gpu_required=gpu_required,
         power_tier=power_tier,
     )
 
@@ -2722,12 +2726,17 @@ def main():
         help="Execution runtime engine (default: process)",
     )
     p_app_init.add_argument("--entrypoint", type=str, help="Entrypoint execution command (e.g. 'python3 app.py')")
-    p_app_init.add_argument("--gpu", action="store_true", help="Declare GPU vRAM requirements")
+    p_app_init.add_argument(
+        "--gpu",
+        action="store_true",
+        default=None,
+        help="Declare GPU vRAM requirements",
+    )
     p_app_init.add_argument(
         "--power-tier",
         choices=["L0_CRITICAL", "L1_STANDARD", "L2_BACKGROUND", "L3_DEFERRABLE", "L4_IDLE"],
-        default="L1_STANDARD",
-        help="Power load shedding priority tier (default: L1_STANDARD)",
+        default=None,
+        help="Power load shedding priority tier (default: L0_CRITICAL for iot, L2_BACKGROUND for ai_inference, L1_STANDARD otherwise)",
     )
     p_app_init.add_argument("--target-dir", type=str, help="Target destination directory for scaffolding")
     p_app_init.add_argument(
