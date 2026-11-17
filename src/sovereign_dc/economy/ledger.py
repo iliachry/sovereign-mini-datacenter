@@ -1187,6 +1187,25 @@ class Ledger:
         else:
             logger.warning("Ledger %s: chain anchor does not match the chain head; not advancing it", self.db_path)
 
+    def anchor_chain_with_reason(self) -> tuple[bool, str]:
+        """Verifies the chain structure and (re)anchors its current head with the node identity key.
+
+        Returns ``(True, "anchored")`` on success, or ``(False, reason)`` where ``reason`` is
+        ``"invalid_chain"``, ``"empty"``, or ``"no_key"``, changing nothing on failure.
+        """
+        with self._write_transaction() as conn:
+            ok, _, count, head_tx_id, head_digest = self._check_chain(conn, None)
+            if not ok:
+                return False, "invalid_chain"
+            if count == 0:
+                return False, "empty"
+            key = _node_anchor_key()
+            if key is None:
+                return False, "no_key"
+            self._write_anchor(conn, key, count, head_tx_id, head_digest)
+        logger.info("Anchored ledger %s at transaction %d (%s)", self.db_path, count, head_tx_id[:12])
+        return True, "anchored"
+
     def anchor_chain(self) -> bool:
         """Verifies the chain structure and (re)anchors its current head with the node identity key.
 
@@ -1196,16 +1215,7 @@ class Ledger:
         replaced. Returns False, changing nothing, if the chain itself does not verify, the
         ledger is empty, or the node has no persistent identity key.
         """
-        key = _node_anchor_key()
-        if key is None:
-            return False
-        with self._write_transaction() as conn:
-            ok, _, count, head_tx_id, head_digest = self._check_chain(conn, None)
-            if not ok or count == 0:
-                return False
-            self._write_anchor(conn, key, count, head_tx_id, head_digest)
-        logger.info("Anchored ledger %s at transaction %d (%s)", self.db_path, count, head_tx_id[:12])
-        return True
+        return self.anchor_chain_with_reason()[0]
 
     def apply_signed_transaction(self, tx: Transaction) -> bool:
         """Validates and applies a signed transaction that originated on another ledger.
@@ -1388,7 +1398,7 @@ class Ledger:
             status = ANCHOR_INVALID
         return True, status, len(rows), expected_prev, digest
 
-    def _chain_report_on_conn(self, conn: sqlite3.Connection) -> tuple[bool, str]:
+    def _chain_report_on_conn(self, conn: sqlite3.Connection) -> tuple[bool, str, int]:
         began = not conn.in_transaction
         if began:
             conn.execute("BEGIN")
@@ -1396,7 +1406,7 @@ class Ledger:
             has_anchor = conn.execute("SELECT 1 FROM chain_anchor WHERE id = 1").fetchone() is not None
             # Only consult (and possibly create) the node identity key when there is an anchor to check.
             key = _node_anchor_key() if has_anchor else None
-            ok, status, _, _, _ = self._check_chain(conn, key)
+            ok, status, count, _, _ = self._check_chain(conn, key)
         finally:
             if began:
                 conn.commit()
@@ -1405,11 +1415,16 @@ class Ledger:
                 "Ledger %s carries a chain anchor but this node has no persistent identity key to check it",
                 self.db_path,
             )
-        return ok, status
+        return ok, status, count
 
-    def _chain_report(self) -> tuple[bool, str]:
+    def _chain_report(self) -> tuple[bool, str, int]:
         with self._lock, self._get_connection() as conn:
             return self._chain_report_on_conn(conn)
+
+    def chain_report(self) -> tuple[bool, str, int]:
+        """Returns ``(chain_ok, anchor_status, tx_count)`` from one consistent snapshot."""
+        ok, status, count = self._chain_report()
+        return ok and status != ANCHOR_INVALID, status, count
 
     def chain_anchor_status(self) -> str:
         """Returns the state of the head anchor: "valid", "absent", "invalid" or "unverifiable".
@@ -1459,8 +1474,8 @@ class Ledger:
           preserved.
         * Edits to the ``balances`` and ``settled_proofs`` tables, which are not re-derived here.
         """
-        ok, status = self._chain_report()
-        if not ok or status == ANCHOR_INVALID:
+        chain_ok, status, _ = self.chain_report()
+        if not chain_ok:
             return False
         return status == ANCHOR_VALID or not require_anchor
 
@@ -1494,7 +1509,7 @@ class Ledger:
             try:
                 bal_rows = conn.execute("SELECT address, balance, balance_micro, nonce FROM balances").fetchall()
                 total_transactions = int(conn.execute("SELECT COUNT(*) FROM transactions").fetchone()[0])
-                chain_ok, anchor_status = self._chain_report_on_conn(conn)
+                chain_ok, anchor_status, _ = self._chain_report_on_conn(conn)
             finally:
                 if began:
                     conn.commit()

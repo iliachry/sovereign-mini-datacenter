@@ -488,6 +488,8 @@ trap 'exit 143' TERM
 # Nextcloud's maintenance mode. A lock whose process is gone or from a prior OS boot
 # is stale and is taken over.
 acquire_lock() {
+    al_nl='
+'
     al_self_boot=""
     if [ -r /proc/sys/kernel/random/boot_id ]; then
         al_self_boot="$(tr -cd 'A-Za-z0-9_-' </proc/sys/kernel/random/boot_id 2>/dev/null || true)"
@@ -511,8 +513,29 @@ acquire_lock() {
         esac
         al_boot_raw="$(cat "${LOCK_DIR}/boot" 2>/dev/null || true)"
         al_boot=""
-        if [ -n "$al_pid" ] && [ "${al_boot_raw%%:*}" = "$al_pid" ]; then
-            al_boot="${al_boot_raw#*:}"
+        if [ -n "$al_pid" ]; then
+            al_rest="$al_boot_raw"
+            while [ -n "$al_rest" ]; do
+                case "$al_rest" in
+                    *"$al_nl"*)
+                        al_line="${al_rest%%"$al_nl"*}"
+                        al_rest="${al_rest#*"$al_nl"}"
+                        ;;
+                    *)
+                        al_line="$al_rest"
+                        al_rest=""
+                        ;;
+                esac
+                if [ "${al_line%%:*}" = "$al_pid" ]; then
+                    al_boot="${al_line#*:}"
+                fi
+            done
+            if [ -z "$al_boot" ]; then
+                al_fb="$(cat "${LOCK_DIR}/.boot.${al_pid}" 2>/dev/null || true)"
+                if [ "${al_fb%%:*}" = "$al_pid" ]; then
+                    al_boot="${al_fb#*:}"
+                fi
+            fi
         fi
         al_stale_boot=false
         if [ -n "$al_boot" ] && [ -n "$al_self_boot" ] && [ "$al_boot" != "$al_self_boot" ]; then
@@ -700,8 +723,29 @@ acquire_lock() {
                 '' | *[!0-9]*) al_cur_pid="" ;;
             esac
             al_cur_boot=""
-            if [ -n "$al_cur_pid" ] && [ "${al_cur_boot_raw%%:*}" = "$al_cur_pid" ]; then
-                al_cur_boot="${al_cur_boot_raw#*:}"
+            if [ -n "$al_cur_pid" ]; then
+                al_rest="$al_cur_boot_raw"
+                while [ -n "$al_rest" ]; do
+                    case "$al_rest" in
+                        *"$al_nl"*)
+                            al_line="${al_rest%%"$al_nl"*}"
+                            al_rest="${al_rest#*"$al_nl"}"
+                            ;;
+                        *)
+                            al_line="$al_rest"
+                            al_rest=""
+                            ;;
+                    esac
+                    if [ "${al_line%%:*}" = "$al_cur_pid" ]; then
+                        al_cur_boot="${al_line#*:}"
+                    fi
+                done
+                if [ -z "$al_cur_boot" ]; then
+                    al_fb="$(cat "${LOCK_DIR}/.boot.${al_cur_pid}" 2>/dev/null || true)"
+                    if [ "${al_fb%%:*}" = "$al_cur_pid" ]; then
+                        al_cur_boot="${al_fb#*:}"
+                    fi
+                fi
             fi
             al_cur_stale_boot=false
             if [ -n "$al_cur_boot" ] && [ -n "$al_self_boot" ] && [ "$al_cur_boot" != "$al_self_boot" ]; then
@@ -723,27 +767,38 @@ acquire_lock() {
                 TAKEOVER_HELD=false
                 err "Another backup.sh dump run (pid ${al_cur_pid:-unknown}) holds ${LOCK_DIR}. Nothing was backed up."
             fi
+            al_boot_two_line=false
             if [ -n "$al_self_boot" ]; then
                 al_bt_tmp="${LOCK_DIR}/.boot.$$"
-                if ! printf '%s:%s
-' "$$" "$al_self_boot" >"$al_bt_tmp" 2>/dev/null || ! mv -f "$al_bt_tmp" "${LOCK_DIR}/boot" 2>/dev/null; then
+                if [ -n "$al_pid" ] && [ -n "$al_boot" ] && [ "$al_pid" != "$$" ]; then
+                    al_boot_two_line=true
+                    al_bt_write_ok=true
+                    printf '%s:%s\n%s:%s\n' "$al_pid" "$al_boot" "$$" "$al_self_boot" >"$al_bt_tmp" 2>/dev/null || al_bt_write_ok=false
+                else
+                    al_bt_write_ok=true
+                    printf '%s:%s\n' "$$" "$al_self_boot" >"$al_bt_tmp" 2>/dev/null || al_bt_write_ok=false
+                fi
+                if [ "$al_bt_write_ok" != "true" ] || ! mv -f "$al_bt_tmp" "${LOCK_DIR}/boot" 2>/dev/null; then
                     rm -f "$al_bt_tmp" "${LOCK_DIR}/.takeover" "${REAP_LINK:-}"
                     REAP_LINK=""
                     TAKEOVER_HELD=false
                     err "Cannot write lock boot marker in ${LOCK_DIR}. Nothing was backed up."
                 fi
-            else
-                rm -f "${LOCK_DIR}/boot"
             fi
             al_tmp="${LOCK_DIR}/.pid.$$"
-            if ! printf '%s
-' "$$" >"$al_tmp" 2>/dev/null || ! mv -f "$al_tmp" "${LOCK_DIR}/pid" 2>/dev/null; then
+            if ! printf '%s\n' "$$" >"$al_tmp" 2>/dev/null || ! mv -f "$al_tmp" "${LOCK_DIR}/pid" 2>/dev/null; then
                 rm -f "$al_tmp" "${LOCK_DIR}/.takeover" "${REAP_LINK:-}"
                 REAP_LINK=""
                 TAKEOVER_HELD=false
                 err "Cannot write lock pid in ${LOCK_DIR}. Nothing was backed up."
             fi
-            rm -f "${LOCK_DIR}/.takeover" "${LOCK_DIR}"/.takeover.reap.*
+            if [ -n "$al_self_boot" ] && [ "$al_boot_two_line" = "true" ]; then
+                al_bt_tmp="${LOCK_DIR}/.boot.$$"
+                printf '%s:%s\n' "$$" "$al_self_boot" >"$al_bt_tmp" 2>/dev/null && mv -f "$al_bt_tmp" "${LOCK_DIR}/boot" 2>/dev/null || rm -f "$al_bt_tmp"
+            elif [ -z "$al_self_boot" ]; then
+                rm -f "${LOCK_DIR}/boot"
+            fi
+            rm -f "${LOCK_DIR}/.takeover" "${LOCK_DIR}"/.takeover.reap.* "${LOCK_DIR}"/.boot.*
             REAP_LINK=""
             TAKEOVER_HELD=false
             LOCK_HELD=true
@@ -753,20 +808,29 @@ acquire_lock() {
             mkdir "$LOCK_DIR" || err "Cannot create ${LOCK_DIR}. Nothing was backed up."
         fi
     fi
+    al_bt_tmp=""
+    if [ -n "$al_self_boot" ]; then
+        al_bt_tmp="${LOCK_DIR}/.boot.$$"
+        printf '%s:%s\n' "$$" "$al_self_boot" >"$al_bt_tmp" 2>/dev/null || {
+            rm -f "$al_bt_tmp"
+            err "Cannot write lock boot marker in ${LOCK_DIR}. Nothing was backed up."
+        }
+    fi
     al_tmp="${LOCK_DIR}/.pid.$$"
-    printf '%s
-' "$$" >"$al_tmp" 2>/dev/null || err "Cannot write lock pid in ${LOCK_DIR}. Nothing was backed up."
+    printf '%s\n' "$$" >"$al_tmp" 2>/dev/null || {
+        rm -f "$al_tmp" "$al_bt_tmp"
+        err "Cannot write lock pid in ${LOCK_DIR}. Nothing was backed up."
+    }
     al_linked=true
     ln "$al_tmp" "${LOCK_DIR}/pid" 2>/dev/null || al_linked=false
     rm -f "$al_tmp"
     if [ "$al_linked" != "true" ] || [ "$(cat "${LOCK_DIR}/pid" 2>/dev/null || true)" != "$$" ]; then
+        rm -f "$al_bt_tmp"
         al_holder="$(cat "${LOCK_DIR}/pid" 2>/dev/null || true)"
         err "Another backup.sh dump run (pid ${al_holder:-unknown}) holds ${LOCK_DIR}. If that process is not a backup, remove the directory and retry. Nothing was backed up."
     fi
     if [ -n "$al_self_boot" ]; then
-        al_bt_tmp="${LOCK_DIR}/.boot.$$"
-        if ! printf '%s:%s
-' "$$" "$al_self_boot" >"$al_bt_tmp" 2>/dev/null || ! mv -f "$al_bt_tmp" "${LOCK_DIR}/boot" 2>/dev/null; then
+        if ! mv -f "$al_bt_tmp" "${LOCK_DIR}/boot" 2>/dev/null; then
             rm -f "$al_bt_tmp" "${LOCK_DIR}/pid"
             err "Cannot write lock boot marker in ${LOCK_DIR}. Nothing was backed up."
         fi
