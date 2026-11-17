@@ -125,7 +125,8 @@ container_status() {
     out="$(docker inspect --format '{{.State.Status}}' "$1" 2>"$err")" || rc=$?
     if [[ "$rc" -eq 0 && -n "$out" ]]; then
         printf '%s' "$out"
-    elif [[ "$rc" -ne 0 ]] && grep -qi 'no such' "$err"; then
+    elif [[ "$rc" -ne 0 ]] && grep -qiE 'no such (container|object)' "$err" &&
+        ! grep -qiE 'cannot connect|failed to connect|dial unix' "$err"; then
         printf 'absent'
     else
         printf 'unknown'

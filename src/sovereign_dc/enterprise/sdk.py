@@ -201,6 +201,14 @@ class SMDCClient:
         for flat_key, nested_key in (("coolant_temp_c", "coolant_celsius"), ("ambient_temp_c", "rack_inlet_celsius")):
             flat[flat_key] = _finite_or_none(thermal.get(nested_key))
         flat["power_state"] = "LOAD_SHEDDING" if power.get("load_shedding_active") else "NOMINAL"
+        p_sim = power.get("is_simulated")
+        t_sim = thermal.get("is_simulated")
+        if p_sim is not None or t_sim is not None:
+            flat["is_simulated"] = bool(p_sim or t_sim)
+            if p_sim is not None:
+                flat["power_is_simulated"] = bool(p_sim)
+            if t_sim is not None:
+                flat["thermal_is_simulated"] = bool(t_sim)
         flat["source"] = "api"
         return flat
 
@@ -249,7 +257,9 @@ class SMDCClient:
                 "ambient_temp_c": thermal.rack_inlet_celsius,
                 "power_state": "LOAD_SHEDDING" if power.load_shedding_active else "NOMINAL",
                 "source": "hal",
-                "is_simulated": bool(power.is_simulated),
+                "is_simulated": bool(power.is_simulated or thermal.is_simulated),
+                "power_is_simulated": bool(power.is_simulated),
+                "thermal_is_simulated": bool(thermal.is_simulated),
             }
         except Exception as e:
             logger.warning("SMDC telemetry unavailable (API unreachable, HAL read failed: %s)", e)
@@ -415,9 +425,11 @@ class SMDCClient:
                     source = str(telemetry.get("source") or "unavailable")
                 if source != "unavailable":
                     nested_power = telemetry.get("power")
-                    simulated = telemetry.get("is_simulated")
+                    simulated = telemetry.get("power_is_simulated")
                     if simulated is None and isinstance(nested_power, dict):
                         simulated = nested_power.get("is_simulated")
+                    if simulated is None:
+                        simulated = telemetry.get("is_simulated")
                     inputs["is_simulated"] = bool(simulated) if simulated is not None else None
                     if soc is None:
                         inputs["battery_soc"] = _finite_or_none(telemetry.get("battery_soc"))
