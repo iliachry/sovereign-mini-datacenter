@@ -43,6 +43,9 @@ _SUPPORTED_HASH_VERSIONS = (HASH_VERSION_LEGACY, HASH_VERSION_CURRENT)
 PRIVILEGED_SENDERS = frozenset({"GENESIS", "SYSTEM", "MINT"})
 
 _HEX64 = re.compile(r"[0-9a-f]{64}")
+PROMISE_VERSION_CURRENT = "smdc-promise-v2"
+_LEGACY_PROMISE_CHANNEL_ID_RE = re.compile(r"[A-Za-z0-9._-]+")
+_LEGACY_PROMISE_ISO_TS_RE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})?")
 # Unit of account: one micro-credit (0.000001 credits). Balances are stored and updated as
 # integer micro-credits (``balances.balance_micro``); floats only appear at the API and in the
 # REAL ``balance`` column that is kept in step for readers from older releases.
@@ -447,6 +450,8 @@ class StateChannel:
         sequence: int = 0,
         transferred_amount: float = 0.0,
     ) -> None:
+        if not isinstance(channel_id, str) or not channel_id:
+            raise ValueError("State channel channel_id must be a non-empty string")
         if not _is_real_number(deposit_amount) or not math.isfinite(deposit_amount) or deposit_amount <= 0:
             raise ValueError("State channel deposit_amount must be strictly positive")
         if not _is_real_number(transferred_amount) or not math.isfinite(transferred_amount) or transferred_amount < 0:
@@ -471,7 +476,22 @@ class StateChannel:
 
     @staticmethod
     def _promise_payload(channel_id: str, sequence: int, amount_micro: int, timestamp: str) -> bytes:
-        """The signed bytes of a promise for ``amount_micro`` micro-credits."""
+        """Canonical versioned signed bytes of a promise for ``amount_micro`` micro-credits."""
+        return json.dumps(
+            [PROMISE_VERSION_CURRENT, channel_id, sequence, _micro_text(amount_micro), timestamp],
+            separators=(",", ":"),
+            ensure_ascii=True,
+        ).encode("utf-8")
+
+    @staticmethod
+    def _legacy_v1_promise_payload(channel_id: str, sequence: int, amount_micro: int, timestamp: str) -> bytes | None:
+        """Unambiguous legacy v1 payload, or None when fields could cross-splice at ':'."""
+        if not _LEGACY_PROMISE_CHANNEL_ID_RE.fullmatch(channel_id):
+            return None
+        if sequence < 1 or amount_micro <= 0:
+            return None
+        if not _LEGACY_PROMISE_ISO_TS_RE.fullmatch(timestamp):
+            return None
         return f"{channel_id}:{sequence}:{_micro_text(amount_micro)}:{timestamp}".encode()
 
     def stream_micropayment(self, amount: float, wallet: NodeWallet) -> StateChannelPromise:
@@ -532,16 +552,33 @@ class StateChannel:
             return False
         if amount_micro < self._last_verified_micro:
             return False
+        if not isinstance(promise.channel_id, str) or not isinstance(promise.timestamp, str) or not promise.timestamp:
+            return False
+        try:
+            promise.channel_id.encode("utf-8")
+            promise.timestamp.encode("utf-8")
+        except UnicodeEncodeError:
+            return False
         if not NodeWallet.public_key_matches_address(sender_public_key_hex, self.sender_address, algorithm):
             return False
         payload = self._promise_payload(promise.channel_id, promise.sequence, amount_micro, promise.timestamp)
-        if not NodeWallet.verify_signature(
+        verified = NodeWallet.verify_signature(
             payload=payload,
             signature_hex=promise.signature,
             public_key_hex=sender_public_key_hex,
             algorithm=algorithm,
-        ):
-            return False
+        )
+        if not verified:
+            legacy_payload = self._legacy_v1_promise_payload(
+                promise.channel_id, promise.sequence, amount_micro, promise.timestamp
+            )
+            if legacy_payload is None or not NodeWallet.verify_signature(
+                payload=legacy_payload,
+                signature_hex=promise.signature,
+                public_key_hex=sender_public_key_hex,
+                algorithm=algorithm,
+            ):
+                return False
         self.last_verified_sequence = promise.sequence
         # The signature covers exactly these micro-credits.
         self._last_verified_micro = amount_micro

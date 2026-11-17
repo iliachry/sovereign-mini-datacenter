@@ -63,7 +63,7 @@ pie title "SAM Breakdown by Target Vertical ($6.4B)"
 
 | Vertical | Pain Point Solved | Value Proposition & Buying Trigger | Typical Deal Size |
 | :--- | :--- | :--- | :--- |
-| **🛡️ Tactical Defense & Dual-Use** | Battlefield communication denial, cloud interception risk, harsh forward operating bases (FOB). | Air-gapped local LLM copilot, LoRa Meshtastic emergency fallback, Space DTN orbital relay, zero thermal runaway (LiFePO4). | \$150k – \$2.5M (Swarm kits) |
+| **🛡️ Tactical Defense & Dual-Use** | Battlefield communication denial, cloud interception risk, harsh forward operating bases (FOB). | Air-gapped local LLM copilot, LoRa Meshtastic emergency fallback, Space DTN orbital relay, high thermal-stability LiFePO4 storage (substantially higher thermal-runaway onset temperature than NMC/NCA cells). | \$150k – \$2.5M (Swarm kits) |
 | **⚡ Remote Energy & Mining** | Zero fiber connectivity at remote solar farms, offshore wind turbines, and open-pit mines. | Autonomous predictive maintenance AI, satellite burst sync, solar-first power with battery load shedding. | \$75k – \$500k |
 | **🚢 Maritime & Offshore** | Satellite bandwidth costs (\$10k+/mo), high latency for maritime AI processing. | On-premise oceanographic telemetry indexing, burst satellite DTN sync during contact passes, salt-resistant aluminum rack. | \$50k – \$300k |
 | **🏛️ Sovereign Embassies & Family Offices** | Subpoena risk via CLOUD Act, espionage, power grid instability in unstable regions. | 100% sovereign data residency, local password vault (Vaultwarden), offline-capable private Git/Nextcloud, post-quantum signatures on software packages (post-quantum encryption of links is planned). | \$35k – \$200k |
@@ -217,7 +217,7 @@ Slide 06: Unit Economics ───── 67.8% 3-Year TCO Savings ($81.3k saved 
                                $12k-capex cloud + diesel alternative of the TCO table; the website
                                calculator's $2,500/mo cloud-only default gives 13.0 mo)
 Slide 07: Business Model ───── Turnkey Hardware ($31.5k) + Sovereign SaaS ($199/node/mo)
-Slide 08: Traction & Code ──── 1425 Automated Tests, 92.1% Coverage, Ready-to-Deploy Stacks
+Slide 08: Traction & Code ──── 1431 Automated Tests, 92.2% Coverage, Ready-to-Deploy Stacks
 Slide 09: Technology Moat ──── Space DTN (RFC 9171), Energy Load-Shedder, PQC Signatures
 Slide 10: Financials ───────── $1.78M Y1 -> $23.95M Y3 -> $161.25M Y5 (4.7% EBITDA in Y5, scenario)
 Slide 11: Team & Advisory ──── Metatopia Studio: DeepTech Systems, AI & Embedded Engineers

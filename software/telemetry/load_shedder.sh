@@ -42,6 +42,8 @@
 #   LOAD_SHED_CONTAINER    container name (default sovereign_ollama)
 #   LOAD_SHED_STATE_FILE   marker written while this script holds the pause
 #                          (default ${XDG_STATE_HOME:-$HOME/.local/state}/sovereign-dc/load_shedder.paused)
+#   LOAD_SHED_LOCK_TIMEOUT seconds to wait for an overlapping LOAD_SHED_ACTION=pause
+#                          run before skipping (default 30)
 #   SHEDDING_L3_SOC        SoC % below which the soc cause is raised (default 20)
 #   SHEDDING_L1_SOC        SoC % at or above which it is over        (default 50)
 #   SHEDDING_L2_SOC, SHEDDING_L4_SOC  (defaults 30, 10) are not used for a
@@ -76,6 +78,7 @@ METRICS_URL="${TELEMETRY_METRICS_URL:-http://localhost:9101/metrics}"
 ACTION="${LOAD_SHED_ACTION:-log}"
 CONTAINER="${LOAD_SHED_CONTAINER:-sovereign_ollama}"
 STATE_FILE="${LOAD_SHED_STATE_FILE:-${XDG_STATE_HOME:-${HOME:-/var/lib}/.local/state}/sovereign-dc/load_shedder.paused}"
+LOCK_TIMEOUT="${LOAD_SHED_LOCK_TIMEOUT:-30}"
 SOC_THRESHOLD_LOW="${SHEDDING_L3_SOC:-20}"
 SOC_THRESHOLD_NORMAL="${SHEDDING_L1_SOC:-50}"
 SOC_THRESHOLD_L2="${SHEDDING_L2_SOC:-30}"
@@ -112,6 +115,73 @@ if ! is_number "$SOC_THRESHOLD_NORMAL" || ! is_number "$SOC_THRESHOLD_L2" ||
     warn "SHEDDING_L1_SOC ('${SOC_THRESHOLD_NORMAL}'), SHEDDING_L2_SOC ('${SOC_THRESHOLD_L2}'), SHEDDING_L3_SOC ('${SOC_THRESHOLD_LOW}') and SHEDDING_L4_SOC ('${SOC_THRESHOLD_L4}') must be numbers within 0-100 with SHEDDING_L1_SOC > SHEDDING_L2_SOC > SHEDDING_L3_SOC > SHEDDING_L4_SOC; no load-shedding decision made."
     exit 2
 fi
+
+if ! is_number "$LOCK_TIMEOUT" || ! num_test "$LOCK_TIMEOUT" ">" 0; then
+    warn "LOAD_SHED_LOCK_TIMEOUT ('${LOCK_TIMEOUT}') must be a positive number; no load-shedding decision made."
+    exit 2
+fi
+
+LOCK_FILE="${STATE_FILE}.lock"
+LOCK_HELD=0
+
+process_alive() {
+    local pid="$1" err=""
+    [[ "$pid" =~ ^[0-9]+$ && "$pid" -gt 0 ]] || return 1
+    if kill -0 "$pid" 2>/dev/null; then
+        return 0
+    fi
+    err="$(kill -0 "$pid" 2>&1 || true)"
+    case "$err" in
+        *"not permitted"* | *"Not permitted"* | *"EPERM"*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+release_run_lock() {
+    if [[ "$LOCK_HELD" -eq 1 ]]; then
+        if [[ "$(readlink "$LOCK_FILE" 2>/dev/null || true)" == "$$" ]]; then
+            rm -f "$LOCK_FILE"
+        fi
+        LOCK_HELD=0
+    fi
+}
+
+acquire_run_lock() {
+    local max_ticks waited_ticks=0 holder_pid="" reap_pid="" now_pid=""
+    mkdir -p "$(dirname "$LOCK_FILE")"
+    max_ticks="$(awk -v t="$LOCK_TIMEOUT" 'BEGIN { m = int(t / 0.05 + 0.999999); print (m < 1 ? 1 : m) }')"
+    while true; do
+        if ln -s "$$" "$LOCK_FILE" 2>/dev/null; then
+            LOCK_HELD=1
+            return 0
+        fi
+        holder_pid="$(readlink "$LOCK_FILE" 2>/dev/null || true)"
+        if [[ -z "$holder_pid" ]] || ! process_alive "$holder_pid"; then
+            if [[ -L "${LOCK_FILE}.reap" ]]; then
+                reap_pid="$(readlink "${LOCK_FILE}.reap" 2>/dev/null || true)"
+                if [[ -n "$reap_pid" ]] && ! process_alive "$reap_pid"; then
+                    rm -f "${LOCK_FILE}.reap"
+                fi
+            fi
+            if ln -s "$$" "${LOCK_FILE}.reap" 2>/dev/null; then
+                now_pid="$(readlink "$LOCK_FILE" 2>/dev/null || true)"
+                if [[ -n "$now_pid" && "$now_pid" == "$holder_pid" ]] && ! process_alive "$now_pid"; then
+                    rm -rf "$LOCK_FILE"
+                elif [[ -z "$now_pid" && -e "$LOCK_FILE" && ! -L "$LOCK_FILE" ]]; then
+                    rm -rf "$LOCK_FILE"
+                fi
+                rm -f "${LOCK_FILE}.reap"
+                continue
+            fi
+        fi
+        if [[ "$waited_ticks" -ge "$max_ticks" ]]; then
+            warn "Timed out after ${LOCK_TIMEOUT}s waiting for active load_shedder.sh lock (${LOCK_FILE}, PID ${holder_pid:-unknown}); no load-shedding decision made (any existing pause is held)."
+            exit 0
+        fi
+        sleep 0.05
+        waited_ticks=$((waited_ticks + 1))
+    done
+}
 
 # Docker state of the container. Read-only. Prints exactly one word:
 #   running | paused | exited | ...  the daemon's State.Status
@@ -293,6 +363,14 @@ maybe_resume() {
     fi
     rm -f "$STATE_FILE"
 }
+
+# -- Serialize pause-mode runs across telemetry, marker and docker ------
+if [[ "$ACTION" == "pause" ]]; then
+    trap release_run_lock EXIT
+    trap 'release_run_lock; exit 130' INT
+    trap 'release_run_lock; exit 143' TERM
+    acquire_run_lock
+fi
 
 # -- Fetch metrics ------------------------------------------------------
 if ! metrics=$(curl -s --connect-timeout 5 "$METRICS_URL"); then

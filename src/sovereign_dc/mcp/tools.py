@@ -157,9 +157,11 @@ def tool_set_load_shedding(params: dict[str, Any]) -> dict[str, Any]:
     """Publishes a load-shedding level change on the in-process event bus.
 
     This does not actuate hardware (no PDU, GPU or TDP control is driven from here): the
-    only effect is the ``load_shedding.changed`` event, to which the EnterpriseManager
-    reacts by pausing/resuming tracked apps by power tier (``schema.SHED_PAUSE_LEVEL``).
-    ``description`` and ``paused_tiers`` state that implemented effect;
+    only effect is the ``load_shedding.changed`` event carrying ``level`` and ``mode``
+    (no ``battery_soc`` reading), to which the EnterpriseManager reacts by pausing/resuming
+    tracked apps by power tier (``schema.SHED_PAUSE_LEVEL``); apps held paused by their
+    ``min_battery_soc`` floor stay paused until an event carrying ``battery_soc`` clears
+    that cause. ``description`` and ``paused_tiers`` state that implemented effect;
     ``design_targets_not_implemented`` lists the hardware actions the design foresees.
     """
     from sovereign_dc.enterprise.schema import SHED_PAUSE_LEVEL
@@ -178,12 +180,18 @@ def tool_set_load_shedding(params: dict[str, Any]) -> dict[str, Any]:
     paused_tiers = sorted(tier.value for tier, pause_level in SHED_PAUSE_LEVEL.items() if numeric_level >= pause_level)
     if paused_tiers:
         description = (
-            f"Tracked enterprise apps of power tier {', '.join(paused_tiers)} are marked paused; "
-            "L0_CRITICAL apps and all other tiers keep running. Apps paused for shedding are resumed "
-            "when the level falls below the one that pauses their tier."
+            f"Tracked running enterprise apps of power tier {', '.join(paused_tiers)} are marked paused; "
+            "L0_CRITICAL apps and running apps of other tiers keep running. Apps paused solely by tier "
+            "shedding are resumed when the level falls below the one that pauses their tier; because "
+            "this event carries no battery_soc reading, any app held paused by its min_battery_soc floor "
+            "(and any operator-paused app) stays paused."
         )
     else:
-        description = "No power tier is paused; apps paused for shedding are resumed."
+        description = (
+            "No power tier is paused; apps paused solely by tier shedding are resumed. Because this "
+            "event carries no battery_soc reading, any app held paused by its min_battery_soc floor "
+            "(and any operator-paused app) stays paused."
+        )
     # Hardware actions the design foresees per level. None of them is driven by this tool
     # or by any other code path of this release.
     design_targets = {
@@ -620,9 +628,11 @@ def get_mcp_tools() -> list[MCPTool]:
             name="set_load_shedding",
             description=(
                 "Publish a load-shedding level change (L0 nominal ... L4 emergency) on the node event bus. The "
-                "enterprise manager then marks tracked apps paused by power tier (L1: L4_IDLE; L2: also "
+                "enterprise manager then marks tracked running apps paused by power tier (L1: L4_IDLE; L2: also "
                 "L3_DEFERRABLE; L3: also L2_BACKGROUND; L4: also L1_STANDARD; L0_CRITICAL never) and resumes "
-                "them as the level falls. Does not actuate hardware."
+                "apps paused solely by tier shedding as the level falls (the published event carries no "
+                "battery_soc reading, so apps held paused by min_battery_soc stay paused until a battery_soc "
+                "reading clears them). Does not actuate hardware."
             ),
             input_schema={
                 "type": "object",
