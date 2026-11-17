@@ -1422,9 +1422,8 @@ class Ledger:
             return self._chain_report_on_conn(conn)
 
     def chain_report(self) -> tuple[bool, str, int]:
-        """Returns ``(chain_ok, anchor_status, tx_count)`` from one consistent snapshot."""
-        ok, status, count = self._chain_report()
-        return ok and status != ANCHOR_INVALID, status, count
+        """Returns ``(links_ok, anchor_status, tx_count)`` from one consistent snapshot."""
+        return self._chain_report()
 
     def chain_anchor_status(self) -> str:
         """Returns the state of the head anchor: "valid", "absent", "invalid" or "unverifiable".
@@ -1474,8 +1473,8 @@ class Ledger:
           preserved.
         * Edits to the ``balances`` and ``settled_proofs`` tables, which are not re-derived here.
         """
-        chain_ok, status, _ = self.chain_report()
-        if not chain_ok:
+        links_ok, status, _ = self.chain_report()
+        if not links_ok or status == ANCHOR_INVALID:
             return False
         return status == ANCHOR_VALID or not require_anchor
 

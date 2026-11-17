@@ -146,6 +146,7 @@ current_boot_id() {
 
 BOOT_ID="$(current_boot_id)"
 LOCK_FILE="${STATE_FILE}.lock"
+PENDING_FILE="${STATE_FILE}.pending"
 LOCK_VALUE="$$:${RANDOM:-0}.${SECONDS:-0}${BOOT_ID:+:boot=${BOOT_ID}}"
 SELF_REAP_VALUE="$$${BOOT_ID:+:boot=${BOOT_ID}}"
 LOCK_HELD=0
@@ -375,46 +376,62 @@ marker_container=""
 marker_soc=0
 marker_thermal=0
 
-read_marker() {
-    marker_container=""
-    marker_soc=0
-    marker_thermal=0
-    [[ -f "$STATE_FILE" ]] || return 0
-    local line seen_key=0
+parsed_container=""
+parsed_soc=0
+parsed_thermal=0
+
+read_marker_file() {
+    local path="$1" line seen_key=0
+    parsed_container=""
+    parsed_soc=0
+    parsed_thermal=0
+    [[ -f "$path" ]] || return 0
     while IFS= read -r line || [[ -n "$line" ]]; do
         case "$line" in
-            container=*) marker_container="${line#container=}"; seen_key=1 ;;
-            cause=soc) marker_soc=1; seen_key=1 ;;
-            cause=thermal) marker_thermal=1; seen_key=1 ;;
+            container=*) parsed_container="${line#container=}"; seen_key=1 ;;
+            cause=soc) parsed_soc=1; seen_key=1 ;;
+            cause=thermal) parsed_thermal=1; seen_key=1 ;;
             "") ;;
             *)
                 # Legacy marker: the first line is the bare container name.
-                if [[ "$seen_key" -eq 0 && -z "$marker_container" ]]; then
-                    marker_container="$line"
+                if [[ "$seen_key" -eq 0 && -z "$parsed_container" ]]; then
+                    parsed_container="$line"
                 fi
                 ;;
         esac
-    done <"$STATE_FILE"
-    [[ -n "$marker_container" ]] || marker_container="$CONTAINER"
+    done <"$path"
+    [[ -n "$parsed_container" ]] || parsed_container="$CONTAINER"
     # No recorded cause (legacy or damaged marker): assume both.
-    if [[ "$marker_soc" -eq 0 && "$marker_thermal" -eq 0 ]]; then
-        marker_soc=1
-        marker_thermal=1
+    if [[ "$parsed_soc" -eq 0 && "$parsed_thermal" -eq 0 ]]; then
+        parsed_soc=1
+        parsed_thermal=1
     fi
+}
+
+read_marker() {
+    read_marker_file "$STATE_FILE"
+    marker_container="$parsed_container"
+    marker_soc="$parsed_soc"
+    marker_thermal="$parsed_thermal"
+}
+
+# write_marker_file <path> <container> <soc 0|1> <thermal 0|1>  (atomic replace)
+write_marker_file() {
+    local path="$1" container="$2" w_soc="$3" w_thermal="$4" dir tmp
+    dir="$(dirname "$path")"
+    mkdir -p "$dir"
+    tmp="${path}.tmp.$$"
+    {
+        printf 'container=%s\n' "$container"
+        if [[ "$w_soc" -eq 1 ]]; then printf 'cause=soc\n'; fi
+        if [[ "$w_thermal" -eq 1 ]]; then printf 'cause=thermal\n'; fi
+    } >"$tmp"
+    mv -f "$tmp" "$path"
 }
 
 # write_marker <container> <soc 0|1> <thermal 0|1>  (atomic replace)
 write_marker() {
-    local dir tmp
-    dir="$(dirname "$STATE_FILE")"
-    mkdir -p "$dir"
-    tmp="${STATE_FILE}.tmp.$$"
-    {
-        printf 'container=%s\n' "$1"
-        if [[ "$2" -eq 1 ]]; then printf 'cause=soc\n'; fi
-        if [[ "$3" -eq 1 ]]; then printf 'cause=thermal\n'; fi
-    } >"$tmp"
-    mv -f "$tmp" "$STATE_FILE"
+    write_marker_file "$STATE_FILE" "$1" "$2" "$3"
 }
 
 causes_text() { # causes_text <soc 0|1> <thermal 0|1>
@@ -424,12 +441,54 @@ causes_text() { # causes_text <soc 0|1> <thermal 0|1>
     printf '%s' "${out:-none}"
 }
 
+# Reconcile an interrupted pre-pause intent written before `docker pause`.
+reconcile_pending_pause() {
+    [[ -f "$PENDING_FILE" ]] || return 0
+    read_marker_file "$PENDING_FILE"
+    local pend_container="$parsed_container" pend_soc="$parsed_soc" pend_thermal="$parsed_thermal"
+    if [[ -f "$STATE_FILE" ]]; then
+        read_marker
+        if [[ "$marker_container" == "$pend_container" ]]; then
+            local merged_soc=$((marker_soc | pend_soc)) merged_thermal=$((marker_thermal | pend_thermal))
+            if [[ "$merged_soc" -ne "$marker_soc" || "$merged_thermal" -ne "$marker_thermal" ]]; then
+                write_marker "$marker_container" "$merged_soc" "$merged_thermal"
+            fi
+            rm -f "$PENDING_FILE"
+            return 0
+        fi
+        local prev_status=""
+        prev_status="$(container_status "$marker_container")"
+        if [[ "$prev_status" == "paused" || "$prev_status" == "unknown" ]]; then
+            rm -f "$PENDING_FILE"
+            return 0
+        fi
+    fi
+    local pstatus=""
+    pstatus="$(container_status "$pend_container")"
+    case "$pstatus" in
+        paused)
+            mv -f "$PENDING_FILE" "$STATE_FILE"
+            log "Recovered interrupted sentinel pause marker for ${pend_container} (cause: $(causes_text "$pend_soc" "$pend_thermal"))."
+            ;;
+        unknown)
+            warn "Cannot determine whether interrupted pause of ${pend_container} took effect (docker unavailable or 'docker inspect' failed); holding pending pause marker."
+            ;;
+        *)
+            rm -f "$PENDING_FILE"
+            ;;
+    esac
+}
+
 # Log-only mode never touches docker. Say so when an earlier pause-mode run
 # left a paused workload behind, because this mode will not resume it.
 note_leftover_marker() {
-    [[ -f "$STATE_FILE" ]] || return 0
-    read_marker
-    warn "A pause marker from an earlier LOAD_SHED_ACTION=pause run exists (${STATE_FILE}: ${marker_container}, paused for $(causes_text "$marker_soc" "$marker_thermal")). LOAD_SHED_ACTION=log leaves it and the container untouched. To clear it: run with LOAD_SHED_ACTION=pause (resumes after verified recovery), or by hand: docker unpause ${marker_container} && rm -f '${STATE_FILE}'."
+    if [[ -f "$STATE_FILE" ]]; then
+        read_marker
+        warn "A pause marker from an earlier LOAD_SHED_ACTION=pause run exists (${STATE_FILE}: ${marker_container}, paused for $(causes_text "$marker_soc" "$marker_thermal")). LOAD_SHED_ACTION=log leaves it and the container untouched. To clear it: run with LOAD_SHED_ACTION=pause (resumes after verified recovery), or by hand: docker unpause ${marker_container} && rm -f '${STATE_FILE}'."
+    elif [[ -f "$PENDING_FILE" ]]; then
+        read_marker_file "$PENDING_FILE"
+        warn "An interrupted pending pause marker from an earlier LOAD_SHED_ACTION=pause run exists (${PENDING_FILE}: ${parsed_container}, cause $(causes_text "$parsed_soc" "$parsed_thermal")). LOAD_SHED_ACTION=log leaves it and the container untouched. To reconcile it: run with LOAD_SHED_ACTION=pause, or remove '${PENDING_FILE}' after inspecting the container."
+    fi
 }
 
 # -- Shed: at least one cause is active --------------------------------
@@ -443,14 +502,40 @@ shed() { # shed <soc active 0|1> <thermal active 0|1>
     status="$(container_status "$CONTAINER")"
     case "$status" in
         running)
+            if [[ -f "$STATE_FILE" ]]; then
+                read_marker
+                if [[ "$marker_container" != "$CONTAINER" ]]; then
+                    local prev_status=""
+                    prev_status="$(container_status "$marker_container")"
+                    if [[ "$prev_status" == "paused" || "$prev_status" == "unknown" ]]; then
+                        warn "${CONTAINER} is running, but the sentinel's pause marker still holds ${marker_container} (state: ${prev_status}); leaving ${CONTAINER} and the marker alone."
+                        return 0
+                    fi
+                    rm -f "$STATE_FILE"
+                fi
+            fi
+            write_marker_file "$PENDING_FILE" "$CONTAINER" "$active_soc" "$active_thermal"
             if docker pause "$CONTAINER" >/dev/null; then
-                write_marker "$CONTAINER" "$active_soc" "$active_thermal"
+                mv -f "$PENDING_FILE" "$STATE_FILE"
                 log "Paused ${CONTAINER} (cause: $(causes_text "$active_soc" "$active_thermal")). It is resumed only after every recorded cause has verifiably cleared (SoC >= ${SOC_THRESHOLD_NORMAL}%; coolant reading <= ${TEMP_COOLANT_RESUME}°C)."
             else
-                warn "docker pause ${CONTAINER} failed; nothing was shed."
+                local post_status=""
+                post_status="$(container_status "$CONTAINER")"
+                if [[ "$post_status" == "paused" ]]; then
+                    mv -f "$PENDING_FILE" "$STATE_FILE"
+                    log "Paused ${CONTAINER} (cause: $(causes_text "$active_soc" "$active_thermal")). It is resumed only after every recorded cause has verifiably cleared (SoC >= ${SOC_THRESHOLD_NORMAL}%; coolant reading <= ${TEMP_COOLANT_RESUME}°C)."
+                elif [[ "$post_status" == "unknown" ]]; then
+                    warn "docker pause ${CONTAINER} failed and state is unknown; keeping pending pause marker (${PENDING_FILE}) to reconcile on the next run."
+                else
+                    rm -f "$PENDING_FILE"
+                    warn "docker pause ${CONTAINER} failed; nothing was shed."
+                fi
             fi
             ;;
         paused)
+            if [[ ! -f "$STATE_FILE" && -f "$PENDING_FILE" ]]; then
+                reconcile_pending_pause
+            fi
             if [[ -f "$STATE_FILE" ]]; then
                 read_marker
                 if [[ "$marker_container" != "$CONTAINER" ]]; then
@@ -484,11 +569,18 @@ shed() { # shed <soc active 0|1> <thermal active 0|1>
 # -- Resume: no cause is active. Undo our own pause, and only our own, and
 # only when every recorded cause is proven to be over. ------------------
 maybe_resume() {
-    [[ -f "$STATE_FILE" ]] || return 1
     if [[ "$ACTION" != "pause" ]]; then
+        [[ -f "$STATE_FILE" || -f "$PENDING_FILE" ]] || return 1
         note_leftover_marker
         return 0
     fi
+    if [[ ! -f "$STATE_FILE" && -f "$PENDING_FILE" ]]; then
+        reconcile_pending_pause
+    fi
+    if [[ ! -f "$STATE_FILE" && -f "$PENDING_FILE" ]]; then
+        return 0
+    fi
+    [[ -f "$STATE_FILE" ]] || return 1
     read_marker
     local hold=""
     if [[ "$marker_soc" -eq 1 ]]; then
@@ -537,6 +629,7 @@ if [[ "$ACTION" == "pause" ]]; then
     trap 'release_run_lock; exit 130' INT
     trap 'release_run_lock; exit 143' TERM
     acquire_run_lock
+    reconcile_pending_pause
 fi
 
 # -- Fetch metrics ------------------------------------------------------

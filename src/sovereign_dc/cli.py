@@ -1480,15 +1480,16 @@ def cmd_economy_verify(args):
             print(f"  • Anchor:        {RED}refused: the chain does not verify{RESET}\n")
             return 1
 
-    chain_ok, status, tx_count = ledger.chain_report()
-    print(f"  • Chain links:   {GREEN + 'VALID' if chain_ok else RED + 'INVALID'}{RESET}")
-    print(f"  • Head anchor:   {GREEN if status == 'valid' else YELLOW}{status.upper()}{RESET}")
-    if chain_ok and status == "absent" and tx_count > 0:
+    links_ok, status, tx_count = ledger.chain_report()
+    anchor_color = GREEN if status == "valid" else (RED if status == "invalid" else YELLOW)
+    print(f"  • Chain links:   {GREEN + 'VALID' if links_ok else RED + 'INVALID'}{RESET}")
+    print(f"  • Head anchor:   {anchor_color}{status.upper()}{RESET}")
+    if links_ok and status == "absent" and tx_count > 0:
         print(f"  {YELLOW}Unanchored: tail truncation would go undetected. Run with --anchor to anchor it.{RESET}")
-    elif chain_ok and status == "absent" and tx_count == 0:
+    elif links_ok and status == "absent" and tx_count == 0:
         print("  Empty ledger: no transactions to anchor yet (anchored automatically from the first transaction).")
     print()
-    return 0 if chain_ok and status in ("valid", "absent") else 1
+    return 0 if links_ok and status in ("valid", "absent") else 1
 
 
 def cmd_economy(args):
