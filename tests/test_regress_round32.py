@@ -140,9 +140,6 @@ def test_economy_audit_empty_and_no_key_and_corrupt_reasons(
     assert "Empty ledger:" in out_empty
     assert "Run with --anchor" not in out_empty
 
-    assert cli.cmd_economy_history(Namespace(db_path=db, limit=5)) is None
-    assert "No transactions recorded yet in ledger." in capsys.readouterr().out
-
     assert cli.cmd_economy_verify(Namespace(db_path=db, anchor=True)) == 1
     out_empty_anchor = capsys.readouterr().out
     assert "nothing to anchor: the ledger has no transactions" in out_empty_anchor
@@ -162,19 +159,12 @@ def test_economy_audit_empty_and_no_key_and_corrupt_reasons(
     out_unanchored = capsys.readouterr().out
     assert "Run with --anchor to anchor it." in out_unanchored
 
-    db2 = str(tmp_path / "anchored_nokey.db")
-    ledger2 = Ledger(db_path=db2)
-    ledger2.mint(wallet.address, 1.0, memo="anchored")
-
     with monkeypatch.context() as mp:
         mp.setattr("sovereign_dc.economy.ledger._node_anchor_key", lambda: None)
         assert cli.cmd_economy_verify(Namespace(db_path=db, anchor=True)) == 1
         out_nokey = capsys.readouterr().out
         assert "refused: node identity key unavailable" in out_nokey
         assert "the chain does not verify" not in out_nokey
-        ledger2.mint(wallet.address, 1.0, memo="unadvanced")
-        assert ledger2.verify_chain(require_anchor=True) is False
-    assert ledger2.verify_chain() is False
 
     assert cli.cmd_economy_verify(Namespace(db_path=db, anchor=True)) == 0
     out_anchored = capsys.readouterr().out

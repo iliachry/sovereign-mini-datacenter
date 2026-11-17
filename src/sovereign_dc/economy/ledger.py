@@ -18,7 +18,7 @@ import re
 import sqlite3
 import stat
 import threading
-from collections.abc import Iterator
+from collections.abc import Collection, Iterator
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -303,7 +303,13 @@ class Transaction:
             return False
         if not isinstance(self.nonce, int) or isinstance(self.nonce, bool) or self.nonce < 0:
             return False
-        return self.hash_version in _SUPPORTED_HASH_VERSIONS
+        return (
+            isinstance(self.hash_version, int)
+            and not isinstance(self.hash_version, bool)
+            and bool(self.timestamp)
+            and bool(self.tx_id)
+            and self.hash_version in _SUPPORTED_HASH_VERSIONS
+        )
 
     def is_unambiguous(self) -> bool:
         """True if the signed hash commits to exactly this transaction's value fields.
@@ -920,25 +926,26 @@ class Ledger:
         return amount_micro, fee_micro
 
     @staticmethod
-    def _row_to_transaction(r: sqlite3.Row) -> Transaction:
+    def _cell(r: sqlite3.Row, keys: Collection[str], col: str, default: Any = "") -> Any:
+        return r[col] if col in keys else default
+
+    @classmethod
+    def _row_to_transaction(cls, r: sqlite3.Row) -> Transaction:
         keys = r.keys()
-        version = r["hash_version"] if "hash_version" in keys else None
-        return Transaction(
-            tx_id=r["tx_id"],
-            prev_hash=r["prev_hash"] if "prev_hash" in keys else GENESIS_PREV_HASH,
-            sender=r["sender"],
-            recipient=r["recipient"],
-            amount=float(r["amount"]),
-            fee=float(r["fee"]),
-            nonce=int(r["nonce"]),
-            timestamp=r["timestamp"],
-            memo=r["memo"] or "",
-            signature=r["signature"] or "",
-            signature_algorithm=r["signature_algorithm"] or "ed25519",
-            sender_public_key=(r["sender_public_key"] or "") if "sender_public_key" in keys else "",
-            hash_version=int(version) if version is not None else HASH_VERSION_LEGACY,
-            settlement_key=(r["settlement_key"] or "") if "settlement_key" in keys else "",
-        )
+        raw_amount, raw_fee = r["amount"], r["fee"]
+        tx = object.__new__(Transaction)
+        tx.tx_id = r["tx_id"]
+        tx.prev_hash = cls._cell(r, keys, "prev_hash", GENESIS_PREV_HASH)
+        tx.sender, tx.recipient, tx.timestamp = r["sender"], r["recipient"], r["timestamp"]
+        tx.amount = float(raw_amount) if _is_real_number(raw_amount) else raw_amount
+        tx.fee = float(raw_fee) if _is_real_number(raw_fee) else raw_fee
+        tx.nonce = r["nonce"]
+        tx.memo, tx.signature = cls._cell(r, keys, "memo"), cls._cell(r, keys, "signature")
+        tx.signature_algorithm = cls._cell(r, keys, "signature_algorithm", "ed25519")
+        tx.sender_public_key = cls._cell(r, keys, "sender_public_key")
+        tx.hash_version = cls._cell(r, keys, "hash_version", HASH_VERSION_LEGACY)
+        tx.settlement_key = cls._cell(r, keys, "settlement_key")
+        return tx
 
     def has_transaction(self, tx_id: str) -> bool:
         """Checks whether a transaction ID is already recorded in the ledger."""
@@ -1125,13 +1132,22 @@ class Ledger:
     ) -> bool:
         """True if ``anchor`` was produced by this node for exactly the given chain head."""
         key_id, mac_key = key
-        count = int(anchor["tx_count"])
-        if anchor["key_id"] != key_id or anchor["head_tx_id"] != head_tx_id or anchor["head_digest"] != head_digest:
+        count = anchor["tx_count"]
+        if (
+            not isinstance(count, int)
+            or isinstance(count, bool)
+            or count < 0
+            or not isinstance(anchor["mac"], str)
+            or not anchor["mac"].isascii()
+            or anchor["key_id"] != key_id
+            or anchor["head_tx_id"] != head_tx_id
+            or anchor["head_digest"] != head_digest
+        ):
             return False
         if tx_count is not None and count != tx_count:
             return False
         expected = _anchor_mac(mac_key, key_id, count, head_tx_id, head_digest)
-        return hmac.compare_digest(str(anchor["mac"]), expected)
+        return hmac.compare_digest(anchor["mac"], expected)
 
     @staticmethod
     def _write_anchor(
@@ -1371,7 +1387,7 @@ class Ledger:
                 structure_ok = False
             if not tx.is_valid():
                 structure_ok = False
-            if not tx.is_privileged:
+            if not tx.is_privileged and isinstance(tx.nonce, int) and not isinstance(tx.nonce, bool):
                 applied = local_prev is not None
                 previous = last_nonce.get(tx.sender)
                 if applied:
@@ -1382,11 +1398,12 @@ class Ledger:
                     elif previous[1] and tx.nonce != previous[0] + 1:
                         structure_ok = False
                 last_nonce[tx.sender] = (tx.nonce, applied)
-            digest = _chain_digest(digest, tx.tx_id)
+            row_tx_id = tx.tx_id if isinstance(tx.tx_id, str) else ""
+            digest = _chain_digest(digest, row_tx_id)
             stored_digest = r["chain_digest"]
             if stored_digest is not None and stored_digest != digest:
                 structure_ok = False
-            expected_prev = tx.tx_id
+            expected_prev = row_tx_id
 
         if anchor is None:
             status = ANCHOR_ABSENT
