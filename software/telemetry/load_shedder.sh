@@ -150,6 +150,8 @@ PENDING_FILE="${STATE_FILE}.pending"
 LOCK_VALUE="$$:${RANDOM:-0}.${SECONDS:-0}${BOOT_ID:+:boot=${BOOT_ID}}"
 SELF_REAP_VALUE="$$${BOOT_ID:+:boot=${BOOT_ID}}"
 LOCK_HELD=0
+LOCK_TICKS_USED=0
+PENDING_WORKER_INFLIGHT=0
 REAP_CLAIM=""
 REAP_GUARD=""
 
@@ -175,16 +177,32 @@ sanitize_lock_tag() {
 }
 
 process_alive() {
-    local pid="$1" err=""
+    local pid="$1" err="" alive=0 pstat="" pstate="" ps_stat=""
     [[ "$pid" =~ ^[0-9]+$ && "$pid" -gt 0 ]] || return 1
     if kill -0 "$pid" 2>/dev/null; then
-        return 0
+        alive=1
+    else
+        err="$(kill -0 "$pid" 2>&1 || true)"
+        case "$err" in
+            *"not permitted"* | *"Not permitted"* | *"EPERM"*) alive=1 ;;
+        esac
     fi
-    err="$(kill -0 "$pid" 2>&1 || true)"
-    case "$err" in
-        *"not permitted"* | *"Not permitted"* | *"EPERM"*) return 0 ;;
-        *) return 1 ;;
-    esac
+    [[ "$alive" -eq 1 ]] || return 1
+    if [[ -r "/proc/${pid}/stat" ]]; then
+        if { IFS= read -r pstat <"/proc/${pid}/stat"; } 2>/dev/null; then
+            pstate="${pstat##*) }"
+            case "$pstate" in
+                Z* | X*) return 1 ;;
+            esac
+        fi
+    elif command -v ps >/dev/null 2>&1; then
+        ps_stat="$(ps -o stat= -p "$pid" 2>/dev/null || true)"
+        ps_stat="${ps_stat#"${ps_stat%%[![:space:]]*}"}"
+        case "$ps_stat" in
+            Z*) return 1 ;;
+        esac
+    fi
+    return 0
 }
 
 lock_value_alive() {
@@ -211,6 +229,7 @@ cleanup_reap_links() {
 }
 
 release_run_lock() {
+    rm -f "${PENDING_FILE}.go.$$" "${STATE_FILE}.tmp.$$" "${PENDING_FILE}.tmp.$$"
     cleanup_reap_links
     if [[ "$LOCK_HELD" -eq 1 ]]; then
         if [[ "$(readlink "$LOCK_FILE" 2>/dev/null || true)" == "$LOCK_VALUE" ]]; then
@@ -325,17 +344,20 @@ try_reap_stale_lock() {
 
 acquire_run_lock() {
     local max_ticks waited_ticks=0 holder_raw="" holder_pid=""
+    LOCK_TICKS_USED=0
     mkdir -p "$(dirname "$LOCK_FILE")"
     max_ticks="$(awk -v t="$LOCK_TIMEOUT" 'BEGIN { m = int(t / 0.05 + 0.999999); print (m < 1 ? 1 : m) }')"
     while true; do
         if ln -s "$LOCK_VALUE" "$LOCK_FILE" 2>/dev/null; then
             LOCK_HELD=1
+            LOCK_TICKS_USED="$waited_ticks"
             return 0
         fi
         holder_raw="$(readlink "$LOCK_FILE" 2>/dev/null || true)"
         if { [[ -n "$holder_raw" ]] && ! lock_value_alive "$holder_raw"; } ||
             { [[ -z "$holder_raw" ]] && [[ ! -L "$LOCK_FILE" && -e "$LOCK_FILE" ]]; }; then
             if try_reap_stale_lock "$holder_raw"; then
+                LOCK_TICKS_USED="$waited_ticks"
                 return 0
             fi
             holder_raw="$(readlink "$LOCK_FILE" 2>/dev/null || true)"
@@ -379,18 +401,21 @@ marker_thermal=0
 parsed_container=""
 parsed_soc=0
 parsed_thermal=0
+parsed_worker=""
 
 read_marker_file() {
     local path="$1" line seen_key=0
     parsed_container=""
     parsed_soc=0
     parsed_thermal=0
+    parsed_worker=""
     [[ -f "$path" ]] || return 0
     while IFS= read -r line || [[ -n "$line" ]]; do
         case "$line" in
             container=*) parsed_container="${line#container=}"; seen_key=1 ;;
             cause=soc) parsed_soc=1; seen_key=1 ;;
             cause=thermal) parsed_thermal=1; seen_key=1 ;;
+            worker=*) parsed_worker="${line#worker=}"; seen_key=1 ;;
             "") ;;
             *)
                 # Legacy marker: the first line is the bare container name.
@@ -415,9 +440,9 @@ read_marker() {
     marker_thermal="$parsed_thermal"
 }
 
-# write_marker_file <path> <container> <soc 0|1> <thermal 0|1>  (atomic replace)
+# write_marker_file <path> <container> <soc 0|1> <thermal 0|1> [worker]  (atomic replace)
 write_marker_file() {
-    local path="$1" container="$2" w_soc="$3" w_thermal="$4" dir tmp
+    local path="$1" container="$2" w_soc="$3" w_thermal="$4" w_worker="${5:-}" dir tmp
     dir="$(dirname "$path")"
     mkdir -p "$dir"
     tmp="${path}.tmp.$$"
@@ -425,6 +450,7 @@ write_marker_file() {
         printf 'container=%s\n' "$container"
         if [[ "$w_soc" -eq 1 ]]; then printf 'cause=soc\n'; fi
         if [[ "$w_thermal" -eq 1 ]]; then printf 'cause=thermal\n'; fi
+        if [[ -n "$w_worker" ]]; then printf 'worker=%s\n' "$w_worker"; fi
     } >"$tmp"
     mv -f "$tmp" "$path"
 }
@@ -443,9 +469,33 @@ causes_text() { # causes_text <soc 0|1> <thermal 0|1>
 
 # Reconcile an interrupted pre-pause intent written before `docker pause`.
 reconcile_pending_pause() {
+    PENDING_WORKER_INFLIGHT=0
     [[ -f "$PENDING_FILE" ]] || return 0
     read_marker_file "$PENDING_FILE"
-    local pend_container="$parsed_container" pend_soc="$parsed_soc" pend_thermal="$parsed_thermal"
+    local pend_container="$parsed_container" pend_soc="$parsed_soc" pend_thermal="$parsed_thermal" pend_worker="$parsed_worker"
+    if [[ -n "$pend_worker" ]] && lock_value_alive "$pend_worker"; then
+        local max_ticks rem_ticks waited=0
+        max_ticks="$(awk -v t="$LOCK_TIMEOUT" 'BEGIN { m = int(t / 0.05 + 0.999999); print (m < 1 ? 1 : m) }')"
+        rem_ticks=$((max_ticks - LOCK_TICKS_USED))
+        if [[ "$rem_ticks" -lt 1 ]]; then rem_ticks=1; fi
+        while [[ "$waited" -lt "$rem_ticks" ]] && lock_value_alive "$pend_worker"; do
+            sleep 0.05
+            waited=$((waited + 1))
+        done
+        if lock_value_alive "$pend_worker"; then
+            PENDING_WORKER_INFLIGHT=1
+            warn "In-flight docker pause worker (PID $(extract_lock_pid "$pend_worker")) from ${PENDING_FILE} is still running after ${LOCK_TIMEOUT}s; keeping pending pause marker."
+            return 0
+        fi
+    fi
+    rm -f "${PENDING_FILE}.go."*
+    if [[ ! -f "$PENDING_FILE" ]]; then
+        return 0
+    fi
+    read_marker_file "$PENDING_FILE"
+    pend_container="$parsed_container"
+    pend_soc="$parsed_soc"
+    pend_thermal="$parsed_thermal"
     if [[ -f "$STATE_FILE" ]]; then
         read_marker
         if [[ "$marker_container" == "$pend_container" ]]; then
@@ -467,7 +517,8 @@ reconcile_pending_pause() {
     pstatus="$(container_status "$pend_container")"
     case "$pstatus" in
         paused)
-            mv -f "$PENDING_FILE" "$STATE_FILE"
+            write_marker "$pend_container" "$pend_soc" "$pend_thermal"
+            rm -f "$PENDING_FILE"
             log "Recovered interrupted sentinel pause marker for ${pend_container} (cause: $(causes_text "$pend_soc" "$pend_thermal"))."
             ;;
         unknown)
@@ -499,6 +550,27 @@ shed() { # shed <soc active 0|1> <thermal active 0|1>
         note_leftover_marker
         return 0
     fi
+    if [[ "$PENDING_WORKER_INFLIGHT" -eq 1 && -f "$PENDING_FILE" ]]; then
+        read_marker_file "$PENDING_FILE"
+        if ! lock_value_alive "$parsed_worker"; then
+            reconcile_pending_pause
+        fi
+    fi
+    if [[ "$PENDING_WORKER_INFLIGHT" -eq 1 && -f "$PENDING_FILE" ]]; then
+        read_marker_file "$PENDING_FILE"
+        if [[ "$parsed_container" == "$CONTAINER" ]]; then
+            local pend_new_soc=$((parsed_soc | active_soc)) pend_new_thermal=$((parsed_thermal | active_thermal))
+            if [[ "$pend_new_soc" -ne "$parsed_soc" || "$pend_new_thermal" -ne "$parsed_thermal" ]]; then
+                write_marker_file "$PENDING_FILE" "$CONTAINER" "$pend_new_soc" "$pend_new_thermal" "$parsed_worker"
+                log "In-flight docker pause worker still active for ${CONTAINER}; recorded additional cause on pending marker (now: $(causes_text "$pend_new_soc" "$pend_new_thermal"))."
+            else
+                log "In-flight docker pause worker still active for ${CONTAINER} (cause: $(causes_text "$pend_new_soc" "$pend_new_thermal"))."
+            fi
+        else
+            warn "In-flight docker pause worker still active for ${parsed_container}; leaving ${CONTAINER} untouched on this run."
+        fi
+        return 0
+    fi
     status="$(container_status "$CONTAINER")"
     case "$status" in
         running)
@@ -514,15 +586,32 @@ shed() { # shed <soc active 0|1> <thermal active 0|1>
                     rm -f "$STATE_FILE"
                 fi
             fi
-            write_marker_file "$PENDING_FILE" "$CONTAINER" "$active_soc" "$active_thermal"
-            if docker pause "$CONTAINER" >/dev/null; then
-                mv -f "$PENDING_FILE" "$STATE_FILE"
+            local parent_pid="$$" gate_file="${PENDING_FILE}.go.$$" pause_pid="" worker_val="" pause_rc=0
+            rm -f "$gate_file"
+            (
+                while [[ ! -f "$gate_file" ]]; do
+                    kill -0 "$parent_pid" 2>/dev/null || exit 1
+                    sleep 0.01
+                done
+                rm -f "$gate_file"
+                exec docker pause "$CONTAINER" >/dev/null
+            ) &
+            pause_pid=$!
+            worker_val="${pause_pid}${BOOT_ID:+:boot=${BOOT_ID}}"
+            write_marker_file "$PENDING_FILE" "$CONTAINER" "$active_soc" "$active_thermal" "$worker_val"
+            : >"$gate_file"
+            wait "$pause_pid" || pause_rc=$?
+            rm -f "$gate_file"
+            if [[ "$pause_rc" -eq 0 ]]; then
+                write_marker "$CONTAINER" "$active_soc" "$active_thermal"
+                rm -f "$PENDING_FILE"
                 log "Paused ${CONTAINER} (cause: $(causes_text "$active_soc" "$active_thermal")). It is resumed only after every recorded cause has verifiably cleared (SoC >= ${SOC_THRESHOLD_NORMAL}%; coolant reading <= ${TEMP_COOLANT_RESUME}°C)."
             else
                 local post_status=""
                 post_status="$(container_status "$CONTAINER")"
                 if [[ "$post_status" == "paused" ]]; then
-                    mv -f "$PENDING_FILE" "$STATE_FILE"
+                    write_marker "$CONTAINER" "$active_soc" "$active_thermal"
+                    rm -f "$PENDING_FILE"
                     log "Paused ${CONTAINER} (cause: $(causes_text "$active_soc" "$active_thermal")). It is resumed only after every recorded cause has verifiably cleared (SoC >= ${SOC_THRESHOLD_NORMAL}%; coolant reading <= ${TEMP_COOLANT_RESUME}°C)."
                 elif [[ "$post_status" == "unknown" ]]; then
                     warn "docker pause ${CONTAINER} failed and state is unknown; keeping pending pause marker (${PENDING_FILE}) to reconcile on the next run."
@@ -558,6 +647,31 @@ shed() { # shed <soc active 0|1> <thermal active 0|1>
             warn "Container ${CONTAINER} not found; nothing to shed."
             ;;
         unknown)
+            if [[ -f "$STATE_FILE" ]]; then
+                read_marker
+                if [[ "$marker_container" == "$CONTAINER" ]]; then
+                    local new_soc=$((marker_soc | active_soc)) new_thermal=$((marker_thermal | active_thermal))
+                    if [[ "$new_soc" -ne "$marker_soc" || "$new_thermal" -ne "$marker_thermal" ]]; then
+                        write_marker "$CONTAINER" "$new_soc" "$new_thermal"
+                        warn "Cannot determine the state of ${CONTAINER} (docker unavailable or 'docker inspect' failed); recorded additional cause on existing pause marker (now: $(causes_text "$new_soc" "$new_thermal"))."
+                    else
+                        warn "Cannot determine the state of ${CONTAINER} (docker unavailable or 'docker inspect' failed); holding existing pause marker (cause: $(causes_text "$new_soc" "$new_thermal"))."
+                    fi
+                    return 0
+                fi
+            elif [[ -f "$PENDING_FILE" ]]; then
+                read_marker_file "$PENDING_FILE"
+                if [[ "$parsed_container" == "$CONTAINER" ]]; then
+                    local new_soc=$((parsed_soc | active_soc)) new_thermal=$((parsed_thermal | active_thermal))
+                    if [[ "$new_soc" -ne "$parsed_soc" || "$new_thermal" -ne "$parsed_thermal" ]]; then
+                        write_marker_file "$PENDING_FILE" "$CONTAINER" "$new_soc" "$new_thermal" "$parsed_worker"
+                        warn "Cannot determine the state of ${CONTAINER} (docker unavailable or 'docker inspect' failed); recorded additional cause on pending pause marker (now: $(causes_text "$new_soc" "$new_thermal"))."
+                    else
+                        warn "Cannot determine the state of ${CONTAINER} (docker unavailable or 'docker inspect' failed); holding pending pause marker (cause: $(causes_text "$new_soc" "$new_thermal"))."
+                    fi
+                    return 0
+                fi
+            fi
             warn "Cannot determine the state of ${CONTAINER} (docker unavailable or 'docker inspect' failed); nothing was shed on this run."
             ;;
         *)
@@ -572,6 +686,15 @@ maybe_resume() {
     if [[ "$ACTION" != "pause" ]]; then
         [[ -f "$STATE_FILE" || -f "$PENDING_FILE" ]] || return 1
         note_leftover_marker
+        return 0
+    fi
+    if [[ "$PENDING_WORKER_INFLIGHT" -eq 1 && -f "$PENDING_FILE" ]]; then
+        read_marker_file "$PENDING_FILE"
+        if ! lock_value_alive "$parsed_worker"; then
+            reconcile_pending_pause
+        fi
+    fi
+    if [[ "$PENDING_WORKER_INFLIGHT" -eq 1 ]]; then
         return 0
     fi
     if [[ ! -f "$STATE_FILE" && -f "$PENDING_FILE" ]]; then

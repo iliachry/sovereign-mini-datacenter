@@ -1355,7 +1355,7 @@ class Ledger:
         digest = GENESIS_PREV_HASH
         # Per sender: (nonce of its latest row, whether that row came through the validated apply path).
         last_nonce: dict[str, tuple[int, bool]] = {}
-        failed = (False, ANCHOR_INVALID if anchor is not None else ANCHOR_ABSENT, len(rows), "", "")
+        structure_ok = True
         for r in rows:
             tx = self._row_to_transaction(r)
             local_prev = r["local_prev"]
@@ -1363,14 +1363,14 @@ class Ledger:
                 # Written by a release that had no local link: the signed link is the chain
                 # link. Only legacy-hash rows can be that old.
                 if tx.hash_version != HASH_VERSION_LEGACY or tx.prev_hash != expected_prev:
-                    return failed
+                    structure_ok = False
             elif local_prev != expected_prev:
-                return failed
+                structure_ok = False
             elif tx.prev_hash != expected_prev and tx.is_privileged:
                 # Mints are only ever created locally, so their own link must be the local one.
-                return failed
+                structure_ok = False
             if not tx.is_valid():
-                return failed
+                structure_ok = False
             if not tx.is_privileged:
                 applied = local_prev is not None
                 previous = last_nonce.get(tx.sender)
@@ -1378,14 +1378,14 @@ class Ledger:
                     # The apply path only ever accepts the sender's next nonce.
                     if previous is None:
                         if tx.nonce != 0:
-                            return failed
+                            structure_ok = False
                     elif previous[1] and tx.nonce != previous[0] + 1:
-                        return failed
+                        structure_ok = False
                 last_nonce[tx.sender] = (tx.nonce, applied)
             digest = _chain_digest(digest, tx.tx_id)
             stored_digest = r["chain_digest"]
             if stored_digest is not None and stored_digest != digest:
-                return failed
+                structure_ok = False
             expected_prev = tx.tx_id
 
         if anchor is None:
@@ -1396,6 +1396,8 @@ class Ledger:
             status = ANCHOR_VALID
         else:
             status = ANCHOR_INVALID
+        if not structure_ok:
+            return False, status, len(rows), "", ""
         return True, status, len(rows), expected_prev, digest
 
     def _chain_report_on_conn(self, conn: sqlite3.Connection) -> tuple[bool, str, int]:
@@ -1410,7 +1412,7 @@ class Ledger:
         finally:
             if began:
                 conn.commit()
-        if ok and status == ANCHOR_UNVERIFIABLE:
+        if status == ANCHOR_UNVERIFIABLE:
             logger.warning(
                 "Ledger %s carries a chain anchor but this node has no persistent identity key to check it",
                 self.db_path,
