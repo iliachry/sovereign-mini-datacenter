@@ -942,36 +942,70 @@ def tool_scaffold_enterprise_app(params: dict[str, Any]) -> dict[str, Any]:
     from sovereign_dc.enterprise.registry import EnterpriseRegistry
     from sovereign_dc.enterprise.schema import AppCategory, PowerPriority, RuntimeType, slugify_app_id
 
-    name = str(params.get("name", "Custom App"))
-    # An explicit app_id is used verbatim (and reported invalid if it is); a derived one is
-    # slugified so it always satisfies the manifest's own app_id rule.
-    app_id = str(params.get("app_id") or slugify_app_id(name))
+    param_errors: list[str] = []
 
-    try:
-        category = AppCategory(str(params.get("category", "custom")))
-    except ValueError:
-        category = AppCategory.CUSTOM
+    raw_name = params.get("name", "Custom App")
+    if not isinstance(raw_name, str) or not raw_name.strip():
+        param_errors.append("Invalid 'name': must be a non-empty string.")
+        name = "Custom App"
+    else:
+        name = raw_name
 
-    try:
-        runtime = RuntimeType(str(params.get("runtime", "process")))
-    except ValueError:
-        runtime = RuntimeType.PROCESS
+    raw_app_id = params.get("app_id")
+    if raw_app_id is not None and not isinstance(raw_app_id, str):
+        param_errors.append(f"Invalid 'app_id' {raw_app_id!r}: must be a string.")
+        app_id = slugify_app_id(name)
+    else:
+        # An explicit string app_id is used verbatim (and reported invalid by manifest.validate() if malformed).
+        app_id = slugify_app_id(name) if raw_app_id is None else raw_app_id
 
-    raw_tier = params.get("power_tier")
-    try:
-        power_tier = None if raw_tier is None else PowerPriority(str(raw_tier))
-    except ValueError:
-        power_tier = PowerPriority.L1_STANDARD
+    def _enum_arg(key: str, enum_cls: Any, default: Any) -> Any:
+        raw = params.get(key)
+        if raw is None:
+            return default
+        if isinstance(raw, str):
+            try:
+                return enum_cls(raw)
+            except ValueError:
+                pass
+        allowed = [member.value for member in enum_cls]
+        param_errors.append(f"Invalid '{key}' {raw!r}. Must be one of {allowed}.")
+        return default
+
+    category = _enum_arg("category", AppCategory, AppCategory.CUSTOM)
+    runtime = _enum_arg("runtime", RuntimeType, RuntimeType.PROCESS)
+    power_tier = _enum_arg("power_tier", PowerPriority, None)
 
     raw_gpu = params.get("gpu_required")
-    gpu_required = None if raw_gpu is None else bool(raw_gpu)
+    if raw_gpu is not None and not isinstance(raw_gpu, bool):
+        param_errors.append(f"Invalid 'gpu_required' {raw_gpu!r}. Must be a boolean.")
+        gpu_required = None
+    else:
+        gpu_required = raw_gpu
+
+    raw_entrypoint = params.get("entrypoint")
+    if raw_entrypoint is not None and not isinstance(raw_entrypoint, str):
+        param_errors.append(f"Invalid 'entrypoint' {raw_entrypoint!r}: must be a string.")
+        entrypoint = "python3 app.py"
+    else:
+        entrypoint = "python3 app.py" if raw_entrypoint is None else raw_entrypoint
+
+    if param_errors:
+        return {
+            "success": False,
+            "valid": False,
+            "error": param_errors[0],
+            "validation_errors": param_errors,
+            "manifest": None,
+            "yaml_preview": "",
+        }
 
     manifest = EnterpriseRegistry.scaffold_manifest(
         name=name,
         app_id=app_id,
         category=category,
         runtime=runtime,
-        entrypoint="python3 app.py" if params.get("entrypoint") is None else str(params["entrypoint"]),
+        entrypoint=entrypoint,
         gpu_required=gpu_required,
         power_tier=power_tier,
     )

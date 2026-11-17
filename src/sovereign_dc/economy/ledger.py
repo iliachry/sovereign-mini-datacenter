@@ -164,6 +164,8 @@ def _exact_micro(amount: float) -> int | None:
     accounting never rounds an amount silently. Magnitudes above ``MAX_CREDITS`` are outside
     the range in which a float identifies one micro-credit count and are refused as well.
     """
+    if not _is_real_number(amount) or not math.isfinite(amount) or abs(amount) > MAX_CREDITS:
+        return None
     micro = _to_micro(amount)
     if abs(micro) > _MAX_MICRO:
         return None
