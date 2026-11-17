@@ -115,7 +115,7 @@
 
 | Subsystem | Component Model | Spec / Description | Qty | Est. Unit Cost |
 | :--- | :--- | :--- | :---: | :---: |
-| **Cooling Radiator** | EK-Quantum Surface P360M | 360mm Triple Fan, Copper Core, 30mm Thick; fills one of the two rear openings | 1 | $140 |
+| **Cooling Radiator** | EK-Quantum Surface P360M | 360mm Triple Fan, Copper Core, 44mm Thick (405 × 130 × 44mm); fills one of the two rear openings | 1 | $140 |
 | **CPU Water Block** | CPU water block for the chosen socket (AM5 or LGA1200) | Generic copper cold-plate block with G1/4 ports and the mounting kit for the host board's socket (AM5 for EPYC 4004, LGA1200 for Xeon E-2300). No model is selected; the price is a mid-market estimate, not a quote. | 1 | $90 |
 | **Coolant Pump** | Alphacool Eispumpe VPP755 (pump only) | D5-format pump, 12V DC, PWM control, 350 L/h maximum flow (manufacturer's catalogue figure). Supplied without a pump top, so it needs the pump top below. | 1 | $90 |
 | **Pump Top & Reservoir** | D5 pump top with integrated tube reservoir | Fits D5-format pumps, reservoir of about 150mm, G1/4 inlet and outlet ports and a G1/4 fill port (used for the leak test) | 1 | $60 |
