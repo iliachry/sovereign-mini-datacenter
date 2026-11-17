@@ -85,7 +85,7 @@ def read_manifest_resource() -> str:
             "chassis": '9U 19" EIA-310-D Anodized Aluminum Enclosure',
             "compute": "Dual NVIDIA DGX Spark (GB10 Superchip, 128GB unified memory each)",
             "host_cpu": "AMD EPYC 4004 (8C/16T, 64GB DDR5 ECC)",
-            "storage": "8TB NVMe PCIe 4.0 (RAID-1 ZFS Mirror)",
+            "storage": "4TB usable / 8TB raw NVMe PCIe 4.0 (2×4TB RAID-1 ZFS Mirror)",
             "energy_storage": "10.24 kWh LiFePO4 (2x 48V 100Ah Smart BMS)",
             "solar_array": "3,280W Monocrystalline PERC PV (8x 410W, 4S2P)",
             "power_conversion": "Victron MultiPlus-II 48/3000 + SmartSolar MPPT 250/70",

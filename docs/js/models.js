@@ -67,8 +67,8 @@ const COMPONENT_DATA = {
   server: {
     name: 'AMD EPYC 4004 System Host',
     badge: 'CORE HOST',
-    desc: 'Host coordinator with 64GB ECC DDR5, dual Samsung 990 PRO 4TB NVMe SSDs in RAID-1, and local ZFS backup spool. Its CPU is the only component on the liquid cooling loop.',
-    specs: { 'CPU': 'AMD EPYC 4004', 'RAM': '64GB ECC DDR5', 'NVMe': '8TB PCIe 4.0', 'OS': 'Talos Linux / Ubuntu 24.04', 'Cooling': 'CPU on the liquid loop' },
+    desc: 'Host coordinator with 64GB ECC DDR5, dual Samsung 990 PRO 4TB NVMe SSDs in RAID-1 (4TB usable), and local ZFS backup spool. Its CPU is the only component on the liquid cooling loop.',
+    specs: { 'CPU': 'AMD EPYC 4004', 'RAM': '64GB ECC DDR5', 'NVMe': '4TB usable (2×4TB RAID-1)', 'OS': 'Talos Linux / Ubuntu 24.04', 'Cooling': 'CPU on the liquid loop' },
   },
   pdu: {
     name: 'APC Metered Rack PDU (1U)',

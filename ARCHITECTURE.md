@@ -30,7 +30,7 @@ Unlike traditional cloud architectures that depend on centralized control planes
 │ ┌──────────────────────────────────────────┐ │              │ ┌──────────────────────────────────────────┐ │
 │ │ Power Microgrid: 3.28kW PV + 10.24kWh    │ │              │ │ Power Microgrid: 820W PV + 5.12kWh       │ │
 │ │ Compute: 2x NVIDIA DGX Spark (GB10)      │ │              │ │ Compute: 1x Jetson Orin AGX (275 TOPS)   │ │
-│ │ Storage: 8TB NVMe RAID-1 (ZFS + Seaweed) │ │              │ │ Storage: 4TB NVMe RAID-1                 │ │
+│ │ Storage: 2x4TB NVMe RAID-1 (4TB usable)  │ │              │ │ Storage: 4TB NVMe RAID-1                 │ │
 │ │ Local AI: Ollama + Qdrant RAG + Sentinel │ │              │ │ Local AI: Ollama + Local Agents          │ │
 │ └──────────────────────────────────────────┘ │              │ └──────────────────────────────────────────┘ │
 │  Transceivers: 10GbE SFP+ | LoRa | Starlink  │              │  Transceivers: 2.5GbE | LoRa | Direct LEO    │

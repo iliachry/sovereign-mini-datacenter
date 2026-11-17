@@ -199,10 +199,11 @@ The coolant pump and the six 120mm fans are 12V devices, and the MikroTik switch
         ▼
   [Mikrotik CRS309-1G-8S+IN]  (L2/L3 Core Switch)
         │
-   ┌────┼────┬────────────┐
-   ▼    ▼    ▼            ▼
-[DGX1][DGX2][Mini-ITX]  [Management VLAN]
-  (10GbE DAC cables)
+   ┌────┴─────────┬──────────────┬─────────────────┐
+   ▼              ▼              ▼                 ▼
+[DGX1]         [DGX2]       [Mini-ITX]    [Management VLAN]
+(S+RJ10 +      (S+RJ10 +    (10GbE SFP+   (Cat6A RJ-45
+ Cat6A 10GbE)   Cat6A 10GbE) DAC)          out-of-band)
 ```
 
 > **VLAN suggestion:** VLAN 10 — Services (Traefik, Docker containers), VLAN 20 — Management (IPMI/BMC), VLAN 30 — Storage (NFS/iSCSI future expansion).

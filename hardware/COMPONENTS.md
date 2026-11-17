@@ -136,7 +136,7 @@
 | :--- | :--- | :--- | :---: | :---: |
 | **SFP+ DAC Cables** | MikroTik S+DA0001 | 1m SFP+ Direct Attach Cable, 10GbE | 4 | $15 |
 | **SFP+ to RJ45** | MikroTik S+RJ10 | 10GbE SFP+ to RJ45 Module | 2 | $45 |
-| **Management Cable** | Cat6A Shielded Patch (0.3m) | Short run management links | 4 | $5 |
+| **10GbE / Mgmt Patch** | Cat6A Shielded Patch (0.3m) | DGX Spark S+RJ10 10GbE & management links | 4 | $5 |
 
 > Section subtotal: $170 (DAC cables 4 × $15 = $60; SFP+ to RJ45 modules 2 × $45 = $90; patch cables 4 × $5 = $20).
 

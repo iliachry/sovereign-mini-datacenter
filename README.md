@@ -7,7 +7,7 @@
 Developed by **[Metatopia Studio](https://metatopia.gr)** · Author & Lead Architect: **[Ilias Chrysovergis](https://iliachry.gr)** · License: MIT · © 2026
 
 [![CI & Quality Gates](https://github.com/iliachry/sovereign-mini-datacenter/actions/workflows/ci.yml/badge.svg)](https://github.com/iliachry/sovereign-mini-datacenter/actions/workflows/ci.yml)
-[![Quality Gate](https://img.shields.io/badge/Quality%20Gate-Strict%20Enforcement%20(92.4%25%20Cov)-10b981?style=flat&logo=githubactions)](https://github.com/iliachry/sovereign-mini-datacenter/actions/workflows/ci.yml)
+[![Quality Gate](https://img.shields.io/badge/Quality%20Gate-Strict%20Enforcement%20(92.5%25%20Cov)-10b981?style=flat&logo=githubactions)](https://github.com/iliachry/sovereign-mini-datacenter/actions/workflows/ci.yml)
 [![Enterprise Onboarding](https://img.shields.io/badge/Enterprise-Workload%20Coupling%20Framework-8b5cf6?style=flat)](ENTERPRISE_ONBOARDING.md)
 [![Commercialization](https://img.shields.io/badge/Commercialization-Investment%20Thesis-f59e0b?style=flat)](COMMERCIALIZATION.md)
 [![Benchmarks](https://img.shields.io/badge/Benchmarks-Measured%20vs%20Design%20Targets-06b6d4?style=flat)](BENCHMARKS.md)
@@ -165,7 +165,7 @@ sovereign-mini-datacenter/
 │   ├── MANUFACTURING_GUIDE.md   # Laser cut, CNC bend, and assembly instructions
 │   └── render.jpg               # Photorealistic 3D product render
 ├── docs/                        # Interactive Three.js WebGL Digital Twin (ES Modules) & GitHub Pages
-├── tests/                       # 1453 automated unit & integration tests (92.4% coverage)
+├── tests/                       # 1455 automated unit & integration tests (92.5% coverage)
 └── .github/
     └── workflows/
         ├── ci.yml               # Complete CI pipeline + Pytest + GitHub Pages deploy
@@ -526,7 +526,7 @@ See [`terraform/README.md`](terraform/README.md) for full module documentation a
 ---
 
 ## 🛡️ Quality Gates & Automated Tests
-The project enforces strict automated Quality Gates covering Ruff linting, Ruff formatting, Mypy static typing, Docker Compose multi-stack integrity, and Pytest coverage with 1453 automated tests ($\ge 85\%$ strict threshold, achieving **92.4%** coverage):
+The project enforces strict automated Quality Gates covering Ruff linting, Ruff formatting, Mypy static typing, Docker Compose multi-stack integrity, and Pytest coverage with 1455 automated tests ($\ge 85\%$ strict threshold, achieving **92.5%** coverage):
 
 ```bash
 # Run all quality gates locally
@@ -549,7 +549,7 @@ bash scripts/validate_compose.sh   # Compose stacks, bind mounts, storage-identi
 ## 🔋 Hardware & Physical Enclosure
 
 - **Compute:** 2× NVIDIA DGX Spark (NVIDIA GB10 Grace Blackwell Superchip, 128GB unified LPDDR5x memory and 4TB NVMe each; 240W power supply per unit)
-- **Storage:** 2× Samsung 990 PRO 4TB NVMe (8TB total NVMe storage)
+- **Storage:** 2× Samsung 990 PRO 4TB NVMe (4TB usable RAID-1 / 8TB raw)
 - **Power:** 10.24 kWh LiFePO4 battery bank + 3,280W monocrystalline PERC solar PV array (8 × 410W, 4S2P on a Victron SmartSolar MPPT 250/70). At the reference duty cycle (both nodes under load 12 h/day) the array yields about 14.5 kWh/day on annual average against an 11.2 kWh/day draw, a surplus of about 3.3 kWh/day; zero-sun autonomy is about 18.7 hours. Winter yield is lower, so low-sun periods still draw on the battery and then on grid or generator (see the sizing calculator)
 - **Cooling:** The two DGX Spark units are sealed and air-cooled. Three rear exhaust fans move air through the enclosure for them. A single 360mm radiator loop (three fans, Alphacool D5 pump) cools the system host CPU only
 - **Chassis:** Custom 9U 19" aluminum rack enclosure (EIA-310-D compliant)

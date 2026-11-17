@@ -474,6 +474,9 @@ class EnterpriseRegistry:
                 if not isinstance(app_data, dict):
                     raise ValueError("entry is not an object")
                 manifest = AppManifest.from_dict(app_data)
+                parse_errors = manifest.parse_errors()
+                if parse_errors:
+                    raise ValueError("; ".join(parse_errors))
                 if not isinstance(manifest.app_id, str) or not manifest.app_id:
                     raise ValueError("entry has no app_id")
                 apps[manifest.app_id] = manifest
@@ -742,12 +745,16 @@ class EnterpriseRegistry:
             parsed = yaml.safe_load(content)
             if isinstance(parsed, dict):
                 return parsed
+            return {}
         except ImportError:
             pass
 
         # Fallback basic JSON or simple line parser
         try:
-            return json.loads(content)
+            parsed_json = json.loads(content)
+            if isinstance(parsed_json, dict):
+                return parsed_json
+            return {}
         except Exception:
             pass
 
