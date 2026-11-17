@@ -23,7 +23,7 @@ from pathlib import Path
 WANTED = {
     "smdc_ve_parser_lambda": ("void", "VE_RECORD_HEX"),
     "smdc_ve_watchdog_lambda": ("void", "VE_STALE_AFTER_MS"),
-    "smdc_ve_frame_age_lambda": ("float", "static_cast<uint32_t>(millis() - id(ve_last_valid_ms))"),
+    "smdc_ve_frame_age_lambda": ("float", "static_cast<double>(id(ve_age_accum_ms)) / 1000.0"),
 }
 
 LAMBDA_KEY = re.compile(r"^(?P<indent>\s*)(?:-\s+)?lambda:\s*\|[-+]?\s*$")

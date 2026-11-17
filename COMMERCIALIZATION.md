@@ -143,15 +143,15 @@ Services & SLA         $0.25M       $0.85M       $2.40M       $6.20M      $12.50
 ─────────────────────────────────────────────────────────────────────────────────
 TOTAL REVENUE          $1.78M       $7.06M      $23.95M      $70.92M     $161.25M
 Gross Profit           $0.53M       $2.12M       $7.19M      $21.35M      $49.28M
-Gross Margin (%)        29.6%        30.1%        30.0%        30.1%        30.6%
+Gross Margin (%)        29.7%        30.1%        30.0%        30.1%        30.6%
 ─────────────────────────────────────────────────────────────────────────────────
 Operating Expenses     $0.86M       $2.35M       $6.79M      $19.36M      $41.66M
 EBITDA                -$0.33M      -$0.23M      +$0.41M      +$1.99M      +$7.62M
-EBITDA Margin (%)      -18.4%        -3.3%         1.7%         2.8%         4.7%
+EBITDA Margin (%)      -18.5%        -3.3%         1.7%         2.8%         4.7%
 Net Operating Cash    -$0.33M      -$0.23M      +$0.41M      +$1.99M      +$7.62M
 ```
 
-Hardware revenue is nodes deployed × the \$31,500 SMDC-Core-9U list price. Gross profit is derived from the revenue rows above: hardware revenue × 21.6% (the \$6,799 gross profit per \$31,500 node at the reference BOM of \$24,701, i.e. nodes deployed × \$6,799), plus recurring ARR × 88% (the SaaS gross margin stated in Section 4), plus services & SLA revenue × 50%. This document states no margin for services, so the 50% is an assumption; with services at 0% or 100% margin, Year 1 gross margin would be 22.6% or 36.7%. Gross margin is gross profit divided by total revenue. No volume BOM reduction is assumed.
+Hardware revenue is nodes deployed × the \$31,500 SMDC-Core-9U list price. Gross profit is derived from the revenue rows above: hardware revenue × 21.6% (the \$6,799 gross profit per \$31,500 node at the reference BOM of \$24,701, i.e. nodes deployed × \$6,799), plus recurring ARR × 88% (the SaaS gross margin stated in Section 4), plus services & SLA revenue × 50%. This document states no margin for services, so the 50% is an assumption; with services at 0% or 100% margin, Year 1 gross margin would be 22.7% or 36.7%. Gross margin is unrounded gross profit divided by unrounded total revenue (29.7% in Year 1, or 29.8% from the rounded $0.53M / $1.78M rows), and EBITDA margin is the rounded EBITDA row divided by the rounded total revenue row (-18.5% in Year 1, or -18.7% unrounded). No volume BOM reduction is assumed.
 
 > [!NOTE]
 > **How the operating rows are derived.** Operating expenses are an assumption, not a bottom-up cost model: the row is the schedule implied by the first version of this plan (at a \$24,500 list price), carried over unchanged at \$0.86M, \$2.35M, \$6.79M, \$19.36M and \$41.66M for Years 1 to 5. It is derived as implied operating expenses = original gross profit − original EBITDA, where original gross profit = original revenue × original gross margin and original EBITDA = original revenue × original EBITDA margin.
@@ -217,7 +217,7 @@ Slide 06: Unit Economics ───── 67.8% 3-Year TCO Savings ($81.3k saved 
                                $12k-capex cloud + diesel alternative of the TCO table; the website
                                calculator's $2,500/mo cloud-only default gives 13.0 mo)
 Slide 07: Business Model ───── Turnkey Hardware ($31.5k) + Sovereign SaaS ($199/node/mo)
-Slide 08: Traction & Code ──── 1406 Automated Tests, 92.5% Coverage, Ready-to-Deploy Stacks
+Slide 08: Traction & Code ──── 1409 Automated Tests, 92.5% Coverage, Ready-to-Deploy Stacks
 Slide 09: Technology Moat ──── Space DTN (RFC 9171), Energy Load-Shedder, PQC Signatures
 Slide 10: Financials ───────── $1.78M Y1 -> $23.95M Y3 -> $161.25M Y5 (4.7% EBITDA in Y5, scenario)
 Slide 11: Team & Advisory ──── Metatopia Studio: DeepTech Systems, AI & Embedded Engineers

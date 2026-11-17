@@ -296,14 +296,14 @@ void register_arduino_tests() {
     CHECK(!exported(M_V));
     CHECK_EQ_STR(metric_text(metrics_body(), M_AGE).value_or("<absent>"), "125.0");
 
-    // Full 32-bit millis() rollover without a new frame must never revive stale readings or wrap age.
-    smdc_host::now_ms = (1ULL << 32) + 6000;  // uint32_t difference wraps back to 1000 ms
+    // Full 32-bit millis() rollover without a new frame must never revive stale readings or wrap age,
+    // both within the first 10 s after wrap (+1,000 ms) and beyond it (+11,000 ms).
+    smdc_host::now_ms = 6000;  // 32-bit ESP32 millis() at 2^32 + 6,000 ms (wrapped diff 1,000 ms)
     CHECK(!exported(M_V) && !exported(M_I) && !exported(M_SOC) && !exported(M_PPV));
-    CHECK(metric_value(M_AGE).value_or(0.0) > (double)VE_STALE_MS / 1000.0);
-    smdc_host::now_ms = 6000;  // 32-bit ESP32 millis() value after rollover
+    CHECK(metric_value(M_AGE).value_or(0.0) > 4000000.0);
+    smdc_host::now_ms = 16000;  // 32-bit ESP32 millis() at 2^32 + 16,000 ms (wrapped diff 11,000 ms)
     CHECK(!exported(M_V) && !exported(M_I) && !exported(M_SOC) && !exported(M_PPV));
-    CHECK(metric_value(M_AGE).value_or(0.0) > (double)VE_STALE_MS / 1000.0);
-    smdc_host::now_ms = 5000 + 125000;
+    CHECK(metric_value(M_AGE).value_or(0.0) > 4000000.0);
 
     // Rejected frames do not revive anything.
     Bytes bad = vt::shunt_frame(25990, 4200, 431);

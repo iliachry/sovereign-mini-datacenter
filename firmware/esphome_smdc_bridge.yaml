@@ -156,6 +156,14 @@ globals:
     type: bool
     restore_value: no
     initial_value: "false"
+  - id: ve_age_anchor_ms # last millis() folded into ve_age_accum_ms
+    type: uint32_t
+    restore_value: no
+    initial_value: "0"
+  - id: ve_age_accum_ms # monotonic 64-bit elapsed ms since last valid frame
+    type: uint64_t
+    restore_value: no
+    initial_value: "0"
   # Per field, in parser order: V, I, PPV, SOC, VPV, H20.
   - id: ve_field_ms # millis() of the last usable value of each field
     type: uint32_t[6]
@@ -221,6 +229,8 @@ interval:
               }
             }
             id(ve_last_valid_ms) = now;
+            id(ve_age_anchor_ms) = now;
+            id(ve_age_accum_ms) = 0;
             id(ve_frame_seen) = true;
             if (id(ve_stale)) {
               id(ve_stale) = false;
@@ -299,7 +309,13 @@ interval:
           static const uint32_t VE_STALE_AFTER_MS = 10000;
           static const size_t FIELD_COUNT = 6;
           static const char *const LABELS[FIELD_COUNT] = {"V", "I", "PPV", "SOC", "VPV", "H20"};
-          if (!id(ve_frame_seen) || id(ve_stale)) {
+          if (!id(ve_frame_seen)) {
+            return;
+          }
+          const uint32_t now = millis();
+          id(ve_age_accum_ms) += static_cast<uint32_t>(now - id(ve_age_anchor_ms));
+          id(ve_age_anchor_ms) = now;
+          if (id(ve_stale)) {
             return;
           }
           auto withdraw = [&](size_t i) {
@@ -313,7 +329,6 @@ interval:
               default: id(solar_yield_today).publish_state(NAN); break;
             }
           };
-          const uint32_t now = millis();
           if (static_cast<uint32_t>(now - id(ve_last_valid_ms)) >= VE_STALE_AFTER_MS) {
             id(ve_stale) = true;
             ESP_LOGW("vedirect", "No valid VE.Direct frame for 10 s: marking readings unavailable");
@@ -428,11 +443,13 @@ sensor:
       if (!id(ve_frame_seen)) {
         return NAN;
       }
-      uint64_t age_ms = static_cast<uint32_t>(millis() - id(ve_last_valid_ms));
-      if (id(ve_stale) && age_ms <= 10000ULL) {
-        age_ms += (1ULL << 32);
+      const uint32_t now = millis();
+      id(ve_age_accum_ms) += static_cast<uint32_t>(now - id(ve_age_anchor_ms));
+      id(ve_age_anchor_ms) = now;
+      if (id(ve_stale) && id(ve_age_accum_ms) < 10000ULL) {
+        id(ve_age_accum_ms) += (1ULL << 32);
       }
-      return static_cast<float>(age_ms / 1000.0);
+      return static_cast<float>(static_cast<double>(id(ve_age_accum_ms)) / 1000.0);
 
   # WiFi Signal Strength
   - platform: wifi_signal

@@ -151,7 +151,7 @@ The coolant pump and the six 120mm fans are 12V devices, and the MikroTik switch
 - Connect the tap with a ring lug on a spare stud at the end of the Lynx positive busbar, and mount the fuse holder within about 150mm of the busbar: the wire between the busbar and the fuse is protected only by the pack fuses, which are far too large for 2.5mm² wire.
 - Load: pump 23W + six fans at 3.6W each (21.6W) + switch 23W + telemetry bridge 1.5W = 69.1W (about 5.7A), against a 20A converter; the sizing is in `COMPONENTS.md`.
 - The converter's input negative connects on the system side of the SmartShunt (the Lynx negative busbar), so the 12V load is included in the measured battery current.
-- The PWM signal for the fans and the pump comes from the system host's fan headers; only the 12V power comes from this rail. Without a PWM signal the fans and the pump run at full speed.
+- The PWM signal for the fans and the pump comes from the system host's fan headers; only the 12V power comes from this rail. Without a PWM signal the fans and the pump run at full speed; during initial commissioning (`ASSEMBLY_MANUAL.md` Phase 2), leave the D5 pump branch fuse out of the 4-way 12V fuse block until the cooling loop has passed its leak test and been filled in Phase 3 so the pump never runs dry.
 
 ---
 

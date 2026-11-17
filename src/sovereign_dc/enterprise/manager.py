@@ -256,6 +256,7 @@ class EnterpriseManager:
         # Apps this manager paused because of load shedding (as opposed to an operator
         # pause), with the causes still in force: CAUSE_TIER and/or CAUSE_SOC_FLOOR.
         self._shed_paused: dict[str, set[str]] = {}
+        self._operator_resumed_gen: dict[str, int] = {}
         # Incremented for every handled load-shedding event (see _shed_plan_is_stale).
         self._shed_generation = 0
         self._state_seq = 0
@@ -358,6 +359,7 @@ class EnterpriseManager:
             for app_id in [known for known in self._runtimes if known not in current]:
                 del self._runtimes[app_id]
                 self._shed_paused.pop(app_id, None)
+                self._operator_resumed_gen.pop(app_id, None)
             for app_id, manifest in current.items():
                 runtime = self._runtimes.get(app_id)
                 if runtime is None:
@@ -389,6 +391,7 @@ class EnterpriseManager:
             self._shedding_level = level
             self._shedding_soc = soc
             self._shed_generation += 1
+            self._operator_resumed_gen.clear()
             generation = self._shed_generation
             max_passes = max(8, len(self._runtimes) * 4 + 4)
 
@@ -413,7 +416,11 @@ class EnterpriseManager:
                     previous = self._shed_paused.get(app_id, set())
                     causes = self._shed_causes(runtime.manifest, level, soc, previous)
                     if runtime.status == AppStatus.RUNNING:
-                        if causes and paused_in_plan.get(app_id) != runtime.manifest:
+                        if (
+                            causes
+                            and paused_in_plan.get(app_id) != runtime.manifest
+                            and self._operator_resumed_gen.get(app_id) != generation
+                        ):
                             to_pause.append((app_id, causes))
                     elif runtime.status == AppStatus.PAUSED and app_id in self._shed_paused:
                         # Paused by shedding: keep the causes current, resume when none is left.
@@ -530,6 +537,7 @@ class EnterpriseManager:
             runtime.status = AppStatus.RUNNING
             self._apply_estimates(runtime, paused=False)
             self._shed_paused.pop(app_id, None)
+            self._operator_resumed_gen.pop(app_id, None)
             self._state_seq += 1
             payload = runtime.to_dict()
             payload["state_seq"] = self._state_seq
@@ -546,10 +554,11 @@ class EnterpriseManager:
                     break
                 cur_status = post_runtime.status
                 shed_owned = app_id in self._shed_paused
+                op_overridden = self._operator_resumed_gen.get(app_id) == cur_gen
                 prior_causes = set(self._shed_paused.get(app_id, set()))
                 post_causes = (
                     set()
-                    if cur_level is None
+                    if cur_level is None or (cur_status == AppStatus.RUNNING and op_overridden)
                     else self._shed_causes(post_runtime.manifest, cur_level, cur_soc, prior_causes)
                 )
             if cur_status == AppStatus.RUNNING and post_causes:
@@ -611,6 +620,7 @@ class EnterpriseManager:
             runtime.metrics_source = METRICS_SOURCE_NONE
             runtime.health_status = "stopped"
             self._shed_paused.pop(app_id, None)
+            self._operator_resumed_gen.pop(app_id, None)
             self._state_seq += 1
             payload = runtime.to_dict()
             payload["state_seq"] = self._state_seq
@@ -646,6 +656,8 @@ class EnterpriseManager:
         with self._lock:
             if self._shed_plan_is_stale(plan_generation):
                 return False, f"Application '{app_id}' left as it is: a newer load-shedding event was handled."
+            if by_shedding and self._operator_resumed_gen.get(app_id) == self._shed_generation:
+                return False, f"Application '{app_id}' was resumed by operator override for the current shedding state."
             runtime = self._runtimes.get(app_id)
             if not runtime or runtime.status != AppStatus.RUNNING:
                 return False, f"Application '{app_id}' is not currently running."
@@ -671,6 +683,7 @@ class EnterpriseManager:
 
             runtime.status = AppStatus.PAUSED
             self._apply_estimates(runtime, paused=True)
+            self._operator_resumed_gen.pop(app_id, None)
             if by_shedding:
                 self._shed_paused[app_id] = set(causes) if causes else {CAUSE_TIER}
             else:
@@ -730,6 +743,8 @@ class EnterpriseManager:
             runtime.status = AppStatus.RUNNING
             self._apply_estimates(runtime, paused=False)
             self._shed_paused.pop(app_id, None)
+            if plan_generation is None:
+                self._operator_resumed_gen[app_id] = self._shed_generation
             self._state_seq += 1
             payload = {"reason": reason, "state_seq": self._state_seq}
             payload.update(runtime.to_dict())

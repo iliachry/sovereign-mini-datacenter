@@ -200,15 +200,21 @@ void register_esphome_tests() {
     smdc_ve_watchdog_lambda();
     CHECK(!ve_stale);
     CHECK(close_to(smdc_ve_frame_age_lambda(), 0.512));
-    smdc_host::now_ms = 0x00000100u + 10000u;
+    smdc_host::now_ms = 0xFFFFFF00u + 10000u;  // exact 10,000 ms threshold after frame at 0xFFFFFF00u
     smdc_ve_watchdog_lambda();
     CHECK(ve_stale);
-    // After a full 32-bit wrap while remaining stale, age stays > 10s and sensors stay withdrawn.
+    CHECK(close_to(smdc_ve_frame_age_lambda(), 10.0));  // exact 10.0 s, not a false rollover
+    smdc_host::now_ms = 0xFFFFFF00u + 10001u;
+    CHECK(close_to(smdc_ve_frame_age_lambda(), 10.001));
+    // After a full 32-bit wrap while remaining stale, age stays > 4e6 s at both +1s and +11s wrapped diff.
     smdc_host::now_ms = 0xFFFFFF00u + 1000u;
     smdc_ve_watchdog_lambda();
     CHECK(ve_stale);
     CHECK(!battery_voltage.reporting() && !battery_soc.reporting());
-    CHECK(smdc_ve_frame_age_lambda() > 10.0);
+    CHECK(smdc_ve_frame_age_lambda() > 4000000.0);
+    smdc_host::now_ms = 0xFFFFFF00u + 11000u;
+    smdc_ve_watchdog_lambda();
+    CHECK(smdc_ve_frame_age_lambda() > 4000000.0);
   });
 }
 

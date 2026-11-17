@@ -31,10 +31,10 @@ def test_firmware_wrap_guards_and_exporter_age_rejection(tmp_path: Path) -> None
     assert "bool veFrameStale = false;" in ino
     assert "readingSet[idx] = false;" in ino
     assert "expireStaleReadings();" in ino
-    assert "ageMs += (1ULL << 32);" in ino
+    assert "veAgeAccumMs += (1ULL << 32);" in ino
 
     esp = (root / "firmware" / "esphome_smdc_bridge.yaml").read_text(encoding="utf-8")
-    assert "if (id(ve_stale) && age_ms <= 10000ULL)" in esp
+    assert "if (id(ve_stale) && id(ve_age_accum_ms) < 10000ULL)" in esp
 
     from sovereign_dc import telemetry as exporter_mod
 

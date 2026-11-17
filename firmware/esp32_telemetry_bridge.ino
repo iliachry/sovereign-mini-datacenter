@@ -104,6 +104,8 @@ bool veStagedSet[VE_FIELD_COUNT] = {false, false, false, false};
 bool veFrameSeen = false;
 bool veFrameStale = false;
 unsigned long veLastFrameMs = 0;
+uint32_t veAgeAnchorMs = 0;
+uint64_t veAgeAccumMs = 0;
 unsigned long veFramesValid = 0;
 unsigned long veChecksumErrors = 0;
 
@@ -159,6 +161,8 @@ void veCommitFrame() {
   veFrameSeen = true;
   veFrameStale = false;
   veLastFrameMs = now;
+  veAgeAnchorMs = (uint32_t)now;
+  veAgeAccumMs = 0;
   veFramesValid++;
 }
 
@@ -264,11 +268,30 @@ void serviceTemperatures() {
   }
 }
 
+uint64_t currentVeFrameAgeMs() {
+  if (!veFrameSeen) {
+    return 0;
+  }
+  unsigned long now = millis();
+  uint32_t now32 = (uint32_t)now;
+  veAgeAccumMs += (uint32_t)(now32 - veAgeAnchorMs);
+  veAgeAnchorMs = now32;
+  unsigned long rawDiff = now - veLastFrameMs;
+  if ((uint64_t)rawDiff > veAgeAccumMs) {
+    veAgeAccumMs = (uint64_t)rawDiff;
+  }
+  if (veFrameStale && veAgeAccumMs <= (uint64_t)VE_STALE_MS) {
+    veAgeAccumMs += (1ULL << 32);
+  }
+  return veAgeAccumMs;
+}
+
 bool readingFresh(int idx, unsigned long maxAgeMs) {
   if (!readingSet[idx]) {
     return false;
   }
-  if ((uint32_t)(millis() - readingStamp[idx]) > (uint32_t)maxAgeMs) {
+  unsigned long now = millis();
+  if ((uint32_t)(now - readingStamp[idx]) > (uint32_t)maxAgeMs || (now - readingStamp[idx]) > maxAgeMs) {
     readingSet[idx] = false;
     return false;
   }
@@ -276,7 +299,7 @@ bool readingFresh(int idx, unsigned long maxAgeMs) {
 }
 
 void expireStaleReadings() {
-  if (veFrameSeen && !veFrameStale && (uint32_t)(millis() - veLastFrameMs) > (uint32_t)VE_STALE_MS) {
+  if (veFrameSeen && currentVeFrameAgeMs() > (uint64_t)VE_STALE_MS) {
     veFrameStale = true;
   }
   for (int i = 0; i < VE_FIELD_COUNT; i++) {
@@ -316,10 +339,7 @@ void handleMetrics() {
   appendGauge(out, "sovereign_hw_coolant_exhaust_temp_celsius", "Radiator exhaust temperature", R_COOLANT_EXHAUST, TEMP_STALE_MS, 2);
 
   if (veFrameSeen) {
-    uint64_t ageMs = (uint32_t)(millis() - veLastFrameMs);
-    if (veFrameStale && ageMs <= (uint32_t)VE_STALE_MS) {
-      ageMs += (1ULL << 32);
-    }
+    uint64_t ageMs = currentVeFrameAgeMs();
     out += "# HELP sovereign_hw_vedirect_last_frame_age_seconds Seconds since the last checksum-valid VE.Direct frame\n";
     out += "# TYPE sovereign_hw_vedirect_last_frame_age_seconds gauge\n";
     out += "sovereign_hw_vedirect_last_frame_age_seconds " + String((double)ageMs / 1000.0, 1) + "\n\n";
