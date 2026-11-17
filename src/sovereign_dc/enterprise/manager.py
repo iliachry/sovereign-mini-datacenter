@@ -577,9 +577,30 @@ class EnterpriseManager:
                     if ok:
                         continue
                     break
+                recheck_needed = False
                 with self._lock:
-                    if app_id in self._shed_paused:
-                        self._shed_paused[app_id] = set(post_causes)
+                    if self._shed_plan_is_stale(cur_gen):
+                        recheck_needed = True
+                    else:
+                        tracked_rt = self._runtimes.get(app_id)
+                        if (
+                            tracked_rt is not None
+                            and tracked_rt.status == AppStatus.PAUSED
+                            and app_id in self._shed_paused
+                            and self._shedding_level is not None
+                        ):
+                            fresh_causes = self._shed_causes(
+                                tracked_rt.manifest,
+                                self._shedding_level,
+                                self._shedding_soc,
+                                set(self._shed_paused[app_id]),
+                            )
+                            if not fresh_causes:
+                                recheck_needed = True
+                            else:
+                                self._shed_paused[app_id] = fresh_causes
+                if recheck_needed:
+                    continue
             break
 
         with self._lock:

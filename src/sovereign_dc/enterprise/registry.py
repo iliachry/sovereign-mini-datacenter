@@ -236,8 +236,17 @@ def exclusive_file_lock(
                 try:
                     stale_st = excl_path.stat()
                     stale_bytes = excl_path.read_bytes()
-                except OSError:
-                    continue  # released between calls: retry at once
+                except FileNotFoundError:
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError(f"registry lock {excl_path} is held by another process") from None
+                    continue  # released between calls: retry until deadline
+                except OSError as err:
+                    if os.name == "nt" and getattr(err, "winerror", None) in (5, 32, 33):
+                        if time.monotonic() >= deadline:
+                            raise TimeoutError(f"registry lock {excl_path} is held by another process") from err
+                        time.sleep(poll_s)
+                        continue
+                    raise
                 age = time.time() - stale_st.st_mtime
                 if age >= stale_s and not _is_token_owner_alive(stale_bytes):
                     stale_tag = hashlib.sha256(stale_bytes).hexdigest()[:16]

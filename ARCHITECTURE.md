@@ -334,9 +334,9 @@ The aim is security that does not depend on external Certificate Authorities or 
 
 ---
 
-## 8. Disaster Recovery, Black-Start & Self-Healing Protocol
+## 8. Disaster Recovery, Black-Start & Self-Healing Protocol (Target Design)
 
-When a node experiences a catastrophic blackout or hardware fault, it recovers autonomously through a deterministic **Cold-Start Sequence**:
+> **Target design, not implemented.** Autonomous relay switching and BMS-gated cold-start recovery are target hardware architecture behaviours, not implemented in this repository. As stated in Section 4 ("Nothing throttles a GPU, switches a relay or suspends a node") and `firmware/README.md`, the shipped ESP32 firmware is read-only telemetry (VE.Direct UART + DS18B20 1-Wire) and drives only `STATUS_LED_PIN` (no BMS cell reads, relay outputs, or SoC gates). Under the target architecture, recovery follows this **Cold-Start Sequence**:
 
 ```mermaid
 sequenceDiagram
@@ -349,14 +349,14 @@ sequenceDiagram
     participant Mesh as "🌐 Sovereign Mesh Peers"
 
     Sun->>BMS: Solar irradiance restores voltage (above 48V)
-    BMS->>ESP: BMS activates 5V Auxiliary Rail
-    ESP->>ESP: Boot ESP32 firmware, read cell voltages and temperatures
-    Note over ESP: Wait until battery SoC above 25% (Safe Hysteresis)
-    ESP->>PDU: Trigger Relay Pin (Engage Main Inverter & 12V/19V Rails)
-    PDU->>Compute: Cold Boot Compute Nodes (Wake-on-Power)
+    BMS->>ESP: BMS activates 5V Auxiliary Rail (target design)
+    ESP->>ESP: Boot ESP32 firmware, read cell voltages and temperatures (target design, not implemented)
+    Note over ESP: Wait until battery SoC above 25% (Safe Hysteresis; target design, not implemented)
+    ESP->>PDU: Trigger Relay Pin (Engage Main Inverter & 12V/19V Rails; target design, not implemented)
+    PDU->>Compute: Cold Boot Compute Nodes (Wake-on-Power; target design, not implemented)
     Compute->>Compute: Load Talos Linux / K3s immutable OS
     Compute->>Compute: Initialize WireGuard & Headscale client
-    Compute->>Mesh: Send WireGuard & LoRa NODE_ONLINE_RECOVERED Beacon
+    Compute->>Mesh: Send WireGuard & LoRa NODE_ONLINE_RECOVERED Beacon (target design, not implemented)
     Mesh-->>Compute: Replay missed state logs & DTN bundles (target design, not implemented)
     Note over Compute: Node operational (peers are only probed for reachability today)
 ```
