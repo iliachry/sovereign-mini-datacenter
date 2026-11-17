@@ -243,8 +243,9 @@ MODE_DEFAULT_LEVELS: dict[str, int] = {
     "CRITICAL_SHEDDING": 3,
 }
 # With mode and level unchanged, the event is published again once SoC has moved by this
-# many percentage points, so that subscribers comparing SoC with a per-application floor
-# (EnterpriseManager, power.min_battery_soc) see it at this resolution.
+# many percentage points (or reached the 0 % / 100 % endpoints), so that subscribers
+# comparing SoC with a per-application floor (EnterpriseManager, power.min_battery_soc)
+# see it at this resolution without suppressing full charge or empty.
 SOC_REPUBLISH_DELTA_PERCENT = 1.0
 
 
@@ -551,6 +552,8 @@ def run_copilot() -> None:
                 decision.level != published_level
                 or published_soc is None
                 or abs(decision.soc - published_soc) >= SOC_REPUBLISH_DELTA_PERCENT
+                or (decision.soc >= 100.0 and published_soc < 100.0)
+                or (decision.soc <= 0.0 and published_soc > 0.0)
             ):
                 # Same mode, but the level changed or SoC moved: subscribers need the event.
                 if decision.level != published_level:
