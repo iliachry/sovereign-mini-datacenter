@@ -203,6 +203,12 @@ void register_esphome_tests() {
     smdc_host::now_ms = 0x00000100u + 10000u;
     smdc_ve_watchdog_lambda();
     CHECK(ve_stale);
+    // After a full 32-bit wrap while remaining stale, age stays > 10s and sensors stay withdrawn.
+    smdc_host::now_ms = 0xFFFFFF00u + 1000u;
+    smdc_ve_watchdog_lambda();
+    CHECK(ve_stale);
+    CHECK(!battery_voltage.reporting() && !battery_soc.reporting());
+    CHECK(smdc_ve_frame_age_lambda() > 10.0);
   });
 }
 

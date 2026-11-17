@@ -537,39 +537,60 @@ class EnterpriseManager:
         self.event_bus.publish(
             Event(event_type=f"enterprise.{app_id}.started", source="enterprise_manager", payload=payload)
         )
-        self._sync_with_registry()
-        with self._lock:
-            post_runtime = self._runtimes.get(app_id)
-            cur_level, cur_soc, cur_gen = self._shedding_level, self._shedding_soc, self._shed_generation
-            post_causes = (
-                set()
-                if post_runtime is None or post_runtime.status != AppStatus.RUNNING or cur_level is None
-                else self._shed_causes(post_runtime.manifest, cur_level, cur_soc, self._shed_paused.get(app_id, set()))
-            )
-        if post_causes:
-            soc_text = "" if cur_soc is None else f", battery SoC {cur_soc:.1f}%"
-            reason = f"Load shedding level {cur_level}{soc_text} ({' + '.join(sorted(post_causes))})"
-            self._pause(app_id, reason, by_shedding=True, causes=post_causes, plan_generation=cur_gen)
+        for _ in range(4):
+            self._sync_with_registry()
             with self._lock:
-                tracked = self._runtimes.get(app_id)
-                held_by_shedding = (
-                    tracked is not None and tracked.status == AppStatus.PAUSED and app_id in self._shed_paused
+                post_runtime = self._runtimes.get(app_id)
+                cur_level, cur_soc, cur_gen = self._shedding_level, self._shedding_soc, self._shed_generation
+                if post_runtime is None:
+                    break
+                cur_status = post_runtime.status
+                shed_owned = app_id in self._shed_paused
+                prior_causes = set(self._shed_paused.get(app_id, set()))
+                post_causes = (
+                    set()
+                    if cur_level is None
+                    else self._shed_causes(post_runtime.manifest, cur_level, cur_soc, prior_causes)
                 )
-                active_causes = set(self._shed_paused.get(app_id, set()))
-                eff_level = self._shedding_level
-                eff_soc = self._shedding_soc
-            if held_by_shedding:
-                eff_soc_text = "" if eff_soc is None else f", battery SoC {eff_soc:.1f}%"
-                eff_reason = (
-                    f"Load shedding level {eff_level}{eff_soc_text} ({' + '.join(sorted(active_causes))})"
-                    if active_causes
-                    else reason
-                )
-                return True, (
-                    f"Application '{app_id}' started but held paused by load shedding: {eff_reason}. "
-                    "It resumes automatically when shedding eases (state tracked; no process is supervised by this manager)."
-                )
-        logger.info("Marked enterprise app '%s' running (Power Tier: %s)", app_id, manifest.power.tier.value)
+            if cur_status == AppStatus.RUNNING and post_causes:
+                soc_text = "" if cur_soc is None else f", battery SoC {cur_soc:.1f}%"
+                reason = f"Load shedding level {cur_level}{soc_text} ({' + '.join(sorted(post_causes))})"
+                ok, _ = self._pause(app_id, reason, by_shedding=True, causes=post_causes, plan_generation=cur_gen)
+                if ok:
+                    continue
+                break
+            if cur_status == AppStatus.PAUSED and shed_owned:
+                if not post_causes:
+                    soc_text = "" if cur_soc is None else f", battery SoC {cur_soc:.1f}%"
+                    lvl_text = "nominal" if cur_level is None else f"level {cur_level}"
+                    reason = f"Load shedding {lvl_text}{soc_text} permits current manifest"
+                    ok, _ = self.resume_app(app_id, reason, plan_generation=cur_gen)
+                    if ok:
+                        continue
+                    break
+                with self._lock:
+                    if app_id in self._shed_paused:
+                        self._shed_paused[app_id] = set(post_causes)
+            break
+
+        with self._lock:
+            tracked = self._runtimes.get(app_id)
+            held_by_shedding = (
+                tracked is not None and tracked.status == AppStatus.PAUSED and app_id in self._shed_paused
+            )
+            active_causes = set(self._shed_paused.get(app_id, set()))
+            eff_level = self._shedding_level
+            eff_soc = self._shedding_soc
+            final_manifest = tracked.manifest if tracked is not None else manifest
+        if held_by_shedding:
+            eff_soc_text = "" if eff_soc is None else f", battery SoC {eff_soc:.1f}%"
+            cause_part = f" ({' + '.join(sorted(active_causes))})" if active_causes else ""
+            eff_reason = f"Load shedding level {eff_level}{eff_soc_text}{cause_part}"
+            return True, (
+                f"Application '{app_id}' started but held paused by load shedding: {eff_reason}. "
+                "It resumes automatically when shedding eases (state tracked; no process is supervised by this manager)."
+            )
+        logger.info("Marked enterprise app '%s' running (Power Tier: %s)", app_id, final_manifest.power.tier.value)
         return True, f"Application '{app_id}' started (state tracked; no process is supervised by this manager)."
 
     def stop_app(self, app_id: str) -> tuple[bool, str]:

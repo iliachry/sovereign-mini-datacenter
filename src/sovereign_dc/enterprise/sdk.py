@@ -410,6 +410,9 @@ class SMDCClient:
             if soc is None or solar_w is None:
                 telemetry = self.get_telemetry()
                 source = str(telemetry.get("source") or "unavailable")
+                if source == "unavailable" and getattr(self.get_telemetry, "__func__", None) is _ORIG_GET_TELEMETRY:
+                    telemetry = self._read_pricing_telemetry(need_soc=(soc is None), need_solar=(solar_w is None))
+                    source = str(telemetry.get("source") or "unavailable")
                 if source != "unavailable":
                     nested_power = telemetry.get("power")
                     simulated = telemetry.get("is_simulated")
@@ -445,6 +448,68 @@ class SMDCClient:
             return {**quote.to_dict(), "status": "quoted", "pricing_available": True, "inputs": inputs}
         except Exception as e:
             return {"status": "error", "pricing_available": False, "error": str(e), "inputs": inputs}
+
+    def _read_pricing_telemetry(self, *, need_soc: bool, need_solar: bool) -> dict[str, Any]:
+        """Reads only missing pricing inputs so partial bridges (e.g. MPPT-only solar) stay usable."""
+        data = self._http_get("/api/status")
+        if isinstance(data, dict) and isinstance(data.get("power"), dict):
+            power_dict = data["power"]
+            api_soc = _finite_or_none(power_dict.get("battery_soc"))
+            api_solar = _finite_or_none(power_dict.get("solar_watts"))
+            if not need_soc or api_soc is not None:
+                return {
+                    **data,
+                    "battery_soc": api_soc,
+                    "solar_watts": api_solar,
+                    "is_simulated": power_dict.get("is_simulated"),
+                    "source": "api",
+                }
+
+        try:
+            from sovereign_dc.config import get_config
+            from sovereign_dc.hal.power import (
+                METRIC_SIMULATED,
+                METRIC_SOLAR_WATTS,
+                fetch_exporter_metrics,
+                optional_metric,
+                read_power,
+            )
+
+            cfg = get_config()
+            exporter_url = cfg.power_exporter_url
+            simulation = cfg.is_simulation()
+            if need_soc:
+                power = read_power(exporter_url, simulation=simulation)
+                return {
+                    "battery_soc": float(power.battery_soc),
+                    "solar_watts": power.solar_watts if need_solar else None,
+                    "is_simulated": bool(power.is_simulated),
+                    "source": "hal",
+                }
+            if need_solar:
+                try:
+                    metrics = fetch_exporter_metrics(exporter_url)
+                    return {
+                        "battery_soc": None,
+                        "solar_watts": optional_metric(metrics, METRIC_SOLAR_WATTS),
+                        "is_simulated": bool(metrics.get(METRIC_SIMULATED, 0.0) > 0),
+                        "source": "hal",
+                    }
+                except Exception:
+                    if simulation:
+                        power = read_power(exporter_url, simulation=True)
+                        return {
+                            "battery_soc": None,
+                            "solar_watts": power.solar_watts,
+                            "is_simulated": bool(power.is_simulated),
+                            "source": "hal",
+                        }
+        except Exception as e:
+            logger.debug("Partial pricing telemetry unavailable: %s", e)
+        return {"source": "unavailable"}
+
+
+_ORIG_GET_TELEMETRY = SMDCClient.get_telemetry
 
 
 class AppLifecycleHandler:

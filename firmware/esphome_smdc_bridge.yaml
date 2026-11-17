@@ -428,7 +428,11 @@ sensor:
       if (!id(ve_frame_seen)) {
         return NAN;
       }
-      return static_cast<uint32_t>(millis() - id(ve_last_valid_ms)) / 1000.0f;
+      uint64_t age_ms = static_cast<uint32_t>(millis() - id(ve_last_valid_ms));
+      if (id(ve_stale) && age_ms <= 10000ULL) {
+        age_ms += (1ULL << 32);
+      }
+      return static_cast<float>(age_ms / 1000.0);
 
   # WiFi Signal Strength
   - platform: wifi_signal

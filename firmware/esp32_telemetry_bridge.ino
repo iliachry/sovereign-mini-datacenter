@@ -33,6 +33,7 @@
 #include <OneWire.h>
 #include <DallasTemperature.h>
 #include <math.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -101,6 +102,7 @@ float veStagedValue[VE_FIELD_COUNT];
 bool veStagedSet[VE_FIELD_COUNT] = {false, false, false, false};
 
 bool veFrameSeen = false;
+bool veFrameStale = false;
 unsigned long veLastFrameMs = 0;
 unsigned long veFramesValid = 0;
 unsigned long veChecksumErrors = 0;
@@ -155,6 +157,7 @@ void veCommitFrame() {
     }
   }
   veFrameSeen = true;
+  veFrameStale = false;
   veLastFrameMs = now;
   veFramesValid++;
 }
@@ -247,14 +250,14 @@ void storeTemperature(int idx, float celsius) {
 void serviceTemperatures() {
   unsigned long now = millis();
   if (tempConversionPending) {
-    if (now - tempRequestMs >= TEMP_CONVERSION_MS) {
+    if ((uint32_t)(now - tempRequestMs) >= (uint32_t)TEMP_CONVERSION_MS) {
       // Index order follows the 1-Wire address enumeration, not the physical
       // position: check which probe is index 0 before trusting the labels.
       storeTemperature(R_COOLANT_INTAKE, sensors.getTempCByIndex(0));
       storeTemperature(R_COOLANT_EXHAUST, sensors.getTempCByIndex(1));
       tempConversionPending = false;
     }
-  } else if (now - tempRequestMs >= TEMP_PERIOD_MS) {
+  } else if ((uint32_t)(now - tempRequestMs) >= (uint32_t)TEMP_PERIOD_MS) {
     sensors.requestTemperatures();  // returns immediately (setWaitForConversion(false))
     tempRequestMs = now;
     tempConversionPending = true;
@@ -262,7 +265,25 @@ void serviceTemperatures() {
 }
 
 bool readingFresh(int idx, unsigned long maxAgeMs) {
-  return readingSet[idx] && (millis() - readingStamp[idx] <= maxAgeMs);
+  if (!readingSet[idx]) {
+    return false;
+  }
+  if ((uint32_t)(millis() - readingStamp[idx]) > (uint32_t)maxAgeMs) {
+    readingSet[idx] = false;
+    return false;
+  }
+  return true;
+}
+
+void expireStaleReadings() {
+  if (veFrameSeen && !veFrameStale && (uint32_t)(millis() - veLastFrameMs) > (uint32_t)VE_STALE_MS) {
+    veFrameStale = true;
+  }
+  for (int i = 0; i < VE_FIELD_COUNT; i++) {
+    (void)readingFresh(i, VE_STALE_MS);
+  }
+  (void)readingFresh(R_COOLANT_INTAKE, TEMP_STALE_MS);
+  (void)readingFresh(R_COOLANT_EXHAUST, TEMP_STALE_MS);
 }
 
 void appendGauge(String &out, const char *name, const char *help, int idx, unsigned long maxAgeMs, unsigned int decimals) {
@@ -283,6 +304,7 @@ void appendGauge(String &out, const char *name, const char *help, int idx, unsig
 }
 
 void handleMetrics() {
+  expireStaleReadings();
   String out = "";
   out.reserve(1536);
 
@@ -294,9 +316,13 @@ void handleMetrics() {
   appendGauge(out, "sovereign_hw_coolant_exhaust_temp_celsius", "Radiator exhaust temperature", R_COOLANT_EXHAUST, TEMP_STALE_MS, 2);
 
   if (veFrameSeen) {
+    uint64_t ageMs = (uint32_t)(millis() - veLastFrameMs);
+    if (veFrameStale && ageMs <= (uint32_t)VE_STALE_MS) {
+      ageMs += (1ULL << 32);
+    }
     out += "# HELP sovereign_hw_vedirect_last_frame_age_seconds Seconds since the last checksum-valid VE.Direct frame\n";
     out += "# TYPE sovereign_hw_vedirect_last_frame_age_seconds gauge\n";
-    out += "sovereign_hw_vedirect_last_frame_age_seconds " + String((millis() - veLastFrameMs) / 1000.0f, 1) + "\n\n";
+    out += "sovereign_hw_vedirect_last_frame_age_seconds " + String((double)ageMs / 1000.0, 1) + "\n\n";
   }
 
   out += "# HELP sovereign_hw_vedirect_frames_valid_total Checksum-valid VE.Direct frames since boot\n";
@@ -320,6 +346,7 @@ void logReading(const char *label, int idx, unsigned long maxAgeMs, unsigned int
 }
 
 void logStatus() {
+  expireStaleReadings();
   logReading("[STATUS] BATT V: ", R_BATTERY_VOLTAGE, VE_STALE_MS, 2);
   logReading(" | I A: ", R_BATTERY_CURRENT, VE_STALE_MS, 2);
   logReading(" | SoC %: ", R_BATTERY_SOC, VE_STALE_MS, 1);
@@ -362,8 +389,9 @@ void loop() {
   }
 
   serviceTemperatures();
+  expireStaleReadings();
 
-  if (millis() - lastStatusLog > STATUS_LOG_MS) {
+  if ((uint32_t)(millis() - lastStatusLog) > (uint32_t)STATUS_LOG_MS) {
     lastStatusLog = millis();
     logStatus();
   }
