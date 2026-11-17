@@ -146,9 +146,9 @@ Gross Profit           $0.53M       $2.12M       $7.19M      $21.35M      $49.28
 Gross Margin (%)        29.7%        30.1%        30.0%        30.1%        30.6%
 ─────────────────────────────────────────────────────────────────────────────────
 Operating Expenses     $0.86M       $2.35M       $6.79M      $19.36M      $41.66M
-EBITDA                -$0.33M      -$0.23M      +$0.41M      +$1.99M      +$7.62M
+EBITDA                -$0.33M      -$0.23M      +$0.40M      +$1.99M      +$7.62M
 EBITDA Margin (%)      -18.5%        -3.3%         1.7%         2.8%         4.7%
-Net Operating Cash    -$0.33M      -$0.23M      +$0.41M      +$1.99M      +$7.62M
+Net Operating Cash    -$0.33M      -$0.23M      +$0.40M      +$1.99M      +$7.62M
 ```
 
 Hardware revenue is nodes deployed × the \$31,500 SMDC-Core-9U list price. Gross profit is derived from the revenue rows above: hardware revenue × 21.6% (the \$6,799 gross profit per \$31,500 node at the reference BOM of \$24,701, i.e. nodes deployed × \$6,799), plus recurring ARR × 88% (the SaaS gross margin stated in Section 4), plus services & SLA revenue × 50%. This document states no margin for services, so the 50% is an assumption; with services at 0% or 100% margin, Year 1 gross margin would be 22.7% or 36.7%. Gross margin is unrounded gross profit divided by unrounded total revenue (29.7% in Year 1, or 29.8% from the rounded $0.53M / $1.78M rows), and EBITDA margin is the rounded EBITDA row divided by the rounded total revenue row (-18.5% in Year 1, or -18.7% unrounded). No volume BOM reduction is assumed.
@@ -165,7 +165,7 @@ Hardware revenue is nodes deployed × the \$31,500 SMDC-Core-9U list price. Gros
 >
 > EBITDA in the table above = gross profit − operating expenses, and EBITDA margin = EBITDA ÷ total revenue. In the original table net operating cash equalled revenue × EBITDA margin to within rounding (\$0.01M) in every year, so net operating cash is set equal to EBITDA here as well; no working-capital, tax or capital-expenditure effects are modelled. The original gross margins (46–69%) assumed a much lower BOM than the itemised one, which is why EBITDA is far lower here than in the original table, and why it turns positive in Year 3 rather than Year 2.
 >
-> **Status of these figures.** Because operating expenses are an assumption carried over from the original plan, the EBITDA and cash rows are a scenario, not a forecast: they show what the stated revenue and the itemised BOM imply if spending follows that schedule. Sensitivity of the result to the assumption, computed from the table (EBITDA = gross profit − operating expenses × factor):
+> **Status of these figures.** Because operating expenses are an assumption carried over from the original plan, the EBITDA and cash rows are a scenario, not a forecast: they show what the stated revenue and the itemised BOM imply if spending follows that schedule. Sensitivity of the result to the assumption, computed from the rounded Year 5 rows above ($49.28M gross profit minus the rounded operating-expense column = $41.66M × factor; -$0.71M before rounding $49.992M to $50.00M):
 >
 > | Operating expenses in Year 5 | Year 5 operating expenses | Year 5 EBITDA | Year 5 EBITDA margin |
 > | :--- | ---: | ---: | ---: |
@@ -217,7 +217,7 @@ Slide 06: Unit Economics ───── 67.8% 3-Year TCO Savings ($81.3k saved 
                                $12k-capex cloud + diesel alternative of the TCO table; the website
                                calculator's $2,500/mo cloud-only default gives 13.0 mo)
 Slide 07: Business Model ───── Turnkey Hardware ($31.5k) + Sovereign SaaS ($199/node/mo)
-Slide 08: Traction & Code ──── 1409 Automated Tests, 92.5% Coverage, Ready-to-Deploy Stacks
+Slide 08: Traction & Code ──── 1416 Automated Tests, 92.5% Coverage, Ready-to-Deploy Stacks
 Slide 09: Technology Moat ──── Space DTN (RFC 9171), Energy Load-Shedder, PQC Signatures
 Slide 10: Financials ───────── $1.78M Y1 -> $23.95M Y3 -> $161.25M Y5 (4.7% EBITDA in Y5, scenario)
 Slide 11: Team & Advisory ──── Metatopia Studio: DeepTech Systems, AI & Embedded Engineers

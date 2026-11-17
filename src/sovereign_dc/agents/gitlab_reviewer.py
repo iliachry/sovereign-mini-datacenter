@@ -44,7 +44,7 @@ REVIEW_MARKER_TEMPLATE = "<!-- smdc-ai-review sha={sha} -->"
 # User id of the account behind GITLAB_API_TOKEN, resolved once via GET /user.
 _reviewer_user_id: int | None = None
 
-_QUICK_ACTION_LINE = re.compile(r"^([ \t]*)/", re.MULTILINE)
+_QUICK_ACTION_LINE = re.compile(r"^([^\S\n]*)/", re.MULTILINE)
 
 ReviewKey = tuple[int, int, str]
 
@@ -98,9 +98,12 @@ def neutralize_quick_actions(markdown: str) -> str:
 
     LLM output is untrusted (it is derived from attacker-controllable diffs); a line
     such as ``/merge`` or ``/approve`` in a note body would otherwise be executed with
-    the reviewer token's permissions. A leading backslash renders as a literal slash.
+    the reviewer token's permissions. GitLab's quick-action extractor strips ``\r`` before
+    matching command lines, so ``\r\n`` is normalised to ``\n`` and any bare ``\r`` is
+    removed before escaping leading slashes. A leading backslash renders as a literal slash.
     """
-    return _QUICK_ACTION_LINE.sub(lambda m: m.group(1) + "\\/", markdown)
+    normalized = markdown.replace("\r\n", "\n").replace("\r", "")
+    return _QUICK_ACTION_LINE.sub(lambda m: m.group(1) + "\\/", normalized)
 
 
 def review_code_diff(project_id: int, mr_iid: int, diff_text: str, head_sha: str = "") -> bool:
