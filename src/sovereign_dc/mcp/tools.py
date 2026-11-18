@@ -581,7 +581,7 @@ def tool_dispatch_technician_alert(params: dict[str, Any]) -> dict[str, Any]:
     )
 
     return {
-        "dispatched": True,
+        "dispatched": any(channel_results.values()),
         "message": message,
         "severity": severity_str,
         "channels": channel_results,
