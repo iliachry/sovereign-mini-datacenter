@@ -50,6 +50,7 @@ import json
 import logging
 import math
 import os
+import shutil
 import tarfile
 import threading
 import time
@@ -163,6 +164,18 @@ def _package_signing_input(metadata: dict[str, Any], scheme: str | None) -> byte
             separators=(",", ":"),
         ).encode("utf-8")
     return str(metadata.get("sha256", "")).encode("utf-8")
+
+
+def _backup_package_artifact(src: Path, dst: Path) -> None:
+    """Preserves ``src`` at sibling dot-file ``dst`` without removing ``src``."""
+    if not src.is_symlink():
+        try:
+            os.link(src, dst)
+            return
+        except OSError:
+            with contextlib.suppress(OSError):
+                dst.unlink()
+    shutil.copy2(src, dst, follow_symlinks=False)
 
 
 def _sha256_file(path: Path) -> str:
@@ -851,15 +864,24 @@ class EnterpriseManager:
         # Archive and sidecar are built under temporary dot-names (never collected into a
         # package) and renamed into place only when every requested step, signing included,
         # has succeeded: a failed run leaves no file that looks like a finished package.
-        tmp_token = f"{os.getpid()}-{time.time_ns()}"
+        tmp_token = f"{os.getpid()}-{time.time_ns()}-{os.urandom(4).hex()}"
         tmp_out = out_file.with_name(f".{out_file.name}.{tmp_token}.tmp")
         tmp_sidecar = sidecar.with_name(f".{sidecar.name}.{tmp_token}.tmp")
+        bak_out = out_file.with_name(f".{out_file.name}.{tmp_token}.bak")
+        bak_sidecar = sidecar.with_name(f".{sidecar.name}.{tmp_token}.bak")
 
         try:
             out_file.parent.mkdir(parents=True, exist_ok=True)
             members = self._collect_package_files(
                 source_dir,
-                skip={out_file.resolve(), sidecar.resolve(), tmp_out.resolve(), tmp_sidecar.resolve()},
+                skip={
+                    out_file.resolve(),
+                    sidecar.resolve(),
+                    tmp_out.resolve(),
+                    tmp_sidecar.resolve(),
+                    bak_out.resolve(),
+                    bak_sidecar.resolve(),
+                },
             )
 
             # Build tarball
@@ -907,10 +929,30 @@ class EnterpriseManager:
                         {},
                     )
 
-            # Save manifest sidecar, then publish sidecar and archive.
+            # Save manifest sidecar, then publish archive and sidecar with rollback of any prior pair.
             tmp_sidecar.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
-            os.replace(tmp_out, out_file)
-            os.replace(tmp_sidecar, sidecar)
+            had_out = os.path.lexists(out_file)
+            had_sidecar = os.path.lexists(sidecar)
+            if had_out:
+                _backup_package_artifact(out_file, bak_out)
+            if had_sidecar:
+                _backup_package_artifact(sidecar, bak_sidecar)
+            out_replaced = False
+            try:
+                os.replace(tmp_out, out_file)
+                out_replaced = True
+                os.replace(tmp_sidecar, sidecar)
+            except BaseException:
+                if out_replaced:
+                    with contextlib.suppress(OSError):
+                        if had_out:
+                            os.replace(bak_out, out_file)
+                        else:
+                            out_file.unlink()
+                    if had_sidecar and not os.path.lexists(sidecar):
+                        with contextlib.suppress(OSError):
+                            os.replace(bak_sidecar, sidecar)
+                raise
 
             logger.info(
                 "Successfully packaged enterprise application to %s (SHA-256: %s...)",
@@ -922,6 +964,6 @@ class EnterpriseManager:
             logger.error("Failed to package application: %s", e)
             return False, f"Packaging error: {e}", {}
         finally:
-            for leftover in (tmp_out, tmp_sidecar):
+            for leftover in (tmp_out, tmp_sidecar, bak_out, bak_sidecar):
                 with contextlib.suppress(OSError):
                     leftover.unlink()

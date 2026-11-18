@@ -33,10 +33,12 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import json
 import math
 import os
 import shutil
 import sqlite3
+import stat
 import sys
 import tempfile
 import threading
@@ -49,7 +51,7 @@ try:  # POSIX advisory locks; absent on Windows (see ``_state_lock``).
 except ImportError:  # pragma: no cover - Windows fallback
     fcntl = None  # type: ignore[assignment]
 
-from sovereign_dc.config import get_config, get_state_dir, is_trusted_legacy_file
+from sovereign_dc.config import _current_uid, get_config, get_state_dir, is_trusted_legacy_file
 from sovereign_dc.economy.ledger import MAX_CREDITS, Ledger, Transaction, credits_to_micro
 from sovereign_dc.economy.wallet import AddressType, NodeWallet
 from sovereign_dc.log import get_logger
@@ -147,6 +149,20 @@ def _state_lock() -> Iterator[None]:
         yield
 
 
+def _is_trusted_stat(st: os.stat_result) -> bool:
+    if not stat.S_ISREG(st.st_mode):
+        return False
+    uid = _current_uid()
+    if uid is None:
+        return True
+    return st.st_uid == uid and not (st.st_mode & 0o022)
+
+
+def _is_trusted_legacy_db(ledger: str) -> bool:
+    candidates = (ledger, *(ledger + suffix for suffix in _SQLITE_SIDECARS))
+    return all(is_trusted_legacy_file(p) for p in candidates if os.path.lexists(p))
+
+
 def _legacy_cli_tmp_dir() -> str | None:
     """Temp directory in which the CLI of older releases may have left its wallet and ledger."""
     tmp_dir = tempfile.gettempdir()
@@ -167,8 +183,7 @@ def _find_legacy_sets(state_dir: str) -> list[tuple[LegacySet, str]]:
         elif legacy.surface == "CLI":
             tmp_dir = _legacy_cli_tmp_dir()
             if tmp_dir is not None and is_trusted_legacy_file(os.path.join(tmp_dir, legacy.wallet)):
-                ledger = os.path.join(tmp_dir, legacy.ledger)
-                if not os.path.lexists(ledger) or is_trusted_legacy_file(ledger):
+                if _is_trusted_legacy_db(os.path.join(tmp_dir, legacy.ledger)):
                     found.append((legacy, tmp_dir))
     return found
 
@@ -187,31 +202,49 @@ def _file_sha256(path: str) -> tuple[int, str]:
         return size, hashlib.file_digest(f, "sha256").hexdigest()
 
 
-def _stage_copy(src: str, dst_dir: str, prefix: str) -> str:
+def _stage_copy(src: str, dst_dir: str, prefix: str, *, require_trusted: bool = False) -> str:
     """Copies ``src`` into an exclusive 0o600 staging file in ``dst_dir``, fsyncs, and verifies its digest."""
-    expected = _file_sha256(src)
-    fd, tmp_dst = tempfile.mkstemp(prefix=prefix, dir=dst_dir)
+    open_flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+    if require_trusted:
+        open_flags |= getattr(os, "O_NOFOLLOW", 0)
+    src_fd = os.open(src, open_flags)
+    fd = -1
+    tmp_dst = ""
     try:
-        if hasattr(os, "fchmod"):
-            os.fchmod(fd, 0o600)
-        with open(src, "rb") as src_fp, os.fdopen(fd, "wb") as dst_fp:
-            fd = -1
-            shutil.copyfileobj(src_fp, dst_fp)
-            dst_fp.flush()
-            if hasattr(os, "fsync"):
-                os.fsync(dst_fp.fileno())
-        if _file_sha256(tmp_dst) != expected:
+        src_st = os.fstat(src_fd)
+        if require_trusted and not _is_trusted_stat(src_st):
+            raise PermissionError(f"Untrusted legacy file: {src}")
+        if not stat.S_ISREG(src_st.st_mode):
+            raise OSError(f"Not a regular file: {src}")
+        with os.fdopen(src_fd, "rb") as src_fp:
+            src_fd = -1
+            expected_digest = hashlib.file_digest(src_fp, "sha256").hexdigest()
+            expected_size = os.fstat(src_fp.fileno()).st_size
+            src_fp.seek(0)
+            fd, tmp_dst = tempfile.mkstemp(prefix=prefix, dir=dst_dir)
+            if hasattr(os, "fchmod"):
+                os.fchmod(fd, 0o600)
+            with os.fdopen(fd, "wb") as dst_fp:
+                fd = -1
+                shutil.copyfileobj(src_fp, dst_fp)
+                dst_fp.flush()
+                if hasattr(os, "fsync"):
+                    os.fsync(dst_fp.fileno())
+        if _file_sha256(tmp_dst) != (expected_size, expected_digest):
             raise OSError(f"Incomplete or corrupted staged copy for {src}")
         return tmp_dst
     except BaseException:
+        if src_fd >= 0:
+            os.close(src_fd)
         if fd >= 0:
             os.close(fd)
-        with contextlib.suppress(OSError):
-            os.unlink(tmp_dst)
+        if tmp_dst:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp_dst)
         raise
 
 
-def _stage_adopt_item(src: str, dst: str, state_dir: str, same_dir: bool) -> str:
+def _stage_adopt_item(src: str, dst: str, state_dir: str, same_dir: bool, *, require_trusted: bool = False) -> str:
     """Stages ``src`` into an exclusive temporary path inside ``state_dir`` without removing ``src``."""
     prefix = f".{os.path.basename(dst)}.adopt."
     if same_dir:
@@ -221,7 +254,7 @@ def _stage_adopt_item(src: str, dst: str, state_dir: str, same_dir: bool) -> str
             return tmp_dst
         except OSError:
             pass
-    return _stage_copy(src, state_dir, prefix)
+    return _stage_copy(src, state_dir, prefix, require_trusted=require_trusted)
 
 
 def _publish_staged_item(tmp_dst: str, dst: str, *, overwrite: bool) -> None:
@@ -275,18 +308,66 @@ def _has_established_ledger(path: str) -> bool:
         return False
 
 
+def _read_migrating_owned(marker_path: str) -> set[str]:
+    """Components ('ledger', 'pqc_wallet') an interrupted migration already owned at destination."""
+    try:
+        st = os.lstat(marker_path)
+        if not stat.S_ISREG(st.st_mode):
+            return set()
+        with open(marker_path, encoding="utf-8") as fp:
+            data = json.load(fp)
+    except (OSError, ValueError, TypeError):
+        return set()
+    raw = data.get("owned", []) if isinstance(data, dict) else []
+    return {item for item in raw if item in {"ledger", "pqc_wallet"}} if isinstance(raw, list) else set()
+
+
+def _write_migrating_owned(marker_path: str, owned: set[str]) -> None:
+    """Atomically records which destination components this migration is permitted to replace."""
+    state_dir = os.path.dirname(marker_path)
+    fd, tmp_marker = tempfile.mkstemp(prefix=f"{_MIGRATING_FILENAME}.", dir=state_dir)
+    try:
+        if hasattr(os, "fchmod"):
+            os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fp:
+            fd = -1
+            fp.write(json.dumps({"owned": sorted(owned)}))
+            fp.flush()
+            if hasattr(os, "fsync"):
+                os.fsync(fp.fileno())
+        os.replace(tmp_marker, marker_path)
+    except BaseException:
+        if fd >= 0:
+            os.close(fd)
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_marker)
+        raise
+
+
 def _adopt(legacy: LegacySet, directory: str, paths: NodeStatePaths) -> None:
     """Atomically stages and publishes one legacy set to the node identity file names."""
     state_dir = os.path.dirname(paths.wallet)
     same_dir = os.path.realpath(directory) == os.path.realpath(state_dir)
+    if not same_dir and (
+        not is_trusted_legacy_file(os.path.join(directory, legacy.wallet))
+        or not _is_trusted_legacy_db(os.path.join(directory, legacy.ledger))
+        or (
+            legacy.pqc_wallet is not None
+            and os.path.lexists(os.path.join(directory, legacy.pqc_wallet))
+            and not is_trusted_legacy_file(os.path.join(directory, legacy.pqc_wallet))
+        )
+    ):
+        raise PermissionError(f"Refusing untrusted legacy state in {directory}")
+
     marker_path = os.path.join(state_dir, _MIGRATING_FILENAME)
-    interrupted = os.path.lexists(marker_path)
+    owned = _read_migrating_owned(marker_path)
+    new_owned = set(owned)
 
     plan: list[tuple[str, str, bool]] = []
     stale_sidecars: list[str] = []
 
     legacy_ledger = os.path.join(directory, legacy.ledger)
-    if os.path.isfile(legacy_ledger) and (interrupted or not _has_established_ledger(paths.ledger)):
+    if os.path.isfile(legacy_ledger) and ("ledger" in owned or not _has_established_ledger(paths.ledger)):
         replace_ledger = os.path.lexists(paths.ledger)
         # Side files first: a leftover -wal belongs to the database it was written for.
         for suffix in _SQLITE_SIDECARS:
@@ -294,14 +375,16 @@ def _adopt(legacy: LegacySet, directory: str, paths: NodeStatePaths) -> None:
             dst_side = paths.ledger + suffix
             if os.path.isfile(src_side):
                 plan.append((src_side, dst_side, True))
-            elif replace_ledger and os.path.lexists(dst_side):
+            elif os.path.lexists(dst_side):
                 stale_sidecars.append(dst_side)
         plan.append((legacy_ledger, paths.ledger, replace_ledger))
+        new_owned.add("ledger")
 
-    if legacy.pqc_wallet is not None and (interrupted or not os.path.lexists(paths.pqc_wallet)):
+    if legacy.pqc_wallet is not None and ("pqc_wallet" in owned or not os.path.lexists(paths.pqc_wallet)):
         legacy_pqc = os.path.join(directory, legacy.pqc_wallet)
         if os.path.isfile(legacy_pqc):
             plan.append((legacy_pqc, paths.pqc_wallet, os.path.lexists(paths.pqc_wallet)))
+            new_owned.add("pqc_wallet")
 
     # The wallet goes last: its presence is what marks the node identity as established.
     plan.append((os.path.join(directory, legacy.wallet), paths.wallet, False))
@@ -311,10 +394,16 @@ def _adopt(legacy: LegacySet, directory: str, paths: NodeStatePaths) -> None:
         for src, dst, overwrite in plan:
             if not overwrite and os.path.lexists(dst):
                 raise FileExistsError(dst)
-            staged.append((src, dst, overwrite, _stage_adopt_item(src, dst, state_dir, same_dir)))
+            staged.append(
+                (
+                    src,
+                    dst,
+                    overwrite,
+                    _stage_adopt_item(src, dst, state_dir, same_dir, require_trusted=not same_dir),
+                )
+            )
 
-        marker_fd = os.open(marker_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        os.close(marker_fd)
+        _write_migrating_owned(marker_path, new_owned)
 
         for dst_side in stale_sidecars:
             with contextlib.suppress(OSError):
@@ -350,6 +439,8 @@ def migrate_legacy_node_state() -> str | None:
             return None
         found = _find_legacy_sets(os.path.dirname(paths.wallet))
         if not found:
+            with contextlib.suppress(OSError):
+                os.unlink(os.path.join(os.path.dirname(paths.wallet), _MIGRATING_FILENAME))
             return None
         chosen, directory = found[0]
         _adopt(chosen, directory, paths)
