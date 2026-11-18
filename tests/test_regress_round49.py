@@ -80,10 +80,10 @@ def test_round49_cross_fs_legacy_migration_stages_ledger_and_recovers_partial_de
     assert legacy_wallet_path.exists()
     assert legacy_ledger_path.exists()
     marker_path = state_dir / node_state._MIGRATING_FILENAME
-    assert marker_path.exists()
+    assert not marker_path.exists()
+    assert not list(state_dir.glob("*.adopt.*"))
 
     # Even if an unestablished 0-tx ledger exists at destination and os.link is unavailable, retry recovers.
-    marker_path.unlink()
     Ledger(db_path=str(state_dir / node_state.NODE_LEDGER_FILENAME))
     monkeypatch.setattr(
         node_state.os, "link", lambda _s, _d: (_ for _ in ()).throw(OSError(errno.EOPNOTSUPP, "no link"))

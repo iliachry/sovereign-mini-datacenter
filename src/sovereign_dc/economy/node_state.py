@@ -211,36 +211,51 @@ def _stage_copy(src: str, dst_dir: str, prefix: str) -> str:
         raise
 
 
+def _stage_adopt_item(src: str, dst: str, state_dir: str, same_dir: bool) -> str:
+    """Stages ``src`` into an exclusive temporary path inside ``state_dir`` without removing ``src``."""
+    prefix = f".{os.path.basename(dst)}.adopt."
+    if same_dir:
+        tmp_dst = os.path.join(state_dir, f"{prefix}{os.getpid()}.{os.urandom(8).hex()}")
+        try:
+            os.link(src, tmp_dst)
+            return tmp_dst
+        except OSError:
+            pass
+    return _stage_copy(src, state_dir, prefix)
+
+
+def _publish_staged_item(tmp_dst: str, dst: str, *, overwrite: bool) -> None:
+    """Atomically publishes staged ``tmp_dst`` to ``dst`` without clobbering when ``overwrite`` is False."""
+    if overwrite:
+        os.replace(tmp_dst, dst)
+    else:
+        try:
+            os.link(tmp_dst, dst)
+        except FileExistsError:
+            raise
+        except OSError:
+            if os.path.lexists(dst):
+                raise FileExistsError(dst) from None
+            os.replace(tmp_dst, dst)
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_dst)
+    _restrict_adopted_mode(dst)
+
+
 def _move(src: str, dst: str, *, overwrite: bool = False) -> None:
     """Renames ``src`` to ``dst``; stages and verifies atomically across filesystems."""
     if not overwrite and os.path.lexists(dst):
         raise FileExistsError(dst)
+    dst_dir = os.path.dirname(os.path.abspath(dst))
+    same_dir = os.path.realpath(os.path.dirname(os.path.abspath(src))) == os.path.realpath(dst_dir)
+    tmp_dst = _stage_adopt_item(src, dst, dst_dir, same_dir)
     try:
-        if overwrite:
-            os.replace(src, dst)
-        else:
-            os.rename(src, dst)
-    except OSError:
-        dst_dir = os.path.dirname(os.path.abspath(dst))
-        tmp_dst = _stage_copy(src, dst_dir, f".{os.path.basename(dst)}.adopt.")
-        try:
-            if overwrite:
-                os.replace(tmp_dst, dst)
-            else:
-                try:
-                    os.link(tmp_dst, dst)
-                except FileExistsError:
-                    raise
-                except OSError:
-                    if os.path.lexists(dst):
-                        raise FileExistsError(dst) from None
-                    os.replace(tmp_dst, dst)
-        finally:
-            with contextlib.suppress(OSError):
-                os.unlink(tmp_dst)
-        with contextlib.suppress(FileNotFoundError):
-            os.unlink(src)
-    _restrict_adopted_mode(dst)
+        _publish_staged_item(tmp_dst, dst, overwrite=overwrite)
+    finally:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_dst)
+    with contextlib.suppress(FileNotFoundError):
+        os.unlink(src)
 
 
 def _has_established_ledger(path: str) -> bool:
@@ -261,12 +276,14 @@ def _has_established_ledger(path: str) -> bool:
 
 
 def _adopt(legacy: LegacySet, directory: str, paths: NodeStatePaths) -> None:
-    """Renames one legacy set to the node identity file names."""
+    """Atomically stages and publishes one legacy set to the node identity file names."""
     state_dir = os.path.dirname(paths.wallet)
+    same_dir = os.path.realpath(directory) == os.path.realpath(state_dir)
     marker_path = os.path.join(state_dir, _MIGRATING_FILENAME)
     interrupted = os.path.lexists(marker_path)
-    marker_fd = os.open(marker_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    os.close(marker_fd)
+
+    plan: list[tuple[str, str, bool]] = []
+    stale_sidecars: list[str] = []
 
     legacy_ledger = os.path.join(directory, legacy.ledger)
     if os.path.isfile(legacy_ledger) and (interrupted or not _has_established_ledger(paths.ledger)):
@@ -276,17 +293,45 @@ def _adopt(legacy: LegacySet, directory: str, paths: NodeStatePaths) -> None:
             src_side = legacy_ledger + suffix
             dst_side = paths.ledger + suffix
             if os.path.isfile(src_side):
-                _move(src_side, dst_side, overwrite=True)
+                plan.append((src_side, dst_side, True))
             elif replace_ledger and os.path.lexists(dst_side):
-                with contextlib.suppress(OSError):
-                    os.unlink(dst_side)
-        _move(legacy_ledger, paths.ledger, overwrite=replace_ledger)
+                stale_sidecars.append(dst_side)
+        plan.append((legacy_ledger, paths.ledger, replace_ledger))
+
     if legacy.pqc_wallet is not None and (interrupted or not os.path.lexists(paths.pqc_wallet)):
         legacy_pqc = os.path.join(directory, legacy.pqc_wallet)
         if os.path.isfile(legacy_pqc):
-            _move(legacy_pqc, paths.pqc_wallet, overwrite=os.path.lexists(paths.pqc_wallet))
+            plan.append((legacy_pqc, paths.pqc_wallet, os.path.lexists(paths.pqc_wallet)))
+
     # The wallet goes last: its presence is what marks the node identity as established.
-    _move(os.path.join(directory, legacy.wallet), paths.wallet, overwrite=False)
+    plan.append((os.path.join(directory, legacy.wallet), paths.wallet, False))
+
+    staged: list[tuple[str, str, bool, str]] = []
+    try:
+        for src, dst, overwrite in plan:
+            if not overwrite and os.path.lexists(dst):
+                raise FileExistsError(dst)
+            staged.append((src, dst, overwrite, _stage_adopt_item(src, dst, state_dir, same_dir)))
+
+        marker_fd = os.open(marker_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        os.close(marker_fd)
+
+        for dst_side in stale_sidecars:
+            with contextlib.suppress(OSError):
+                os.unlink(dst_side)
+
+        for _src, dst, overwrite, tmp_dst in staged:
+            _publish_staged_item(tmp_dst, dst, overwrite=overwrite)
+    finally:
+        for _src, _dst, _overwrite, tmp_dst in staged:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp_dst)
+
+    # Unlink legacy sources only after paths.wallet is published so any interrupted attempt
+    # retains the complete legacy set (including SQLite -wal/-shm sidecars) for retry.
+    for src, _dst, _overwrite, _tmp_dst in staged:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(src)
     with contextlib.suppress(OSError):
         os.unlink(marker_path)
 
@@ -300,6 +345,8 @@ def migrate_legacy_node_state() -> str | None:
     paths = node_state_paths()
     with _state_lock():
         if os.path.lexists(paths.wallet):
+            with contextlib.suppress(OSError):
+                os.unlink(os.path.join(os.path.dirname(paths.wallet), _MIGRATING_FILENAME))
             return None
         found = _find_legacy_sets(os.path.dirname(paths.wallet))
         if not found:

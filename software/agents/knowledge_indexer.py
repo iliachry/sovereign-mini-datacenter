@@ -743,7 +743,9 @@ def run_worker() -> None:
                     sources_seeded = seed_indexed_sources(indexed_files)
                 _, failed = scan_and_index(indexed_files)
                 polls_since_verify = (
-                    polls_since_verify + 1 if (not failed and indexed_files and COLLECTION_VERIFY_IDLE_POLLS > 0) else 0
+                    polls_since_verify + 1
+                    if (collection_ready and sources_seeded and not failed and COLLECTION_VERIFY_IDLE_POLLS > 0)
+                    else 0
                 )
                 if failed or (COLLECTION_VERIFY_IDLE_POLLS > 0 and polls_since_verify >= COLLECTION_VERIFY_IDLE_POLLS):
                     # The collection or individual sources may have been lost externally: re-verify.
