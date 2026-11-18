@@ -22,13 +22,13 @@ def test_round46_partial_wipe_or_repopulated_collection_recovers_missing_unchang
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """run_worker reconciles sources on periodic verification so partial wipes still rebuild unchanged files."""
-    # Edge branches of _file_has_chunks: oversized, vanished, and transient unreadable OSError.
+    # Edge branches of _expected_point_ids: oversized, vanished, and transient unreadable OSError.
     big = tmp_path / "big.md"
     big.write_text("too large", encoding="utf-8")
     with monkeypatch.context() as mc:
         mc.setattr(knowledge_indexer, "MAX_FILE_BYTES", 4)
-        assert knowledge_indexer._file_has_chunks(str(big)) is False
-    assert knowledge_indexer._file_has_chunks(str(tmp_path / "missing.md")) is False
+        assert knowledge_indexer._expected_point_ids(str(big)) is None
+    assert knowledge_indexer._expected_point_ids(str(tmp_path / "missing.md")) is None
     small = tmp_path / "perm.md"
     small.write_text("readable", encoding="utf-8")
     with monkeypatch.context() as mc:
@@ -37,7 +37,7 @@ def test_round46_partial_wipe_or_repopulated_collection_recovers_missing_unchang
             raise PermissionError("denied")
 
         mc.setattr(builtins, "open", _deny_open)
-        assert knowledge_indexer._file_has_chunks(str(small)) is True
+        assert knowledge_indexer._expected_point_ids(str(small)) == {"<unreadable>"}
 
     docs = tmp_path / "docs"
     docs.mkdir()

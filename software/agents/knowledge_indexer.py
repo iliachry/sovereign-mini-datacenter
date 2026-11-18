@@ -293,9 +293,9 @@ def delete_source_points(filepath: str, keep_ids: list[str] | None = None) -> No
     _qdrant_request("POST", "/points/delete?wait=true", {"filter": point_filter})
 
 
-def list_indexed_sources() -> set[str]:
-    """Returns the distinct source paths that have points in the collection (payload scroll)."""
-    sources: set[str] = set()
+def _list_indexed_point_ids() -> dict[str, set[str]]:
+    """Returns a mapping of indexed source paths to their stored Qdrant point IDs."""
+    by_source: dict[str, set[str]] = {}
     offset: Any = None
     while True:
         body: dict[str, Any] = {"limit": SCROLL_PAGE_SIZE, "with_payload": [SOURCE_PATH_FIELD], "with_vector": False}
@@ -308,10 +308,18 @@ def list_indexed_sources() -> set[str]:
             payload = point.get("payload") if isinstance(point, dict) else None
             path = payload.get(SOURCE_PATH_FIELD) if isinstance(payload, dict) else None
             if isinstance(path, str) and path:
-                sources.add(path)
+                point_ids = by_source.setdefault(path, set())
+                point_id = point.get("id")
+                if point_id is not None and not isinstance(point_id, bool):
+                    point_ids.add(str(point_id))
         offset = result.get("next_page_offset")
         if offset is None:
-            return sources
+            return by_source
+
+
+def list_indexed_sources() -> set[str]:
+    """Returns the distinct source paths that have points in the collection (payload scroll)."""
+    return set(_list_indexed_point_ids())
 
 
 # Documents whose partially written points could not be rolled back (see ``index_file``).
@@ -624,37 +632,42 @@ def scan_and_index(indexed_files: set[tuple[str, DocumentVersion]]) -> tuple[int
     return succeeded, failed
 
 
-def _file_has_chunks(path: str) -> bool:
-    """True when ``path`` is eligible and produces at least one indexable chunk."""
+def _expected_point_ids(path: str) -> set[str] | None:
+    """Returns expected deterministic Qdrant point IDs for ``path``, or ``None`` if empty/absent/oversized."""
     if is_oversized(path):
-        return False
+        return None
     try:
         with open(path, encoding="utf-8", errors="ignore") as f:
-            return bool(chunk_text(f.read()))
+            chunks = chunk_text(f.read())
     except OSError as e:
-        return not isinstance(e, FileNotFoundError)
+        return None if isinstance(e, FileNotFoundError) else {"<unreadable>"}
+    if not chunks:
+        return None
+    return {chunk_point_id(path, idx) for idx in range(len(chunks))}
 
 
 def seed_indexed_sources(indexed_files: set[tuple[str, DocumentVersion]]) -> bool:
-    """Reconciles ``indexed_files`` with the source paths currently stored in Qdrant.
+    """Reconciles ``indexed_files`` with the source paths and chunk point IDs in Qdrant.
 
     Adds unknown remote sources with ``UNKNOWN_MTIME`` (so files deleted while the worker
     was down are removed and existing ones are re-indexed), and downgrades any cached
-    non-empty document whose points are absent from Qdrant back to ``UNKNOWN_MTIME`` so
-    the next scan rebuilds it even after a partial or repopulated collection wipe.
+    non-empty document whose stored Qdrant point IDs differ from its expected chunk IDs
+    back to ``UNKNOWN_MTIME`` so the next scan repairs missing or partial document chunks.
     Returns False if Qdrant could not be read.
     """
     try:
-        sources = list_indexed_sources()
+        indexed_points = _list_indexed_point_ids()
     except Exception as e:
         logger.warning("Could not list indexed documents: %s", e)
         return False
     known = {path for path, _ in indexed_files}
-    indexed_files.update((path, UNKNOWN_MTIME) for path in sources if path not in known)
+    indexed_files.update((path, UNKNOWN_MTIME) for path in indexed_points if path not in known)
     for path, ver in list(indexed_files):
-        if ver != UNKNOWN_MTIME and path not in sources and _file_has_chunks(path):
-            indexed_files.discard((path, ver))
-            indexed_files.add((path, UNKNOWN_MTIME))
+        if ver != UNKNOWN_MTIME:
+            expected = _expected_point_ids(path)
+            if expected is not None and indexed_points.get(path, set()) != expected:
+                indexed_files.discard((path, ver))
+                indexed_files.add((path, UNKNOWN_MTIME))
     return True
 
 

@@ -114,8 +114,10 @@ class ProofOfCompute:
     def sign(self, worker_wallet: NodeWallet) -> None:
         """Signs the compute proof with the executing worker node's wallet."""
         digest = self.compute_hash()
-        self.signature_algorithm = worker_wallet.keypair.algorithm.value
-        self.signature = worker_wallet.sign_payload(digest.encode("utf-8"))
+        sig_algo = worker_wallet.keypair.algorithm.value
+        sig = worker_wallet.sign_payload(digest.encode("utf-8"))
+        self.signature_algorithm = sig_algo
+        self.signature = sig
 
     def settlement_key(self) -> str:
         """Stable identifier of the debt this receipt represents (one payment per client/worker/task).
@@ -249,8 +251,10 @@ class ProofOfRelay:
 
     def sign(self, relay_wallet: NodeWallet) -> None:
         digest = self.compute_hash()
-        self.signature_algorithm = relay_wallet.keypair.algorithm.value
-        self.signature = relay_wallet.sign_payload(digest.encode("utf-8"))
+        sig_algo = relay_wallet.keypair.algorithm.value
+        sig = relay_wallet.sign_payload(digest.encode("utf-8"))
+        self.signature_algorithm = sig_algo
+        self.signature = sig
 
     def verify(self, relay_public_key_hex: str) -> bool:
         """Verifies digest integrity, that the key controls ``relay_address``, and the signature."""

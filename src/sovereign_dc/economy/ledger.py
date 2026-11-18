@@ -335,10 +335,14 @@ class Transaction:
 
     def sign(self, wallet: NodeWallet) -> None:
         """Signs the transaction hash with the sender's wallet keypair."""
-        self.tx_id = self.compute_hash()
-        self.signature_algorithm = wallet.keypair.algorithm.value
-        self.sender_public_key = wallet.keypair.public_key_hex
-        self.signature = wallet.sign_payload(self.tx_id.encode("utf-8"))
+        tx_id = self.compute_hash()
+        sig_algo = wallet.keypair.algorithm.value
+        pub_hex = wallet.keypair.public_key_hex
+        sig = wallet.sign_payload(tx_id.encode("utf-8"))
+        self.tx_id = tx_id
+        self.signature_algorithm = sig_algo
+        self.sender_public_key = pub_hex
+        self.signature = sig
 
     def is_valid(self, public_key_hex: str | None = None) -> bool:
         """Validates hash integrity, address ownership, and cryptographic signature.
@@ -518,16 +522,18 @@ class StateChannel:
         if total_micro > _to_micro(self.deposit_amount):
             raise ValueError("State channel collateral exhausted")
 
-        self.transferred_amount = _from_micro(total_micro)
-        self.sequence += 1
+        next_sequence = self.sequence + 1
+        new_transferred = _from_micro(total_micro)
         ts = datetime.now(UTC).isoformat()
 
-        sig = wallet.sign_payload(self._promise_payload(self.channel_id, self.sequence, total_micro, ts))
+        sig = wallet.sign_payload(self._promise_payload(self.channel_id, next_sequence, total_micro, ts))
 
+        self.transferred_amount = new_transferred
+        self.sequence = next_sequence
         return StateChannelPromise(
             channel_id=self.channel_id,
-            sequence=self.sequence,
-            amount_transferred=self.transferred_amount,
+            sequence=next_sequence,
+            amount_transferred=new_transferred,
             timestamp=ts,
             signature=sig,
         )

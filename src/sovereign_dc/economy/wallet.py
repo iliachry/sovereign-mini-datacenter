@@ -244,18 +244,18 @@ class NodeWallet:
             with f:
                 json.dump(data, f, indent=2)
                 f.flush()
+                if hasattr(os, "fsync"):
+                    os.fsync(f.fileno())
 
-        if overwrite:
-            # Create (or truncate) the key file owner-only from the first byte: the mode is applied
-            # at open() and re-asserted with fchmod() so a pre-existing file loses any wider mode
-            # *before* key material is written. A failure to restrict the mode is fatal.
-            fd = os.open(abs_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        # Stage into an exclusive 0o600 temporary file before updating the target so an
+        # incomplete write (e.g. ENOSPC) never truncates or corrupts an existing keystore.
+        tmp_path = f"{abs_path}.tmp.{os.getpid()}.{uuid.uuid4().hex}"
+        fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
             _write_mode_0600(fd)
-        else:
-            tmp_path = f"{abs_path}.tmp.{os.getpid()}.{uuid.uuid4().hex}"
-            fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-            try:
-                _write_mode_0600(fd)
+            if overwrite:
+                os.replace(tmp_path, abs_path)
+            else:
                 try:
                     os.link(tmp_path, abs_path)
                 except FileExistsError:
@@ -263,9 +263,9 @@ class NodeWallet:
                 except OSError:
                     excl_fd = os.open(abs_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
                     _write_mode_0600(excl_fd)
-            finally:
-                with contextlib.suppress(OSError):
-                    os.unlink(tmp_path)
+        finally:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp_path)
         logger.info("Saved wallet %s to %s", self.address, abs_path)
 
     @classmethod
