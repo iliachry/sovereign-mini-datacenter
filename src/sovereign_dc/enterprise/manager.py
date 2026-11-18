@@ -58,7 +58,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from sovereign_dc.enterprise.registry import EnterpriseRegistry
+from sovereign_dc.enterprise.registry import EnterpriseRegistry, exclusive_file_lock
 from sovereign_dc.enterprise.schema import (
     SHED_PAUSE_LEVEL,
     AppManifest,
@@ -929,30 +929,38 @@ class EnterpriseManager:
                         {},
                     )
 
-            # Save manifest sidecar, then publish archive and sidecar with rollback of any prior pair.
+            # Save manifest sidecar, then publish archive and sidecar under a per-output lock with rollback.
             tmp_sidecar.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
-            had_out = os.path.lexists(out_file)
-            had_sidecar = os.path.lexists(sidecar)
-            if had_out:
-                _backup_package_artifact(out_file, bak_out)
-            if had_sidecar:
-                _backup_package_artifact(sidecar, bak_sidecar)
-            out_replaced = False
-            try:
-                os.replace(tmp_out, out_file)
-                out_replaced = True
-                os.replace(tmp_sidecar, sidecar)
-            except BaseException:
-                if out_replaced:
-                    with contextlib.suppress(OSError):
-                        if had_out:
-                            os.replace(bak_out, out_file)
-                        else:
-                            out_file.unlink()
-                    if had_sidecar and not os.path.lexists(sidecar):
+            canonical_out = out_file.parent.resolve() / out_file.name
+            publish_lock = canonical_out.with_name(f".{canonical_out.name}.publish.lock")
+            with exclusive_file_lock(publish_lock, use_fcntl=None):
+                try:
+                    had_out = os.path.lexists(out_file)
+                    had_sidecar = os.path.lexists(sidecar)
+                    if had_out:
+                        _backup_package_artifact(out_file, bak_out)
+                    if had_sidecar:
+                        _backup_package_artifact(sidecar, bak_sidecar)
+                    out_replaced = False
+                    try:
+                        os.replace(tmp_out, out_file)
+                        out_replaced = True
+                        os.replace(tmp_sidecar, sidecar)
+                    except BaseException:
+                        if out_replaced:
+                            with contextlib.suppress(OSError):
+                                if had_out:
+                                    os.replace(bak_out, out_file)
+                                else:
+                                    out_file.unlink()
+                            if had_sidecar and not os.path.lexists(sidecar):
+                                with contextlib.suppress(OSError):
+                                    os.replace(bak_sidecar, sidecar)
+                        raise
+                finally:
+                    for bak in (bak_out, bak_sidecar):
                         with contextlib.suppress(OSError):
-                            os.replace(bak_sidecar, sidecar)
-                raise
+                            bak.unlink()
 
             logger.info(
                 "Successfully packaged enterprise application to %s (SHA-256: %s...)",

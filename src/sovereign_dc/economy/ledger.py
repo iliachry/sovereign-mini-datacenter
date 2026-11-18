@@ -18,7 +18,7 @@ import re
 import sqlite3
 import stat
 import threading
-from collections.abc import Collection, Iterator
+from collections.abc import Collection, Iterator, Sequence
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -1359,30 +1359,22 @@ class Ledger:
         )
         return tx
 
-    def _check_chain(
-        self, conn: sqlite3.Connection, anchor_key: tuple[str, bytes] | None
+    @classmethod
+    def _verify_rows_and_anchor(
+        cls,
+        rows: Sequence[sqlite3.Row],
+        anchor: sqlite3.Row | None,
+        anchor_key: tuple[str, bytes] | None,
     ) -> tuple[bool, str, int, str, str]:
-        """Walks the chain; returns ``(structure_ok, anchor_status, tx_count, head_tx_id, head_digest)``."""
-        # One read transaction for both reads: another ledger instance or process may commit a
-        # valid transaction (rows plus a new anchor) between them, and an old row list
-        # compared with a new anchor would look like tampering.
-        began = not conn.in_transaction
-        if began:
-            conn.execute("BEGIN")
-        try:
-            rows = conn.execute("SELECT * FROM transactions ORDER BY rowid ASC").fetchall()
-            anchor = conn.execute("SELECT * FROM chain_anchor WHERE id = 1").fetchone()
-        finally:
-            if began:
-                conn.commit()
         expected_prev = GENESIS_PREV_HASH
         digest = GENESIS_PREV_HASH
         # Per sender: (nonce of its latest row, whether that row came through the validated apply path).
         last_nonce: dict[str, tuple[int, bool]] = {}
         structure_ok = True
         for r in rows:
-            tx = self._row_to_transaction(r)
-            local_prev = r["local_prev"]
+            tx = cls._row_to_transaction(r)
+            keys = r.keys()
+            local_prev = cls._cell(r, keys, "local_prev", None)
             if local_prev is None:
                 # Written by a release that had no local link: the signed link is the chain
                 # link. Only legacy-hash rows can be that old.
@@ -1408,7 +1400,7 @@ class Ledger:
                 last_nonce[tx.sender] = (tx.nonce, applied)
             row_tx_id = tx.tx_id if isinstance(tx.tx_id, str) else ""
             digest = _chain_digest(digest, row_tx_id)
-            stored_digest = r["chain_digest"]
+            stored_digest = cls._cell(r, keys, "chain_digest", None)
             if stored_digest is not None and stored_digest != digest:
                 structure_ok = False
             expected_prev = row_tx_id
@@ -1417,13 +1409,65 @@ class Ledger:
             status = ANCHOR_ABSENT
         elif anchor_key is None:
             status = ANCHOR_UNVERIFIABLE
-        elif self._anchor_matches(anchor, anchor_key, len(rows), expected_prev, digest):
+        elif cls._anchor_matches(anchor, anchor_key, len(rows), expected_prev, digest):
             status = ANCHOR_VALID
         else:
             status = ANCHOR_INVALID
         if not structure_ok:
             return False, status, len(rows), "", ""
         return True, status, len(rows), expected_prev, digest
+
+    @classmethod
+    def verify_readonly_conn(cls, conn: sqlite3.Connection) -> bool:
+        """Read-only check that ``conn`` holds a non-empty, structurally valid ledger chain."""
+        conn.row_factory = sqlite3.Row
+        began = not conn.in_transaction
+        if began:
+            conn.execute("BEGIN")
+        try:
+            qc = conn.execute("PRAGMA quick_check").fetchone()
+            if qc is None or tuple(qc) != ("ok",):
+                return False
+            tables = {str(r[0]) for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+            if "transactions" not in tables:
+                return False
+            rows = conn.execute("SELECT * FROM transactions ORDER BY rowid ASC").fetchall()
+            if not rows:
+                return False
+            anchor = (
+                conn.execute("SELECT * FROM chain_anchor WHERE id = 1").fetchone() if "chain_anchor" in tables else None
+            )
+        finally:
+            if began:
+                conn.commit()
+        key = (
+            _node_anchor_key()
+            if (anchor is not None and os.path.isfile(node_pqc_key_path(ANCHOR_KEY_ALGORITHM)))
+            else None
+        )
+        try:
+            links_ok, status, count, _, _ = cls._verify_rows_and_anchor(rows, anchor, key)
+        except (IndexError, KeyError, TypeError, ValueError):
+            return False
+        return links_ok and status != ANCHOR_INVALID and count > 0
+
+    def _check_chain(
+        self, conn: sqlite3.Connection, anchor_key: tuple[str, bytes] | None
+    ) -> tuple[bool, str, int, str, str]:
+        """Walks the chain; returns ``(structure_ok, anchor_status, tx_count, head_tx_id, head_digest)``."""
+        # One read transaction for both reads: another ledger instance or process may commit a
+        # valid transaction (rows plus a new anchor) between them, and an old row list
+        # compared with a new anchor would look like tampering.
+        began = not conn.in_transaction
+        if began:
+            conn.execute("BEGIN")
+        try:
+            rows = conn.execute("SELECT * FROM transactions ORDER BY rowid ASC").fetchall()
+            anchor = conn.execute("SELECT * FROM chain_anchor WHERE id = 1").fetchone()
+        finally:
+            if began:
+                conn.commit()
+        return self._verify_rows_and_anchor(rows, anchor, anchor_key)
 
     def _chain_report_on_conn(self, conn: sqlite3.Connection) -> tuple[bool, str, int]:
         began = not conn.in_transaction
