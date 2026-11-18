@@ -261,8 +261,15 @@ class DTNRouter:
                 (bundle_id, source_eid, destination_eid, priority, creation_timestamp, lifetime_seconds, fragment_offset, total_length, serialized_data, status)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'QUEUED')
                 ON CONFLICT(bundle_id) DO UPDATE SET
-                    serialized_data = excluded.serialized_data,
+                    source_eid = excluded.source_eid,
+                    destination_eid = excluded.destination_eid,
                     priority = excluded.priority,
+                    creation_timestamp = excluded.creation_timestamp,
+                    lifetime_seconds = excluded.lifetime_seconds,
+                    fragment_offset = excluded.fragment_offset,
+                    total_length = excluded.total_length,
+                    serialized_data = excluded.serialized_data,
+                    retries = 0,
                     status = 'QUEUED'
                 """,
                 (

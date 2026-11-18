@@ -195,7 +195,7 @@ The coolant pump and the six 120mm fans are 12V devices, and the MikroTik switch
         │
         ▼
   [Site Router / Firewall]  (Site-supplied; Port 80, 443, 2222 forwarded)
-        │  10GbE SFP+ DAC (or 1GbE RJ-45 WAN port on CRS309)
+        │  10GbE SFP+ DAC (or site-supplied SFP/SFP+ module)
         ▼
   [Mikrotik CRS309-1G-8S+IN]  (L2/L3 Core Switch)
         │

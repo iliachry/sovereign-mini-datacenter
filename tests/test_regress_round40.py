@@ -63,7 +63,7 @@ def test_round40_wiring_host_sfp_and_headscale_cidr_consistency() -> None:
     assert "upstream site router/firewall" in components
     assert "10GbE SFP+" in components
     assert "Site-supplied" in wiring
-    assert "1GbE RJ-45 WAN port on CRS309" in wiring
+    assert "site-supplied SFP/SFP+ module" in wiring
 
     arch = (REPO_ROOT / "ARCHITECTURE.md").read_text(encoding="utf-8")
     consensus = (REPO_ROOT / "src" / "sovereign_dc" / "mesh" / "consensus.py").read_text(encoding="utf-8")

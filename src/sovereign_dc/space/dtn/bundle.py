@@ -35,10 +35,14 @@ class Bundle:
         self.destination_eid = destination_eid
         self.payload = payload
         self.priority = max(0, min(3, int(priority)))
-        self.creation_timestamp = creation_timestamp or time.time()
+        self.creation_timestamp = creation_timestamp if creation_timestamp is not None else time.time()
         self.lifetime_seconds = lifetime_seconds
         self.fragment_offset = fragment_offset
-        self.total_application_data_length = total_application_data_length or len(payload)
+        self.total_application_data_length = (
+            total_application_data_length
+            if total_application_data_length is not None
+            else fragment_offset + len(payload)
+        )
         self.checksum = self._calculate_checksum()
 
     @property
@@ -78,7 +82,7 @@ class Bundle:
         return time.time() > (self.creation_timestamp + self.lifetime_seconds)
 
     def is_fragment(self) -> bool:
-        return len(self.payload) < self.total_application_data_length
+        return self.fragment_offset > 0 or len(self.payload) < self.total_application_data_length
 
     def serialize(self) -> bytes:
         """Serializes the bundle into a compact transmission payload."""
@@ -130,30 +134,36 @@ class Bundle:
         return bundle
 
     def create_fragments(self, max_fragment_size: int) -> list["Bundle"]:
-        """Splits a large bundle into MTU-sized fragments for short satellite passes."""
-        if max_fragment_size <= 0:
-            raise ValueError(f"max_fragment_size must be a positive number of bytes (got {max_fragment_size})")
+        """Splits a large bundle (or existing fragment) into MTU-sized fragments."""
+        if isinstance(max_fragment_size, bool) or not isinstance(max_fragment_size, int) or max_fragment_size <= 0:
+            raise ValueError(
+                f"max_fragment_size must be a positive integer number of bytes (got {max_fragment_size!r})"
+            )
         if len(self.payload) <= max_fragment_size:
             return [self]
 
-        fragments = []
-        total_len = len(self.payload)
-        offset = 0
+        fragments: list[Bundle] = []
+        payload_len = len(self.payload)
+        base_offset = self.fragment_offset
+        total_adu_len = max(self.total_application_data_length, base_offset + payload_len)
+        base_id = self.bundle_id.removesuffix(f"-frag-{base_offset}")
+        local_offset = 0
 
-        while offset < total_len:
-            chunk = self.payload[offset : offset + max_fragment_size]
+        while local_offset < payload_len:
+            chunk = self.payload[local_offset : local_offset + max_fragment_size]
+            frag_offset = base_offset + local_offset
             frag = Bundle(
                 source_eid=self.source_eid,
                 destination_eid=self.destination_eid,
                 payload=chunk,
                 priority=self.priority,
                 lifetime_seconds=self.lifetime_seconds,
-                bundle_id=f"{self.bundle_id}-frag-{offset}",
+                bundle_id=f"{base_id}-frag-{frag_offset}",
                 creation_timestamp=self.creation_timestamp,
-                fragment_offset=offset,
-                total_application_data_length=total_len,
+                fragment_offset=frag_offset,
+                total_application_data_length=total_adu_len,
             )
             fragments.append(frag)
-            offset += len(chunk)
+            local_offset += len(chunk)
 
         return fragments
