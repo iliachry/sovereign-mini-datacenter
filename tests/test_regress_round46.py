@@ -37,7 +37,7 @@ def test_round46_partial_wipe_or_repopulated_collection_recovers_missing_unchang
             raise PermissionError("denied")
 
         mc.setattr(builtins, "open", _deny_open)
-        assert knowledge_indexer._expected_point_ids(str(small)) == {"<unreadable>"}
+        assert knowledge_indexer._expected_point_ids(str(small)) == {("<unreadable>", "")}
 
     docs = tmp_path / "docs"
     docs.mkdir()
@@ -90,9 +90,7 @@ def test_round46_partial_wipe_or_repopulated_collection_recovers_missing_unchang
             return _FakeResp(
                 {
                     "result": {
-                        "points": [
-                            {"id": pid, "payload": {"path": pt["payload"]["path"]}} for pid, pt in points.items()
-                        ],
+                        "points": [{"id": pid, "payload": pt["payload"]} for pid, pt in points.items()],
                         "next_page_offset": None,
                     },
                     "status": "ok",

@@ -32,9 +32,11 @@ and one warning names them. No file is ever deleted.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import math
 import os
 import shutil
+import sqlite3
 import sys
 import tempfile
 import threading
@@ -58,6 +60,7 @@ NODE_WALLET_FILENAME = "smdc_node_wallet.json"
 NODE_PQC_WALLET_FILENAME = "smdc_node_pqc_wallet.json"
 NODE_LEDGER_FILENAME = "smdc_node_ledger.db"
 _LOCK_FILENAME = "smdc_node_state.lock"
+_MIGRATING_FILENAME = ".smdc_node_state.migrating"
 
 # Memo of credits issued by ``mint_local_test_credits``.
 LOCAL_TEST_MINT_MEMO = "LOCAL_TEST_CREDIT"
@@ -170,14 +173,7 @@ def _find_legacy_sets(state_dir: str) -> list[tuple[LegacySet, str]]:
     return found
 
 
-def _move(src: str, dst: str) -> None:
-    """Renames ``src`` to ``dst`` (never over an existing file); falls back to a move across filesystems."""
-    if os.path.lexists(dst):
-        raise FileExistsError(dst)
-    try:
-        os.rename(src, dst)
-    except OSError:
-        shutil.move(src, dst)
+def _restrict_adopted_mode(dst: str) -> None:
     try:
         os.chmod(dst, 0o600)
     except OSError as err:
@@ -185,21 +181,114 @@ def _move(src: str, dst: str) -> None:
         logger.warning("Could not restrict adopted file %s to mode 0600: %s", dst, err)
 
 
+def _file_sha256(path: str) -> tuple[int, str]:
+    size = os.path.getsize(path)
+    with open(path, "rb") as f:
+        return size, hashlib.file_digest(f, "sha256").hexdigest()
+
+
+def _stage_copy(src: str, dst_dir: str, prefix: str) -> str:
+    """Copies ``src`` into an exclusive 0o600 staging file in ``dst_dir``, fsyncs, and verifies its digest."""
+    expected = _file_sha256(src)
+    fd, tmp_dst = tempfile.mkstemp(prefix=prefix, dir=dst_dir)
+    try:
+        if hasattr(os, "fchmod"):
+            os.fchmod(fd, 0o600)
+        with open(src, "rb") as src_fp, os.fdopen(fd, "wb") as dst_fp:
+            fd = -1
+            shutil.copyfileobj(src_fp, dst_fp)
+            dst_fp.flush()
+            if hasattr(os, "fsync"):
+                os.fsync(dst_fp.fileno())
+        if _file_sha256(tmp_dst) != expected:
+            raise OSError(f"Incomplete or corrupted staged copy for {src}")
+        return tmp_dst
+    except BaseException:
+        if fd >= 0:
+            os.close(fd)
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_dst)
+        raise
+
+
+def _move(src: str, dst: str, *, overwrite: bool = False) -> None:
+    """Renames ``src`` to ``dst``; stages and verifies atomically across filesystems."""
+    if not overwrite and os.path.lexists(dst):
+        raise FileExistsError(dst)
+    try:
+        if overwrite:
+            os.replace(src, dst)
+        else:
+            os.rename(src, dst)
+    except OSError:
+        dst_dir = os.path.dirname(os.path.abspath(dst))
+        tmp_dst = _stage_copy(src, dst_dir, f".{os.path.basename(dst)}.adopt.")
+        try:
+            if overwrite:
+                os.replace(tmp_dst, dst)
+            else:
+                try:
+                    os.link(tmp_dst, dst)
+                except FileExistsError:
+                    raise
+                except OSError:
+                    if os.path.lexists(dst):
+                        raise FileExistsError(dst) from None
+                    os.replace(tmp_dst, dst)
+        finally:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp_dst)
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(src)
+    _restrict_adopted_mode(dst)
+
+
+def _has_established_ledger(path: str) -> bool:
+    """True when ``path`` is an intact SQLite ledger that already holds transactions."""
+    if not os.path.isfile(path) or os.path.getsize(path) < 100:
+        return False
+    try:
+        with open(path, "rb") as f:
+            if f.read(16) != b"SQLite format 3\x00":
+                return False
+        uri = f"{Path(os.path.abspath(path)).as_uri()}?mode=ro"
+        with contextlib.closing(sqlite3.connect(uri, uri=True, timeout=5.0)) as conn:
+            ok = conn.execute("PRAGMA quick_check").fetchone() == ("ok",)
+            has_rows = ok and conn.execute("SELECT 1 FROM transactions LIMIT 1").fetchone() is not None
+        return has_rows and Ledger(db_path=path).verify_chain()
+    except sqlite3.Error:
+        return False
+
+
 def _adopt(legacy: LegacySet, directory: str, paths: NodeStatePaths) -> None:
     """Renames one legacy set to the node identity file names."""
+    state_dir = os.path.dirname(paths.wallet)
+    marker_path = os.path.join(state_dir, _MIGRATING_FILENAME)
+    interrupted = os.path.lexists(marker_path)
+    marker_fd = os.open(marker_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    os.close(marker_fd)
+
     legacy_ledger = os.path.join(directory, legacy.ledger)
-    if os.path.isfile(legacy_ledger) and not os.path.lexists(paths.ledger):
+    if os.path.isfile(legacy_ledger) and (interrupted or not _has_established_ledger(paths.ledger)):
+        replace_ledger = os.path.lexists(paths.ledger)
         # Side files first: a leftover -wal belongs to the database it was written for.
         for suffix in _SQLITE_SIDECARS:
-            if os.path.isfile(legacy_ledger + suffix):
-                _move(legacy_ledger + suffix, paths.ledger + suffix)
-        _move(legacy_ledger, paths.ledger)
-    if legacy.pqc_wallet is not None and not os.path.lexists(paths.pqc_wallet):
+            src_side = legacy_ledger + suffix
+            dst_side = paths.ledger + suffix
+            if os.path.isfile(src_side):
+                _move(src_side, dst_side, overwrite=True)
+            elif replace_ledger and os.path.lexists(dst_side):
+                with contextlib.suppress(OSError):
+                    os.unlink(dst_side)
+        _move(legacy_ledger, paths.ledger, overwrite=replace_ledger)
+    if legacy.pqc_wallet is not None and (interrupted or not os.path.lexists(paths.pqc_wallet)):
         legacy_pqc = os.path.join(directory, legacy.pqc_wallet)
         if os.path.isfile(legacy_pqc):
-            _move(legacy_pqc, paths.pqc_wallet)
+            _move(legacy_pqc, paths.pqc_wallet, overwrite=os.path.lexists(paths.pqc_wallet))
     # The wallet goes last: its presence is what marks the node identity as established.
-    _move(os.path.join(directory, legacy.wallet), paths.wallet)
+    _move(os.path.join(directory, legacy.wallet), paths.wallet, overwrite=False)
+    with contextlib.suppress(OSError):
+        os.unlink(marker_path)
 
 
 def migrate_legacy_node_state() -> str | None:

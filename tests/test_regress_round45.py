@@ -197,9 +197,7 @@ def test_round45_worker_rebuilds_index_when_qdrant_collection_is_dropped_or_wipe
             return _FakeResp(
                 {
                     "result": {
-                        "points": [
-                            {"id": pid, "payload": {"path": pt["payload"]["path"]}} for pid, pt in points.items()
-                        ],
+                        "points": [{"id": pid, "payload": pt["payload"]} for pid, pt in points.items()],
                         "next_page_offset": None,
                     },
                     "status": "ok",

@@ -65,6 +65,7 @@ UPSERT_BATCH_SIZE = 64
 # Payload field that identifies the document a point belongs to (its full path). Points
 # are reconciled and removed per source through a filter on this field.
 SOURCE_PATH_FIELD = "path"
+CHUNK_HASH_FIELD = "chunk_sha256"
 # mtime recorded for a source that is only known from the collection (not indexed by this
 # process yet): it never equals a real mtime, so the file is re-indexed if it still exists.
 UNKNOWN_MTIME = -1.0
@@ -279,6 +280,11 @@ def chunk_point_id(filepath: str, chunk_index: int) -> str:
     return str(uuid.UUID(bytes=digest[:16]))
 
 
+def _chunk_sha256(chunk: str) -> str:
+    """Deterministic SHA-256 hex digest of one document chunk's text."""
+    return hashlib.sha256(chunk.encode("utf-8", errors="surrogatepass")).hexdigest()
+
+
 def delete_source_points(filepath: str, keep_ids: list[str] | None = None) -> None:
     """Deletes the points of document ``filepath`` except those whose id is in ``keep_ids``.
 
@@ -293,12 +299,16 @@ def delete_source_points(filepath: str, keep_ids: list[str] | None = None) -> No
     _qdrant_request("POST", "/points/delete?wait=true", {"filter": point_filter})
 
 
-def _list_indexed_point_ids() -> dict[str, set[str]]:
-    """Returns a mapping of indexed source paths to their stored Qdrant point IDs."""
-    by_source: dict[str, set[str]] = {}
+def _list_indexed_point_ids() -> dict[str, set[tuple[str, str]]]:
+    """Returns a mapping of indexed source paths to their stored ``(point_id, chunk_sha256)`` pairs."""
+    by_source: dict[str, set[tuple[str, str]]] = {}
     offset: Any = None
     while True:
-        body: dict[str, Any] = {"limit": SCROLL_PAGE_SIZE, "with_payload": [SOURCE_PATH_FIELD], "with_vector": False}
+        body: dict[str, Any] = {
+            "limit": SCROLL_PAGE_SIZE,
+            "with_payload": [SOURCE_PATH_FIELD, CHUNK_HASH_FIELD],
+            "with_vector": False,
+        }
         if offset is not None:
             body["offset"] = offset
         result = _qdrant_request("POST", "/points/scroll", body).get("result")
@@ -311,7 +321,9 @@ def _list_indexed_point_ids() -> dict[str, set[str]]:
                 point_ids = by_source.setdefault(path, set())
                 point_id = point.get("id")
                 valid_id = point_id is not None and not isinstance(point_id, bool)
-                point_ids.add(str(point_id) if valid_id else "<unknown-id>")
+                raw_hash = payload.get(CHUNK_HASH_FIELD) if isinstance(payload, dict) else None
+                chunk_hash = raw_hash if isinstance(raw_hash, str) else ""
+                point_ids.add((str(point_id) if valid_id else "<unknown-id>", chunk_hash))
         offset = result.get("next_page_offset")
         if offset is None:
             return by_source
@@ -428,6 +440,7 @@ def index_file(filepath: str) -> bool:
                         "source": os.path.basename(filepath),
                         "path": filepath,
                         "chunk_index": idx,
+                        "chunk_sha256": _chunk_sha256(chunk),
                         "text": chunk,
                         "indexed_at": time.time(),
                     },
@@ -632,26 +645,27 @@ def scan_and_index(indexed_files: set[tuple[str, DocumentVersion]]) -> tuple[int
     return succeeded, failed
 
 
-def _expected_point_ids(path: str) -> set[str] | None:
-    """Returns expected deterministic Qdrant point IDs for ``path`` (``set()`` when empty), or ``None`` if absent/oversized."""
+def _expected_point_ids(path: str) -> set[tuple[str, str]] | None:
+    """Returns expected ``(point_id, chunk_sha256)`` pairs for ``path`` (``set()`` when empty), or ``None`` if absent/oversized."""
+    path = os.path.abspath(path)
     if is_oversized(path):
         return None
     try:
         with open(path, encoding="utf-8", errors="ignore") as f:
             chunks = chunk_text(f.read())
     except OSError as e:
-        return None if isinstance(e, FileNotFoundError) else {"<unreadable>"}
-    return {chunk_point_id(path, idx) for idx in range(len(chunks))}
+        return None if isinstance(e, FileNotFoundError) else {("<unreadable>", "")}
+    return {(chunk_point_id(path, idx), _chunk_sha256(chunk)) for idx, chunk in enumerate(chunks)}
 
 
 def seed_indexed_sources(indexed_files: set[tuple[str, DocumentVersion]]) -> bool:
-    """Reconciles ``indexed_files`` with the source paths and chunk point IDs in Qdrant.
+    """Reconciles ``indexed_files`` with the source paths and stored ``(point_id, chunk_sha256)`` pairs in Qdrant.
 
     Adds unknown remote sources with ``UNKNOWN_MTIME`` (so files deleted while the worker
     was down are removed and existing ones are re-indexed), and downgrades any cached
-    document whose stored Qdrant point IDs differ from its expected chunk IDs (including
-    empty documents that expect zero points) back to ``UNKNOWN_MTIME`` so the next scan
-    repairs missing, partial, or unexpected stale document chunks.
+    document whose stored ``(point_id, chunk_sha256)`` pairs differ from its expected chunk
+    pairs (including empty documents that expect zero points) back to ``UNKNOWN_MTIME`` so
+    the next scan repairs missing, partial, content-stale, or unexpected document chunks.
     Returns False if Qdrant could not be read.
     """
     try:
