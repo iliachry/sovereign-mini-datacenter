@@ -135,7 +135,7 @@ How the copy is made (`BACKUP_NEXTCLOUD_SNAPSHOT`, default `auto` = the first th
 | Method | What it does | Window | Extra space |
 |---|---|---|---|
 | `reflink` | `cp -a --reflink=always`: copy-on-write clone. Needs GNU `cp`, and the volume and `BACKUP_DUMP_DIR` on the same Btrfs or reflink-enabled XFS filesystem | seconds to a few minutes (metadata only) | none until files change |
-| `rsync` | `rsync -a --link-dest=<previous copy>`: unchanged files become hard links to the **previous copy** (the published generation's), only new and changed files are copied | first run: a full copy; afterwards the time to compare every file plus the changed data | one copy of the volume, plus the files that differ between the two kept generations |
+| `rsync` | `rsync -a --checksum --link-dest=<previous copy>`: unchanged files (verified by content checksum, not mtime/size alone) become hard links to the **previous copy** (the published generation's), only new and changed files are copied | first run: a full copy; afterwards the time to checksum same-sized files plus copy the changed data | one copy of the volume, plus the files that differ between the two kept generations |
 | `copy` | `cp -a`: a full copy on every run | proportional to the size of the volume, every run | two copies of the volume (the two kept generations) |
 
 Hard links to the live files (`cp -al`) are deliberately not used: a hard link shares

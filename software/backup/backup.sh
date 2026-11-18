@@ -1173,7 +1173,7 @@ nc_maintenance_on() {
 # How the point-in-time copy of the volume is made (decided before the window opens):
 #   reflink  cp -a --reflink=always: copy-on-write clone, seconds, no extra space.
 #            Needs Btrfs or XFS with reflinks, dump directory on the same filesystem.
-#   rsync    rsync -a --link-dest=<previous snapshot>: unchanged files become hard
+#   rsync    rsync -a --checksum --link-dest=<previous snapshot>: unchanged files become hard
 #            links to the PREVIOUS SNAPSHOT (never to the live files), only new and
 #            changed files are copied. One extra copy of the data on disk.
 #   copy     cp -a: a full copy every run; the slowest. The previous generation is
@@ -1233,7 +1233,7 @@ nc_snapshot() {
             set -- -a --numeric-ids \
                 --exclude "/$2" --exclude "/$2-wal" --exclude "/$2-shm" --exclude "/$2-journal"
             if [ -d "${PREV_NCSNAP}/volume" ]; then
-                set -- "$@" --link-dest "${PREV_NCSNAP}/volume"
+                set -- "$@" --checksum --link-dest "${PREV_NCSNAP}/volume"
             fi
             rsync "$@" "${ns_root}/" "${NCSNAP_NEW}/volume/" \
                 || err "Dump of nextcloud failed: rsync of the volume returned an error. Nothing was backed up."

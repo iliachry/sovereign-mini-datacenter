@@ -66,6 +66,7 @@ SOURCE_PATH_FIELD = "path"
 # mtime recorded for a source that is only known from the collection (not indexed by this
 # process yet): it never equals a real mtime, so the file is re-indexed if it still exists.
 UNKNOWN_MTIME = -1.0
+DocumentVersion = float | tuple[int, int, str]
 QDRANT_TIMEOUT_SECONDS = 30
 SCROLL_PAGE_SIZE = 1000
 
@@ -505,7 +506,15 @@ def list_documents(watch_dir: str, walk_errors: list[OSError] | None = None) -> 
     return sorted(documents)
 
 
-def scan_and_index(indexed_files: set[tuple[str, float]]) -> tuple[int, int]:
+def _document_version(path: str) -> tuple[int, int, str]:
+    """Returns ``(mtime_ns, size_bytes, sha256_hex)`` so preserved-mtime edits still re-index."""
+    st = os.stat(path)
+    with open(path, "rb") as f:
+        digest = hashlib.file_digest(f, "sha256").hexdigest()
+    return (st.st_mtime_ns, st.st_size, digest)
+
+
+def scan_and_index(indexed_files: set[tuple[str, DocumentVersion]]) -> tuple[int, int]:
     """Brings the index in line with WATCH_DIR. Returns (succeeded, failed).
 
     New or modified documents are (re-)indexed. A file is recorded in ``indexed_files`` only
@@ -540,9 +549,13 @@ def scan_and_index(indexed_files: set[tuple[str, float]]) -> tuple[int, int]:
             continue  # skipped, not a failure; a previously indexed version is removed below
         present.add(p)
         try:
-            key = (p, os.path.getmtime(p))
-        except OSError:
+            key: tuple[str, DocumentVersion] = (p, _document_version(p))
+        except FileNotFoundError:
             continue  # vanished during the scan: handled as a removal on the next one
+        except OSError:
+            if not index_file(p):
+                failed += 1
+            continue
         if key in indexed_files:
             continue
         logger.info("New or modified document detected: %s", os.path.basename(p))
@@ -591,7 +604,7 @@ def scan_and_index(indexed_files: set[tuple[str, float]]) -> tuple[int, int]:
     return succeeded, failed
 
 
-def seed_indexed_sources(indexed_files: set[tuple[str, float]]) -> bool:
+def seed_indexed_sources(indexed_files: set[tuple[str, DocumentVersion]]) -> bool:
     """Records the documents already present in the collection as known sources.
 
     The set of indexed files lives in memory only, so after a restart the worker would not
@@ -620,7 +633,7 @@ def run_worker() -> None:
     logger.info("Starting Autonomous Knowledge Indexer Worker...")
     collection_ready = ensure_qdrant_collection()
 
-    indexed_files: set[tuple[str, float]] = set()
+    indexed_files: set[tuple[str, DocumentVersion]] = set()
     sources_seeded = False
     waiting_for_watch_dir = False
     last_mode = get_current_mode()
