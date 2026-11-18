@@ -553,10 +553,8 @@ def scan_and_index(indexed_files: set[tuple[str, DocumentVersion]]) -> tuple[int
         except FileNotFoundError:
             continue  # vanished during the scan: handled as a removal on the next one
         except OSError:
-            if not index_file(p):
-                failed += 1
-            continue
-        if key in indexed_files:
+            key = (p, UNKNOWN_MTIME)
+        if key != (p, UNKNOWN_MTIME) and key in indexed_files:
             continue
         logger.info("New or modified document detected: %s", os.path.basename(p))
         if index_file(p):
