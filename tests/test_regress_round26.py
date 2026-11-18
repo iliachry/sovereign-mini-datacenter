@@ -10,7 +10,7 @@
 3. MCP ``set_load_shedding`` result and schema descriptions state accurately that only
    apps paused solely by tier shedding are resumed and ``min_battery_soc`` floor pauses
    remain held when no ``battery_soc`` reading is published.
-4. ``README.md``, ``AGENTS.md``, and ``COMMERCIALIZATION.md`` reflect the measured 92.7%
+4. ``README.md``, ``AGENTS.md``, and ``COMMERCIALIZATION.md`` reflect the measured 92.8%
    coverage, and ``COMMERCIALIZATION.md`` qualifies LiFePO4 thermal stability accurately.
 """
 
@@ -343,10 +343,10 @@ def test_round26_documented_coverage_and_lfp_wording() -> None:
     agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
     comm = (ROOT / "COMMERCIALIZATION.md").read_text(encoding="utf-8")
 
-    assert "92.7%25%20Cov" in readme
-    assert "92.7% coverage" in readme
-    assert "92.7% coverage" in agents
-    assert "92.7% Coverage" in comm
+    assert "92.8%25%20Cov" in readme
+    assert "92.8% coverage" in readme
+    assert "92.8% coverage" in agents
+    assert "92.8% Coverage" in comm
 
     lower_comm = comm.lower()
     assert "zero thermal runaway" not in lower_comm

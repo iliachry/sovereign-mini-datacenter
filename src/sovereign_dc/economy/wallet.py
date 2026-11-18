@@ -261,8 +261,15 @@ class NodeWallet:
                 except FileExistsError:
                     raise
                 except OSError:
+                    with contextlib.suppress(OSError):
+                        os.unlink(tmp_path)
                     excl_fd = os.open(abs_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-                    _write_mode_0600(excl_fd)
+                    try:
+                        _write_mode_0600(excl_fd)
+                    except BaseException:
+                        with contextlib.suppress(OSError):
+                            os.unlink(abs_path)
+                        raise
         finally:
             with contextlib.suppress(OSError):
                 os.unlink(tmp_path)

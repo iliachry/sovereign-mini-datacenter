@@ -310,8 +310,8 @@ def _list_indexed_point_ids() -> dict[str, set[str]]:
             if isinstance(path, str) and path:
                 point_ids = by_source.setdefault(path, set())
                 point_id = point.get("id")
-                if point_id is not None and not isinstance(point_id, bool):
-                    point_ids.add(str(point_id))
+                valid_id = point_id is not None and not isinstance(point_id, bool)
+                point_ids.add(str(point_id) if valid_id else "<unknown-id>")
         offset = result.get("next_page_offset")
         if offset is None:
             return by_source
@@ -633,7 +633,7 @@ def scan_and_index(indexed_files: set[tuple[str, DocumentVersion]]) -> tuple[int
 
 
 def _expected_point_ids(path: str) -> set[str] | None:
-    """Returns expected deterministic Qdrant point IDs for ``path``, or ``None`` if empty/absent/oversized."""
+    """Returns expected deterministic Qdrant point IDs for ``path`` (``set()`` when empty), or ``None`` if absent/oversized."""
     if is_oversized(path):
         return None
     try:
@@ -641,8 +641,6 @@ def _expected_point_ids(path: str) -> set[str] | None:
             chunks = chunk_text(f.read())
     except OSError as e:
         return None if isinstance(e, FileNotFoundError) else {"<unreadable>"}
-    if not chunks:
-        return None
     return {chunk_point_id(path, idx) for idx in range(len(chunks))}
 
 
@@ -651,8 +649,9 @@ def seed_indexed_sources(indexed_files: set[tuple[str, DocumentVersion]]) -> boo
 
     Adds unknown remote sources with ``UNKNOWN_MTIME`` (so files deleted while the worker
     was down are removed and existing ones are re-indexed), and downgrades any cached
-    non-empty document whose stored Qdrant point IDs differ from its expected chunk IDs
-    back to ``UNKNOWN_MTIME`` so the next scan repairs missing or partial document chunks.
+    document whose stored Qdrant point IDs differ from its expected chunk IDs (including
+    empty documents that expect zero points) back to ``UNKNOWN_MTIME`` so the next scan
+    repairs missing, partial, or unexpected stale document chunks.
     Returns False if Qdrant could not be read.
     """
     try:
