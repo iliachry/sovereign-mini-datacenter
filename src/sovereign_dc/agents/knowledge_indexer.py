@@ -517,8 +517,10 @@ def _document_version(path: str) -> tuple[int, int, str]:
 def scan_and_index(indexed_files: set[tuple[str, DocumentVersion]]) -> tuple[int, int]:
     """Brings the index in line with WATCH_DIR. Returns (succeeded, failed).
 
-    New or modified documents are (re-)indexed. A file is recorded in ``indexed_files`` only
-    after it was indexed successfully, so failures are retried on the next scan.
+    New or modified documents are (re-)indexed. A new file is recorded in ``indexed_files``
+    only after it is indexed successfully, and a failed re-index invalidates any cached
+    version (downgrading to ``UNKNOWN_MTIME`` or deferring to the pending sets), so
+    failures are always retried on the next scan.
 
     Documents recorded in ``indexed_files`` that are no longer eligible are removed from the
     index (and from ``indexed_files`` once that succeeded; a failed removal counts as a
@@ -540,6 +542,9 @@ def scan_and_index(indexed_files: set[tuple[str, DocumentVersion]]) -> tuple[int
     eligible it is simply indexed again; once the file is no longer eligible its points are
     removed exactly like those of a recorded document (same WATCH_DIR safeguards).
     """
+    pending_invalid = _cleanup_pending | _reconcile_pending
+    if pending_invalid:
+        indexed_files.difference_update({k for k in indexed_files if k[0] in pending_invalid})
     succeeded = 0
     failed = retry_pending_cleanup()
     present: set[str] = set()
@@ -556,6 +561,7 @@ def scan_and_index(indexed_files: set[tuple[str, DocumentVersion]]) -> tuple[int
             key = (p, UNKNOWN_MTIME)
         if key != (p, UNKNOWN_MTIME) and key in indexed_files:
             continue
+        was_indexed = any(k[0] == p for k in indexed_files)
         logger.info("New or modified document detected: %s", os.path.basename(p))
         if index_file(p):
             # Drop entries for older versions of the same document.
@@ -563,6 +569,10 @@ def scan_and_index(indexed_files: set[tuple[str, DocumentVersion]]) -> tuple[int
             indexed_files.add(key)
             succeeded += 1
         else:
+            if was_indexed:
+                indexed_files.difference_update({k for k in indexed_files if k[0] == p})
+                if p not in _cleanup_pending and p not in _reconcile_pending:
+                    indexed_files.add((p, UNKNOWN_MTIME))
             failed += 1
 
     if walk_errors or not os.path.isdir(WATCH_DIR):

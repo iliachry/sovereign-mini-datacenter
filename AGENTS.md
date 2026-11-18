@@ -30,10 +30,12 @@ sovereign-mini-datacenter/
 │       ├── cli.py               # Unified argparse CLI interface
 │       ├── config.py            # Layered configuration management (Defaults -> YAML -> Env)
 │       ├── events.py            # Thread-safe in-process publish/subscribe event bus
+│       ├── jsonutil.py          # Strict JSON serializer (sanitizes NaN/Infinity before encoding)
 │       ├── log.py               # Structured JSON & colored console formatters
 │       ├── telemetry.py         # Power/thermal Prometheus exporter (simulation, or ESP32 bridge via ESP32_BRIDGE_URL)
 │       ├── shed_benchmark.py    # `smdc benchmark --shed`: load-shedding software-path latency (simulation)
 │       ├── agents/              # Autonomous local agent engines
+│       │   ├── bootstrap_provisioner.py # Read-only startup checker (hardware, peers, services, DTN spool)
 │       │   ├── sentinel_copilot.py   # Polls power telemetry, publishes the operating mode
 │       │   ├── knowledge_indexer.py  # Semantic chunker & Qdrant RAG vectorizer
 │       │   ├── gitlab_reviewer.py    # Polls open GitLab MRs, posts one LLM review note each
@@ -42,6 +44,7 @@ sovereign-mini-datacenter/
 │       │   ├── wallet.py             # Ed25519 & NIST FIPS 204 ML-DSA-87 Node Wallets
 │       │   ├── ledger.py             # Append-only hash-linked ledger & offline state channels
 │       │   ├── market.py             # Solar-aware dynamic price oracle & service catalog
+│       │   ├── node_state.py         # Shared node economic state (single wallet pair & ledger resolver)
 │       │   └── settlement.py         # Proof-of-Compute/Relay & RFC 9171 DTN bundle settlement
 │       ├── enterprise/          # Enterprise Workload Onboarding & Coupling Framework
 │       │   ├── schema.py             # smdc-app.yaml manifest dataclass & schema validation
@@ -136,7 +139,7 @@ sovereign-mini-datacenter/
 │   └── MANUFACTURING_GUIDE.md   # Laser cut DXF export, CNC sheet metal bending specs
 ├── docs/                        # Interactive Three.js WebGL Digital Twin & GitHub Pages
 │   └── index.html               # 3D WebGL CAD viewer + interactive sizing & TCO calculator
-├── tests/                       # Complete automated Pytest suite (1462 tests, 92.5% coverage)
+├── tests/                       # Complete automated Pytest suite (1463 tests, 92.5% coverage)
 ├── ARCHITECTURE.md              # Multi-node autonomous network architecture specification
 ├── ENTERPRISE_ONBOARDING.md     # Enterprise manifest spec, power tiers & developer guide
 ├── COMMERCIALIZATION.md         # Investment thesis, TAM/SAM/SOM & 3-year TCO payback model
@@ -330,7 +333,7 @@ Windows equivalent without `uv run`: `.\.venv\Scripts\python -m sovereign_dc <co
 ## 6. Checklist Before Completing Any Agent Task
 
 1. [ ] **Pass All Quality Gates Locally**: Run `scripts/quality_gate.ps1` or `scripts/quality_gate.sh` (Ruff lint/format, Mypy typing, Pytest $\ge 85\%$ coverage).
-2. [ ] **Pass All Unit Tests**: Verify all 1462 tests in `tests/` pass with zero failures.
+2. [ ] **Pass All Unit Tests**: Verify all 1463 tests in `tests/` pass with zero failures.
 3. [ ] **Preserve Existing Interfaces**: Ensure CLI arguments, Prometheus metric names, and DTN bundle schemas remain backward-compatible.
 4. [ ] **Verify Markdown/Mermaid & Math**: Ensure any new or modified `.md` files strictly comply with GitHub Mermaid and LaTeX math rendering rules.
 5. [ ] **Synchronize Documentation**: Update `AGENTS.md` and `README.md` with any newly added modules, subcommands, or architectural changes.

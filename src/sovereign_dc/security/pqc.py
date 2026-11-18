@@ -75,9 +75,8 @@ class PQCKeyPair:
 class PQCSigner:
     """Post-Quantum Digital Signature Engine (NIST FIPS 204 / ML-DSA).
 
-    Signs and verifies arbitrary messages, Raft consensus log entries, and
-    RFC 9171 DTN Space Bundles using Module-Lattice Digital Signature Standard
-    (ML-DSA-65 and ML-DSA-87).
+    Signs and verifies arbitrary messages and RFC 9171 DTN Space Bundles
+    using Module-Lattice Digital Signature Standard (ML-DSA-65 and ML-DSA-87).
     """
 
     def __init__(self, algorithm: PQCAlgorithm = PQCAlgorithm.ML_DSA_65) -> None:
