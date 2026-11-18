@@ -4,7 +4,6 @@ Sovereign Mini Datacenter - Autonomous Document & Knowledge Base Indexer
 Extracts, chunks, embeds via local Ollama, and indexes into Qdrant for Open-WebUI RAG.
 """
 
-import contextlib
 import fnmatch
 import hashlib
 import json
@@ -36,7 +35,7 @@ MODE_FILE = os.getenv("SOVEREIGN_MODE_FILE", "")
 # Sentinel modes in which batch vectorisation is deferred to conserve power.
 POWER_SAVING_MODES = frozenset({"ECO_PRESERVATION", "CRITICAL_SHEDDING"})
 POLL_INTERVAL_SECONDS = 30
-# Consecutive idle polls (with indexed documents) before re-checking Qdrant collection state.
+# Healthy polls (with indexed documents) between Qdrant collection and source reconciliations.
 COLLECTION_VERIFY_IDLE_POLLS = 10
 WATCH_DIR = os.getenv("DOCS_WATCH_DIR", "/data/documents")
 INDEXED_SUFFIXES = (".md", ".txt", ".csv", ".json", ".py", ".sh")
@@ -172,27 +171,18 @@ def get_current_model() -> str:
     return DEFAULT_EMBEDDING_MODEL
 
 
-_collection_empty = False
+_collection_created = False
 
 
 def ensure_qdrant_collection() -> bool:
     """Creates the Qdrant collection if it does not exist. Returns True when it is ready."""
-    global _collection_empty
-    _collection_empty = False
+    global _collection_created
+    _collection_created = False
     url = f"{QDRANT_URL}/collections/{COLLECTION_NAME}"
     try:
         req = urllib.request.Request(url, headers={"Content-Type": "application/json"})
         with urllib.request.urlopen(req, timeout=3) as resp:
             if resp.status == 200:
-                raw = resp.read()
-                with contextlib.suppress(ValueError):
-                    info = json.loads(raw.decode("utf-8")) if isinstance(raw, (bytes, bytearray)) and raw else None
-                    if (
-                        isinstance(info, dict)
-                        and isinstance(info.get("result"), dict)
-                        and info["result"].get("points_count") == 0
-                    ):
-                        _collection_empty = True
                 logger.info("Qdrant collection '%s' ready.", COLLECTION_NAME)
                 return True
             logger.error("Unexpected Qdrant status %s for collection '%s'.", resp.status, COLLECTION_NAME)
@@ -213,7 +203,7 @@ def ensure_qdrant_collection() -> bool:
     except Exception as e:
         logger.error("Failed to create Qdrant collection '%s': %s", COLLECTION_NAME, e)
         return False
-    _collection_empty = True
+    _collection_created = True
     try:
         # Keyword index on the source path: per-document reconciliation filters on it.
         # Optional (Qdrant filters unindexed fields too, just slower), so failure is not fatal.
@@ -634,13 +624,25 @@ def scan_and_index(indexed_files: set[tuple[str, DocumentVersion]]) -> tuple[int
     return succeeded, failed
 
 
-def seed_indexed_sources(indexed_files: set[tuple[str, DocumentVersion]]) -> bool:
-    """Records the documents already present in the collection as known sources.
+def _file_has_chunks(path: str) -> bool:
+    """True when ``path`` is eligible and produces at least one indexable chunk."""
+    if is_oversized(path):
+        return False
+    try:
+        with open(path, encoding="utf-8", errors="ignore") as f:
+            return bool(chunk_text(f.read()))
+    except OSError as e:
+        return not isinstance(e, FileNotFoundError)
 
-    The set of indexed files lives in memory only, so after a restart the worker would not
-    know about documents that were indexed earlier and deleted while it was down. Seeding
-    them (with ``UNKNOWN_MTIME``) lets the next scan re-index those that still exist and
-    remove the points of those that do not. Returns False if Qdrant could not be read.
+
+def seed_indexed_sources(indexed_files: set[tuple[str, DocumentVersion]]) -> bool:
+    """Reconciles ``indexed_files`` with the source paths currently stored in Qdrant.
+
+    Adds unknown remote sources with ``UNKNOWN_MTIME`` (so files deleted while the worker
+    was down are removed and existing ones are re-indexed), and downgrades any cached
+    non-empty document whose points are absent from Qdrant back to ``UNKNOWN_MTIME`` so
+    the next scan rebuilds it even after a partial or repopulated collection wipe.
+    Returns False if Qdrant could not be read.
     """
     try:
         sources = list_indexed_sources()
@@ -649,6 +651,10 @@ def seed_indexed_sources(indexed_files: set[tuple[str, DocumentVersion]]) -> boo
         return False
     known = {path for path, _ in indexed_files}
     indexed_files.update((path, UNKNOWN_MTIME) for path in sources if path not in known)
+    for path, ver in list(indexed_files):
+        if ver != UNKNOWN_MTIME and path not in sources and _file_has_chunks(path):
+            indexed_files.discard((path, ver))
+            indexed_files.add((path, UNKNOWN_MTIME))
     return True
 
 
@@ -660,14 +666,14 @@ def run_worker() -> None:
     and restart-loop the service on a fresh node. While it is missing the worker waits
     (logged once) and looks again on every poll.
     """
-    global _collection_empty
+    global _collection_created
     logger.info("Starting Autonomous Knowledge Indexer Worker...")
     collection_ready = ensure_qdrant_collection()
 
     indexed_files: set[tuple[str, DocumentVersion]] = set()
     sources_seeded = False
     waiting_for_watch_dir = False
-    idle_polls = 0
+    polls_since_verify = 0
     last_mode = get_current_mode()
 
     while True:
@@ -692,33 +698,31 @@ def run_worker() -> None:
                     waiting_for_watch_dir = False
                     logger.info("Watch directory %s is now available.", WATCH_DIR)
                 if not collection_ready:
-                    _collection_empty = False
+                    _collection_created = False
+                    sources_seeded = False
                     collection_ready = ensure_qdrant_collection()
                     if (
                         collection_ready
-                        and _collection_empty
+                        and _collection_created
                         and (indexed_files or _cleanup_pending or _reconcile_pending)
                     ):
                         logger.info(
-                            "Qdrant collection '%s' is empty or was recreated; scheduling full re-index.",
+                            "Qdrant collection '%s' was recreated; scheduling full re-index.",
                             COLLECTION_NAME,
                         )
                         indexed_files.clear()
                         _cleanup_pending.clear()
                         _reconcile_pending.clear()
-                        sources_seeded = False
                 if collection_ready and not sources_seeded:
                     sources_seeded = seed_indexed_sources(indexed_files)
-                succeeded, failed = scan_and_index(indexed_files)
-                idle_polls = (
-                    idle_polls + 1
-                    if (not failed and succeeded == 0 and indexed_files and COLLECTION_VERIFY_IDLE_POLLS > 0)
-                    else 0
+                _, failed = scan_and_index(indexed_files)
+                polls_since_verify = (
+                    polls_since_verify + 1 if (not failed and indexed_files and COLLECTION_VERIFY_IDLE_POLLS > 0) else 0
                 )
-                if failed or (COLLECTION_VERIFY_IDLE_POLLS > 0 and idle_polls >= COLLECTION_VERIFY_IDLE_POLLS):
-                    # The collection may have been missing, dropped, or wiped while idle: re-verify.
+                if failed or (COLLECTION_VERIFY_IDLE_POLLS > 0 and polls_since_verify >= COLLECTION_VERIFY_IDLE_POLLS):
+                    # The collection or individual sources may have been lost externally: re-verify.
                     collection_ready = False
-                    idle_polls = 0
+                    polls_since_verify = 0
         except Exception as e:
             logger.error("Indexer loop error: %s", e)
         time.sleep(POLL_INTERVAL_SECONDS)

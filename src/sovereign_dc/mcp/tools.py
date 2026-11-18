@@ -531,6 +531,8 @@ def tool_run_security_audit(params: dict[str, Any]) -> dict[str, Any]:
     ss_server = kem.decapsulate(ct, kem_kp.private_key)
     kem_valid = ss_client == ss_server
 
+    passed = int(bool(sig_valid)) + int(bool(kem_valid))
+    total = 2
     return {
         "timestamp": time.time(),
         "nist_sp_800_207_zero_trust": {
@@ -549,11 +551,11 @@ def tool_run_security_audit(params: dict[str, Any]) -> dict[str, Any]:
                 "ciphertext_bytes": len(ct),
             },
         },
-        "pqc_self_tests_passed": int(sig_valid) + int(kem_valid),
-        "pqc_self_tests_total": 2,
-        # Kept for compatibility: this is the share of PQC self-tests that passed
-        # (two-step scale), not a compliance assessment.
-        "compliance_score_percent": 100.0 if (sig_valid and kem_valid) else 50.0,
+        "pqc_self_tests_passed": passed,
+        "pqc_self_tests_total": total,
+        # Kept for compatibility: this is the percentage of PQC self-tests that passed
+        # (0%, 50%, or 100%), not a compliance assessment.
+        "compliance_score_percent": round(100.0 * passed / total, 1),
         "score_basis": "pqc_self_tests_only",
     }
 
