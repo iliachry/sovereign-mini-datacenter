@@ -4,7 +4,7 @@
 >
 > **How to read the prices:** every figure in an "Est. Unit Cost" column is an estimate, not a quote. The DGX Spark price is NVIDIA's own listed price (source and check date under the table in section 1). All other figures are conservative mid-market estimates for the part class described in the row; rows that give a rating instead of a model number (fuses, cable, isolators, converter, PDU and so on) are generic specifications, and any part that meets the stated ratings can be used.
 >
-> **What the BOM excludes:** assembly labour, shipping, taxes and import duties, and the site-specific items that depend on where the array is installed: the PV panel mounting structure (roof, ground or façade), conduit, trunking and cable trays, and PV cable beyond the lengths allowed for in section 2. The optional communications peripherals described in `ARCHITECTURE.md` (LoRa radio, satellite or Starlink terminal and its mast) are deployment options chosen per site and are not part of this reference BOM.
+> **What the BOM excludes:** assembly labour, shipping, taxes and import duties, the upstream site router/firewall, and the site-specific items that depend on where the array is installed: the PV panel mounting structure (roof, ground or façade), conduit, trunking and cable trays, and PV cable beyond the lengths allowed for in section 2. The optional communications peripherals described in `ARCHITECTURE.md` (LoRa radio, satellite or Starlink terminal and its mast) are deployment options chosen per site and are not part of this reference BOM.
 
 ---
 
@@ -15,7 +15,7 @@
 | **GPU Compute** | NVIDIA DGX Spark (128GB / 4TB) | NVIDIA GB10 Grace Blackwell Superchip (20-core Arm), 128GB unified LPDDR5x memory, 4TB NVMe M.2, 10GbE RJ-45 + ConnectX-7 (2× QSFP), 240W external power supply | 2 | $6,950 |
 | **Networking** | Mikrotik CRS309-1G-8S+IN | 8x 10GbE SFP+, L2/L3 Hardware Offload, RouterOS | 1 | $270 |
 | **Storage (Primary)** | Samsung 990 PRO 4TB NVMe SSD | PCIe 4.0 (7,450 MB/s Read, 6,900 MB/s Write) | 2 | $320 |
-| **System Host Board** | Mini-ITX server board, AM5 or LGA1200 | Server-class Mini-ITX board for AMD EPYC 4004 (AM5) or Intel Xeon E-2300 (LGA1200), with IPMI/BMC, ECC memory support and two M.2 or U.2 NVMe positions for the primary storage. Generic specification; board price only. | 1 | $450 |
+| **System Host Board** | Mini-ITX server board (+ 10GbE SFP+), AM5 or LGA1200 | Server-class Mini-ITX board for AMD EPYC 4004 (AM5) or Intel Xeon E-2300 (LGA1200), with IPMI/BMC, ECC memory support, two M.2 or U.2 NVMe positions for the primary storage, and at least one 10GbE SFP+ cage (onboard or via a low-profile PCIe x8 10GbE SFP+ NIC in the free PCIe slot, included in the $450 allowance). Generic specification. | 1 | $450 |
 | **System Host CPU** | 8-core AMD EPYC 4004 or Intel Xeon E-2300 class CPU | 8 cores / 16 threads, 65W TDP class (up to 125W supported by the loop); the socket must match the board | 1 | $330 |
 | **RAM (System Host)** | ECC Unbuffered 32GB module, matched to the board | DDR5 ECC unbuffered for EPYC 4004 (AM5) boards, DDR4 ECC unbuffered for Xeon E-2300 (LGA1200) boards; neither platform accepts registered (RDIMM) memory. Form factor (UDIMM or SO-DIMM) and speed per the board's QVL. | 2 | $160 |
 | **Boot Drive** | Samsung 980 500GB NVMe | PCIe 3.0, OS boot drive for Ubuntu Server | 1 | $60 |
@@ -134,7 +134,7 @@
 
 | Subsystem | Component Model | Spec / Description | Qty | Est. Unit Cost |
 | :--- | :--- | :--- | :---: | :---: |
-| **SFP+ DAC Cables** | MikroTik S+DA0001 | 1m SFP+ Direct Attach Cable, 10GbE | 4 | $15 |
+| **SFP+ DAC Cables** | MikroTik S+DA0001 | 1m SFP+ Direct Attach Cable, 10GbE (host SFP+ link, upstream SFP+ router link & spares) | 4 | $15 |
 | **SFP+ to RJ45** | MikroTik S+RJ10 | 10GbE SFP+ to RJ45 Module | 2 | $45 |
 | **10GbE / Mgmt Patch** | Cat6A Shielded Patch (0.3m) | DGX Spark S+RJ10 10GbE & management links | 4 | $5 |
 

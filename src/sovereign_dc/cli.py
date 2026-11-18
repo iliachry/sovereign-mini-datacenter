@@ -1120,7 +1120,7 @@ def cmd_mesh_consensus(args):
     node_ids = [f"smdc-node-{i:02d}" for i in range(1, node_count + 1)]
 
     print(f"\n{BOLD}{CYAN}=== Decentralized Multi-Node Raft Consensus Simulation ==={RESET}")
-    print(f"Cluster: {node_count} nodes over WireGuard overlay (100.64.0.0/16)\n")
+    print(f"Cluster: {node_count} nodes over WireGuard overlay (100.64.0.0/10)\n")
 
     cluster = RaftCluster(node_ids)
     candidate_id = node_ids[0]

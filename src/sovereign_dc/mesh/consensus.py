@@ -1,7 +1,7 @@
 """Decentralized Multi-Node Raft Consensus Engine for Sovereign Datacenter Swarms.
 
 Implements leader election, log replication, and cluster state synchronization
-over WireGuard mesh networks (100.64.0.0/16) with automatic fallback to
+over WireGuard mesh networks (100.64.0.0/10) with automatic fallback to
 RFC 9171 Space Delay-Tolerant Networking (BPv7) on network partition.
 """
 

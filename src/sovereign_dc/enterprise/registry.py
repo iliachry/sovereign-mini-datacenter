@@ -474,11 +474,9 @@ class EnterpriseRegistry:
                 if not isinstance(app_data, dict):
                     raise ValueError("entry is not an object")
                 manifest = AppManifest.from_dict(app_data)
-                parse_errors = manifest.parse_errors()
-                if parse_errors:
-                    raise ValueError("; ".join(parse_errors))
-                if not isinstance(manifest.app_id, str) or not manifest.app_id:
-                    raise ValueError("entry has no app_id")
+                errors = manifest.validate()
+                if errors:
+                    raise ValueError("; ".join(errors))
                 apps[manifest.app_id] = manifest
                 manifest_path = app_data.get("manifest_path")
                 if isinstance(manifest_path, str) and os.path.exists(manifest_path):

@@ -37,7 +37,7 @@ Unlike traditional cloud architectures that depend on centralized control planes
 └──────┬────────────────────────────────┬──────┘              └──────┬────────────────────────────────┬──────┘
        │                                │                            │                                │
        │ WireGuard / Nebula P2P Overlay │                            │ WireGuard / Nebula P2P Overlay │
-       │ (100.64.0.0/16 High-Bandwidth) │                            │ (100.64.0.0/16 High-Bandwidth) │
+       │ (100.64.0.0/10 High-Bandwidth) │                            │ (100.64.0.0/10 High-Bandwidth) │
        ├────────────────────────────────┼────────────────────────────┤                                │
        │                                │                                                             │
        │                                │ LoRa 868/915MHz Out-of-Band Emergency Control Plane         │
