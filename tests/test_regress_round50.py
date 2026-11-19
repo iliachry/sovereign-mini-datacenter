@@ -95,9 +95,11 @@ def test_round50_interrupted_wal_ledger_migration_preserves_uncheckpointed_wal_c
         with pytest.raises(OSError, match="simulated main db replace failure"):
             node_state.migrate_legacy_node_state()
 
-    # Source -wal was NOT unlinked by the failed attempt; destination still holds valid retry state.
-    assert wal_path.exists()
+    # Source legacy ledger retains all 12.5 uncheckpointed WAL credits (folded into main DB on snapshot close) for retry.
     assert legacy_ledger_path.exists()
+    probe_retry = tmp_path / "probe_retry.db"
+    probe_retry.write_bytes(legacy_ledger_path.read_bytes())
+    assert Ledger(db_path=str(probe_retry)).get_balance(legacy_wallet.address) == 12.5
     assert (state_dir / node_state._MIGRATING_FILENAME).exists()
 
     # Retry succeeds and preserves all 12.5 uncheckpointed WAL credits while removing stale -journal.

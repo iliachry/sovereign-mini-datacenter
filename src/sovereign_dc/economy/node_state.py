@@ -293,34 +293,64 @@ def _move(src: str, dst: str, *, overwrite: bool = False) -> None:
         os.unlink(src)
 
 
-_TRANSIENT_SQLITE_CODES: frozenset[int] = frozenset(
-    getattr(sqlite3, name)
-    for name in (
-        "SQLITE_BUSY",
-        "SQLITE_LOCKED",
-        "SQLITE_IOERR",
-        "SQLITE_CANTOPEN",
-        "SQLITE_NOMEM",
-        "SQLITE_FULL",
-    )
-    if hasattr(sqlite3, name)
+_CORRUPT_SQLITE_CODES: frozenset[int] = frozenset(
+    getattr(sqlite3, name) for name in ("SQLITE_CORRUPT", "SQLITE_NOTADB") if hasattr(sqlite3, name)
 )
 
 
-def _is_indeterminate_sqlite_error(err: sqlite3.Error) -> bool:
+def _is_corrupt_sqlite_error(err: sqlite3.Error) -> bool:
+    """True only when SQLite definitively reports ``path`` is malformed or not a database.
+
+    Any lock, busy, recovery-required (e.g. ``SQLITE_READONLY_ROLLBACK`` or
+    ``SQLITE_READONLY_RECOVERY`` on a hot journal or unrecovered WAL), permission, or I/O error
+    returns False so callers re-raise and preserve the existing destination database untouched.
+    """
     code = getattr(err, "sqlite_errorcode", None)
-    if isinstance(code, int) and (code & 0xFF) in _TRANSIENT_SQLITE_CODES:
-        return True
+    if isinstance(code, int):
+        return (code & 0xFF) in _CORRUPT_SQLITE_CODES
     msg = str(err).lower()
-    return any(token in msg for token in ("locked", "busy", "disk i/o", "unable to open", "out of memory"))
+    return "malformed" in msg or "not a database" in msg
+
+
+def _is_readonly_recovery_error(err: sqlite3.Error) -> bool:
+    code = getattr(err, "sqlite_errorcode", None)
+    readonly_code = getattr(sqlite3, "SQLITE_READONLY", 8)
+    if isinstance(code, int) and (code & 0xFF) == readonly_code:
+        return True
+    return "readonly" in str(err).lower()
+
+
+def _inspect_unrecovered_ledger_copy(path: str) -> bool:
+    """Inspects a disposable copy when ``path`` needs rollback/WAL recovery under ``mode=ro``."""
+    abs_path = os.path.abspath(path)
+    parent_dir = os.path.dirname(abs_path)
+    with tempfile.TemporaryDirectory(prefix=".smdc_ledger_probe.", dir=parent_dir) as tmp_dir:
+        os.chmod(tmp_dir, 0o700)
+        probe_db = os.path.join(tmp_dir, "probe.db")
+        shutil.copy2(abs_path, probe_db, follow_symlinks=False)
+        os.chmod(probe_db, 0o600)
+        for suffix in _SQLITE_SIDECARS:
+            side = abs_path + suffix
+            if os.path.isfile(side) and not os.path.islink(side):
+                dst_side = probe_db + suffix
+                shutil.copy2(side, dst_side, follow_symlinks=False)
+                os.chmod(dst_side, 0o600)
+        try:
+            with contextlib.closing(sqlite3.connect(probe_db, timeout=5.0)) as rw_conn:
+                rw_conn.execute("PRAGMA busy_timeout=5000")
+                return Ledger.verify_readonly_conn(rw_conn)
+        except sqlite3.Error as probe_err:
+            if _is_corrupt_sqlite_error(probe_err):
+                return False
+            raise
 
 
 def _has_established_ledger(path: str) -> bool:
     """True when ``path`` is an intact SQLite ledger that already holds transactions.
 
     Uses a purely read-only connection so an active ``BEGIN IMMEDIATE`` writer on a WAL ledger
-    never causes false-negative classification, and re-raises lock or I/O errors rather than
-    permitting migration to overwrite an unreadable destination file.
+    never causes false-negative classification, and re-raises lock, hot-journal recovery, or I/O
+    errors rather than permitting migration to overwrite an unreadable destination file.
     """
     try:
         st = os.stat(path)
@@ -343,9 +373,11 @@ def _has_established_ledger(path: str) -> bool:
             conn.execute("PRAGMA busy_timeout=5000")
             return Ledger.verify_readonly_conn(conn)
     except sqlite3.Error as err:
-        if _is_indeterminate_sqlite_error(err):
-            raise
-        return False
+        if _is_corrupt_sqlite_error(err):
+            return False
+        if _is_readonly_recovery_error(err):
+            return _inspect_unrecovered_ledger_copy(path)
+        raise
 
 
 def _read_migrating_owned(marker_path: str) -> set[str]:
@@ -384,6 +416,133 @@ def _write_migrating_owned(marker_path: str, owned: set[str]) -> None:
         raise
 
 
+def _verify_trusted_sqlite_family(src_db: str) -> dict[str, tuple[int, int]]:
+    """Open-fd O_NOFOLLOW trust verification of ``src_db`` and all existing SQLite sidecars."""
+    identities: dict[str, tuple[int, int]] = {}
+    open_flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    for path in (src_db, *(src_db + suffix for suffix in _SQLITE_SIDECARS)):
+        try:
+            fd = os.open(path, open_flags)
+        except FileNotFoundError:
+            continue
+        try:
+            st = os.fstat(fd)
+            if not _is_trusted_stat(st):
+                raise PermissionError(f"Untrusted legacy SQLite file: {path}")
+            identities[path] = (st.st_dev, st.st_ino)
+        finally:
+            os.close(fd)
+    if src_db not in identities:
+        raise FileNotFoundError(src_db)
+    return identities
+
+
+def _sqlite_state_digest(conn: sqlite3.Connection) -> str:
+    """Deterministic SHA-256 over all user table schemas and ordered rows on ``conn``."""
+    hasher = hashlib.sha256()
+    tables = [
+        str(r[0])
+        for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name ASC"
+        ).fetchall()
+    ]
+    for tbl in tables:
+        quoted = '"' + tbl.replace('"', '""') + '"'
+        cols = [str(c[1]) for c in conn.execute(f"PRAGMA table_info({quoted})").fetchall()]
+        hasher.update(json.dumps([tbl, cols]).encode("utf-8") + b"\n")
+        for row in conn.execute(f"SELECT * FROM {quoted} ORDER BY rowid ASC").fetchall():  # noqa: S608 - identifier read from sqlite_master and SQL-quoted
+            hasher.update(json.dumps(list(row), default=str).encode("utf-8") + b"\n")
+    return hasher.hexdigest()
+
+
+@contextlib.contextmanager
+def _stage_legacy_ledger_snapshot(
+    src_db: str, state_dir: str, *, require_trusted: bool
+) -> Iterator[tuple[str, sqlite3.Connection]]:
+    """Stages a consistent single-file SQLite snapshot of ``src_db`` and holds ``BEGIN IMMEDIATE``.
+
+    While yielded, ``src_conn`` holds ``BEGIN IMMEDIATE`` on ``src_db`` verified to match the
+    staged snapshot, preventing any concurrent SQLite writer from committing or checkpointing
+    transactions that would be lost when ``src_db`` is retired. On rollback/failure before
+    retirement, all committed transactions in ``src_db`` remain intact on disk (SQLite may fold
+    ``-wal`` into ``src_db`` on close).
+    """
+    before_ids = _verify_trusted_sqlite_family(src_db) if require_trusted else {}
+    prefix = f".{NODE_LEDGER_FILENAME}.adopt."
+    src_conn = sqlite3.connect(src_db, timeout=5.0, isolation_level=None)
+    tmp_dst = ""
+    try:
+        src_conn.execute("PRAGMA busy_timeout=5000")
+        if require_trusted:
+            recheck = _verify_trusted_sqlite_family(src_db)
+            if recheck.get(src_db) != before_ids.get(src_db):
+                raise PermissionError(f"Legacy SQLite file changed during open: {src_db}")
+        matched = False
+        for _attempt in range(3):
+            tmp_dst = os.path.join(state_dir, f"{prefix}{os.getpid()}.{os.urandom(8).hex()}")
+            src_conn.execute("VACUUM INTO ?", (tmp_dst,))
+            os.chmod(tmp_dst, 0o600)
+            with open(tmp_dst, "r+b") as dst_fp:
+                if hasattr(os, "fsync"):
+                    os.fsync(dst_fp.fileno())
+            src_conn.execute("BEGIN IMMEDIATE")
+            if require_trusted:
+                recheck_lock = _verify_trusted_sqlite_family(src_db)
+                if recheck_lock.get(src_db) != before_ids.get(src_db):
+                    raise PermissionError(f"Legacy SQLite file changed before lock: {src_db}")
+            src_digest = _sqlite_state_digest(src_conn)
+            dst_uri = f"{Path(os.path.abspath(tmp_dst)).as_uri()}?mode=ro"
+            with contextlib.closing(sqlite3.connect(dst_uri, uri=True, timeout=5.0)) as dst_conn:
+                if dst_conn.execute("PRAGMA quick_check").fetchone() != ("ok",):
+                    raise OSError(f"Corrupted staged SQLite snapshot for {src_db}")
+                dst_digest = _sqlite_state_digest(dst_conn)
+            if src_digest == dst_digest:
+                matched = True
+                break
+            src_conn.execute("ROLLBACK")
+            with contextlib.suppress(OSError):
+                os.unlink(tmp_dst)
+            tmp_dst = ""
+        if not matched:
+            raise sqlite3.OperationalError(f"Legacy ledger {src_db} was modified concurrently during migration")
+        yield tmp_dst, src_conn
+    finally:
+        if tmp_dst:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp_dst)
+        try:
+            in_tx = src_conn.in_transaction
+        except sqlite3.Error:
+            in_tx = False
+        if in_tx:
+            with contextlib.suppress(sqlite3.Error):
+                src_conn.execute("ROLLBACK")
+        with contextlib.suppress(sqlite3.Error):
+            src_conn.close()
+
+
+def _retire_legacy_ledger(src_conn: sqlite3.Connection, legacy_ledger: str) -> None:
+    """Blocks any blocked or subsequent writes on ``legacy_ledger`` and unlinks it + sidecars."""
+    has_tx = (
+        src_conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='transactions'").fetchone()
+        is not None
+    )
+    if has_tx:
+        src_conn.execute(
+            "CREATE TRIGGER IF NOT EXISTS _smdc_migrated "
+            "BEFORE INSERT ON transactions "
+            "BEGIN SELECT RAISE(ABORT, 'legacy ledger migrated to smdc_node_ledger.db'); END"
+        )
+    src_conn.commit()
+    for path in (legacy_ledger, *(legacy_ledger + suffix for suffix in _SQLITE_SIDECARS)):
+        with contextlib.suppress(OSError):
+            os.unlink(path)
+    src_conn.close()
+    for path in (legacy_ledger, *(legacy_ledger + suffix for suffix in _SQLITE_SIDECARS)):
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(path)
+
+
 def _adopt(legacy: LegacySet, directory: str, paths: NodeStatePaths) -> tuple[bool, list[str]]:
     """Atomically stages and publishes one legacy set to the node identity file names."""
     state_dir = os.path.dirname(paths.wallet)
@@ -403,7 +562,7 @@ def _adopt(legacy: LegacySet, directory: str, paths: NodeStatePaths) -> tuple[bo
     owned = _read_migrating_owned(marker_path)
     new_owned = set(owned)
 
-    plan: list[tuple[str, str, bool]] = []
+    plan: list[tuple[str, str, str, bool]] = []
     stale_sidecars: list[str] = []
     skipped: list[str] = []
     adopted_ledger = False
@@ -412,15 +571,12 @@ def _adopt(legacy: LegacySet, directory: str, paths: NodeStatePaths) -> tuple[bo
     has_legacy_ledger = os.path.isfile(legacy_ledger)
     if has_legacy_ledger and ("ledger" in owned or not _has_established_ledger(paths.ledger)):
         replace_ledger = os.path.lexists(paths.ledger)
-        # Side files first: a leftover -wal belongs to the database it was written for.
+        # Snapshot staging writes a self-contained single-file DB, so remove any old destination sidecars.
         for suffix in _SQLITE_SIDECARS:
-            src_side = legacy_ledger + suffix
             dst_side = paths.ledger + suffix
-            if os.path.isfile(src_side):
-                plan.append((src_side, dst_side, True))
-            elif os.path.lexists(dst_side):
+            if os.path.lexists(dst_side):
                 stale_sidecars.append(dst_side)
-        plan.append((legacy_ledger, paths.ledger, replace_ledger))
+        plan.append(("ledger", legacy_ledger, paths.ledger, replace_ledger))
         new_owned.add("ledger")
         adopted_ledger = True
     elif has_legacy_ledger:
@@ -430,46 +586,56 @@ def _adopt(legacy: LegacySet, directory: str, paths: NodeStatePaths) -> tuple[bo
         legacy_pqc = os.path.join(directory, legacy.pqc_wallet)
         has_legacy_pqc = os.path.isfile(legacy_pqc)
         if has_legacy_pqc and ("pqc_wallet" in owned or not os.path.lexists(paths.pqc_wallet)):
-            plan.append((legacy_pqc, paths.pqc_wallet, os.path.lexists(paths.pqc_wallet)))
+            plan.append(("file", legacy_pqc, paths.pqc_wallet, os.path.lexists(paths.pqc_wallet)))
             new_owned.add("pqc_wallet")
         elif has_legacy_pqc:
             skipped.append(legacy_pqc)
 
     # The wallet goes last: its presence is what marks the node identity as established.
-    plan.append((os.path.join(directory, legacy.wallet), paths.wallet, False))
+    plan.append(("file", os.path.join(directory, legacy.wallet), paths.wallet, False))
 
     staged: list[tuple[str, str, bool, str]] = []
-    try:
-        for src, dst, overwrite in plan:
-            if not overwrite and os.path.lexists(dst):
-                raise FileExistsError(dst)
-            staged.append(
-                (
-                    src,
-                    dst,
-                    overwrite,
-                    _stage_adopt_item(src, dst, state_dir, same_dir, require_trusted=not same_dir),
-                )
-            )
+    held_ledger_conn: sqlite3.Connection | None = None
+    with contextlib.ExitStack() as adopt_stack:
+        try:
+            for item_kind, src, dst, overwrite in plan:
+                if not overwrite and os.path.lexists(dst):
+                    raise FileExistsError(dst)
+                if item_kind == "ledger":
+                    tmp_dst, held_ledger_conn = adopt_stack.enter_context(
+                        _stage_legacy_ledger_snapshot(src, state_dir, require_trusted=not same_dir)
+                    )
+                    staged.append((src, dst, overwrite, tmp_dst))
+                else:
+                    staged.append(
+                        (
+                            src,
+                            dst,
+                            overwrite,
+                            _stage_adopt_item(src, dst, state_dir, same_dir, require_trusted=not same_dir),
+                        )
+                    )
 
-        _write_migrating_owned(marker_path, new_owned)
+            _write_migrating_owned(marker_path, new_owned)
 
-        for dst_side in stale_sidecars:
-            with contextlib.suppress(OSError):
-                os.unlink(dst_side)
+            for dst_side in stale_sidecars:
+                with contextlib.suppress(OSError):
+                    os.unlink(dst_side)
 
-        for _src, dst, overwrite, tmp_dst in staged:
-            _publish_staged_item(tmp_dst, dst, overwrite=overwrite)
-    finally:
-        for _src, _dst, _overwrite, tmp_dst in staged:
-            with contextlib.suppress(OSError):
-                os.unlink(tmp_dst)
+            for _src, dst, overwrite, tmp_dst in staged:
+                _publish_staged_item(tmp_dst, dst, overwrite=overwrite)
+        finally:
+            for _src, _dst, _overwrite, tmp_dst in staged:
+                with contextlib.suppress(OSError):
+                    os.unlink(tmp_dst)
 
-    # Unlink legacy sources only after paths.wallet is published so any interrupted attempt
-    # retains the complete legacy set (including SQLite -wal/-shm sidecars) for retry.
-    for src, _dst, _overwrite, _tmp_dst in staged:
-        with contextlib.suppress(FileNotFoundError):
-            os.unlink(src)
+        # Retire legacy sources only after paths.wallet is published so any interrupted attempt
+        # retains the complete legacy set (including SQLite -wal/-shm sidecars) for retry.
+        if held_ledger_conn is not None:
+            _retire_legacy_ledger(held_ledger_conn, legacy_ledger)
+        for src, _dst, _overwrite, _tmp_dst in staged:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(src)
     with contextlib.suppress(OSError):
         os.unlink(marker_path)
     return adopted_ledger, skipped
