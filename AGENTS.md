@@ -139,7 +139,7 @@ sovereign-mini-datacenter/
 │   └── MANUFACTURING_GUIDE.md   # Laser cut DXF export, CNC sheet metal bending specs
 ├── docs/                        # Interactive Three.js WebGL Digital Twin & GitHub Pages
 │   └── index.html               # 3D WebGL CAD viewer + interactive sizing & TCO calculator
-├── tests/                       # Complete automated Pytest suite (1493 tests, 92.9% coverage)
+├── tests/                       # Complete automated Pytest suite (1495 tests, 92.9% coverage)
 ├── ARCHITECTURE.md              # Multi-node autonomous network architecture specification
 ├── ENTERPRISE_ONBOARDING.md     # Enterprise manifest spec, power tiers & developer guide
 ├── COMMERCIALIZATION.md         # Investment thesis, TAM/SAM/SOM & 3-year TCO payback model
@@ -333,7 +333,7 @@ Windows equivalent without `uv run`: `.\.venv\Scripts\python -m sovereign_dc <co
 ## 6. Checklist Before Completing Any Agent Task
 
 1. [ ] **Pass All Quality Gates Locally**: Run `scripts/quality_gate.ps1` or `scripts/quality_gate.sh` (Ruff lint/format, Mypy typing, Pytest $\ge 85\%$ coverage).
-2. [ ] **Pass All Unit Tests**: Verify all 1493 tests in `tests/` pass with zero failures.
+2. [ ] **Pass All Unit Tests**: Verify all 1495 tests in `tests/` pass with zero failures.
 3. [ ] **Preserve Existing Interfaces**: Ensure CLI arguments, Prometheus metric names, and DTN bundle schemas remain backward-compatible.
 4. [ ] **Verify Markdown/Mermaid & Math**: Ensure any new or modified `.md` files strictly comply with GitHub Mermaid and LaTeX math rendering rules.
 5. [ ] **Synchronize Documentation**: Update `AGENTS.md` and `README.md` with any newly added modules, subcommands, or architectural changes.

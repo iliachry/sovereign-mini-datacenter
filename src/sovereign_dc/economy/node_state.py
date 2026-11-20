@@ -687,7 +687,7 @@ def _lock_or_replace_destination_ledger(path: str, tmp_dst: str) -> Iterator[tup
         st = os.lstat(path)
         if not stat.S_ISREG(st.st_mode):
             raise OSError(f"Refusing non-regular ledger path: {path}")
-        is_sqlite = False
+        is_sqlite = st.st_size == 0
         if st.st_size >= 100:
             with open(path, "rb") as f:
                 is_sqlite = f.read(16) == b"SQLite format 3\x00"
@@ -733,7 +733,7 @@ def _reconcile_destination_ledger(
 ) -> tuple[bool, str | None]:
     """Synchronizes or reconciles ``dest_path`` with ``tmp_dst`` under ``BEGIN EXCLUSIVE``.
 
-    Returns ``(should_retire_legacy, resulting_canon_digest)``. When
+    Returns ``(should_retire_legacy, resulting_baseline_digest)``. When
     ``abort_if_unowned_established`` is True (an unowned pre-wallet adoption), raises
     ``sqlite3.OperationalError`` if ``dest_path`` became established concurrently.
     """
@@ -750,7 +750,7 @@ def _reconcile_destination_ledger(
             baseline_digest is not None and leg_digest == baseline_digest and canon_digest is not None
         ):
             conn.execute("ROLLBACK")
-            return True, canon_digest
+            return True, leg_digest
         if canon_digest is None or (baseline_digest is not None and canon_digest == baseline_digest):
             _replace_sqlite_contents_in_place(tmp_dst, conn, leg_digest)
             conn.execute("COMMIT")
@@ -1034,7 +1034,11 @@ def _recover_post_wallet_migration(
                 retire_files.append(legacy_pqc)
             elif os.path.isfile(legacy_pqc):
                 skipped_in_chosen.append(legacy_pqc)
-        published_digest = None
+        published_digest = (
+            migrating_state.get("owned_ledger_digest")
+            if isinstance(migrating_state.get("owned_ledger_digest"), str)
+            else None
+        )
         retire_ledger = legacy_ledger if adopted_ledger else None
         require_trusted = os.path.realpath(chosen_dir) != os.path.realpath(state_dir)
 
