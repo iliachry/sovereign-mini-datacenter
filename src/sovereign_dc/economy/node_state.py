@@ -47,6 +47,7 @@ import threading
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 try:  # POSIX advisory locks; absent on Windows (see ``_state_lock``).
     import fcntl
@@ -320,21 +321,51 @@ def _is_readonly_recovery_error(err: sqlite3.Error) -> bool:
     return "readonly" in str(err).lower()
 
 
-def _inspect_unrecovered_ledger_copy(path: str) -> bool:
-    """Inspects a disposable copy when ``path`` needs rollback/WAL recovery under ``mode=ro``."""
+def _sqlite_family_fingerprint(abs_path: str) -> dict[str, tuple[int, int, str] | None]:
+    """Captures ``(st_ino, size, sha256)`` for ``abs_path`` and each SQLite sidecar (or None if absent)."""
+    fp: dict[str, tuple[int, int, str] | None] = {}
+    for candidate in (abs_path, *(abs_path + suffix for suffix in _SQLITE_SIDECARS)):
+        try:
+            st = os.lstat(candidate)
+            if not stat.S_ISREG(st.st_mode):
+                raise OSError(f"Refusing non-regular ledger path: {candidate}")
+            size, digest = _file_sha256(candidate)
+        except FileNotFoundError:
+            fp[candidate] = None
+            continue
+        fp[candidate] = (st.st_ino, size, digest)
+    return fp
+
+
+def _inspect_unrecovered_ledger_copy(path: str) -> bool | None:
+    """Inspects a verified consistent copy when ``path`` needs rollback/WAL recovery under ``mode=ro``."""
     abs_path = os.path.abspath(path)
+    before_fp = _sqlite_family_fingerprint(abs_path)
+    if before_fp[abs_path] is None:
+        return False
     parent_dir = os.path.dirname(abs_path)
     with tempfile.TemporaryDirectory(prefix=".smdc_ledger_probe.", dir=parent_dir) as tmp_dir:
         os.chmod(tmp_dir, 0o700)
         probe_db = os.path.join(tmp_dir, "probe.db")
-        shutil.copy2(abs_path, probe_db, follow_symlinks=False)
-        os.chmod(probe_db, 0o600)
-        for suffix in _SQLITE_SIDECARS:
-            side = abs_path + suffix
-            if os.path.isfile(side) and not os.path.islink(side):
+        copied: dict[str, tuple[int, str]] = {}
+        try:
+            shutil.copy2(abs_path, probe_db, follow_symlinks=False)
+            os.chmod(probe_db, 0o600)
+            copied[abs_path] = _file_sha256(probe_db)
+            for suffix in _SQLITE_SIDECARS:
+                side = abs_path + suffix
+                if before_fp[side] is None:
+                    continue
                 dst_side = probe_db + suffix
                 shutil.copy2(side, dst_side, follow_symlinks=False)
                 os.chmod(dst_side, 0o600)
+                copied[side] = _file_sha256(dst_side)
+        except FileNotFoundError:
+            return None
+        if _sqlite_family_fingerprint(abs_path) != before_fp or any(
+            exp is not None and copied.get(src_file) != exp[1:] for src_file, exp in before_fp.items()
+        ):
+            return None
         try:
             with contextlib.closing(sqlite3.connect(probe_db, timeout=5.0)) as rw_conn:
                 rw_conn.execute("PRAGMA busy_timeout=5000")
@@ -345,57 +376,77 @@ def _inspect_unrecovered_ledger_copy(path: str) -> bool:
             raise
 
 
-def _has_established_ledger(path: str) -> bool:
-    """True when ``path`` is an intact SQLite ledger that already holds transactions.
-
-    Uses a purely read-only connection so an active ``BEGIN IMMEDIATE`` writer on a WAL ledger
-    never causes false-negative classification, and re-raises lock, hot-journal recovery, or I/O
-    errors rather than permitting migration to overwrite an unreadable destination file.
-    """
+def _probe_sqlite_ro(path: str, *, compute_digest: bool = False) -> tuple[str, str | None]:
+    """Read-only SQLite ledger inspection returning ('unestablished'|'established'|'recovery', digest)."""
     try:
         st = os.stat(path)
-    except FileNotFoundError:
-        return False
-    if not stat.S_ISREG(st.st_mode):
-        raise OSError(f"Refusing non-regular ledger path: {path}")
-    if st.st_size < 100:
-        return False
-    try:
+        if not stat.S_ISREG(st.st_mode):
+            raise OSError(f"Refusing non-regular ledger path: {path}")
+        if st.st_size < 100:
+            return "unestablished", None
         with open(path, "rb") as f:
             header = f.read(16)
     except FileNotFoundError:
-        return False
+        return "unestablished", None
     if header != b"SQLite format 3\x00":
-        return False
+        return "unestablished", None
     uri = f"{Path(os.path.abspath(path)).as_uri()}?mode=ro"
     try:
         with contextlib.closing(sqlite3.connect(uri, uri=True, timeout=5.0)) as conn:
             conn.execute("PRAGMA busy_timeout=5000")
-            return Ledger.verify_readonly_conn(conn)
+            if not Ledger.verify_readonly_conn(conn):
+                return "unestablished", None
+            return "established", (_sqlite_state_digest(conn) if compute_digest else None)
     except sqlite3.Error as err:
         if _is_corrupt_sqlite_error(err):
-            return False
+            return "unestablished", None
         if _is_readonly_recovery_error(err):
-            return _inspect_unrecovered_ledger_copy(path)
+            return "recovery", None
         raise
+
+
+def _has_established_ledger(path: str) -> bool:
+    """True when ``path`` is an intact SQLite ledger that already holds transactions."""
+    for _attempt in range(4):
+        status, _ = _probe_sqlite_ro(path)
+        if status == "established":
+            return True
+        if status == "unestablished":
+            return False
+        verdict = _inspect_unrecovered_ledger_copy(path)
+        if verdict is not None:
+            return verdict
+    raise sqlite3.OperationalError(f"Canonical ledger {path} changed concurrently during inspection")
+
+
+def _read_migrating_state(marker_path: str) -> dict[str, Any] | None:
+    """Parsed migration marker dict when a migration is in progress, or None if absent/invalid."""
+    try:
+        st = os.lstat(marker_path)
+        if not stat.S_ISREG(st.st_mode):
+            return None
+        with open(marker_path, encoding="utf-8") as fp:
+            data = json.load(fp)
+    except (OSError, ValueError, TypeError):
+        return None
+    if not isinstance(data, dict) or not isinstance(data.get("owned"), list):
+        return None
+    return data
 
 
 def _read_migrating_owned(marker_path: str) -> set[str]:
     """Components ('ledger', 'pqc_wallet') an interrupted migration already owned at destination."""
-    try:
-        st = os.lstat(marker_path)
-        if not stat.S_ISREG(st.st_mode):
-            return set()
-        with open(marker_path, encoding="utf-8") as fp:
-            data = json.load(fp)
-    except (OSError, ValueError, TypeError):
+    state = _read_migrating_state(marker_path)
+    if state is None:
         return set()
-    raw = data.get("owned", []) if isinstance(data, dict) else []
-    return {item for item in raw if item in {"ledger", "pqc_wallet"}} if isinstance(raw, list) else set()
+    return {item for item in state["owned"] if item in {"ledger", "pqc_wallet"}}
 
 
-def _write_migrating_owned(marker_path: str, owned: set[str]) -> None:
-    """Atomically records which destination components this migration is permitted to replace."""
+def _write_migrating_owned(marker_path: str, owned: set[str], *, post_wallet: dict[str, Any] | None = None) -> None:
+    """Atomically records migration ownership (and post-wallet retirement metadata when given)."""
+    payload: dict[str, Any] = {"owned": sorted(owned)}
+    if post_wallet is not None:
+        payload["post_wallet"] = post_wallet
     state_dir = os.path.dirname(marker_path)
     fd, tmp_marker = tempfile.mkstemp(prefix=f"{_MIGRATING_FILENAME}.", dir=state_dir)
     try:
@@ -403,7 +454,7 @@ def _write_migrating_owned(marker_path: str, owned: set[str]) -> None:
             os.fchmod(fd, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as fp:
             fd = -1
-            fp.write(json.dumps({"owned": sorted(owned)}))
+            fp.write(json.dumps(payload))
             fp.flush()
             if hasattr(os, "fsync"):
                 os.fsync(fp.fileno())
@@ -458,19 +509,20 @@ def _sqlite_state_digest(conn: sqlite3.Connection) -> str:
 @contextlib.contextmanager
 def _stage_legacy_ledger_snapshot(
     src_db: str, state_dir: str, *, require_trusted: bool
-) -> Iterator[tuple[str, sqlite3.Connection]]:
-    """Stages a consistent single-file SQLite snapshot of ``src_db`` and holds ``BEGIN IMMEDIATE``.
+) -> Iterator[tuple[str, sqlite3.Connection, str]]:
+    """Stages a consistent single-file SQLite snapshot of ``src_db`` and holds ``BEGIN EXCLUSIVE``.
 
-    While yielded, ``src_conn`` holds ``BEGIN IMMEDIATE`` on ``src_db`` verified to match the
-    staged snapshot, preventing any concurrent SQLite writer from committing or checkpointing
-    transactions that would be lost when ``src_db`` is retired. On rollback/failure before
-    retirement, all committed transactions in ``src_db`` remain intact on disk (SQLite may fold
-    ``-wal`` into ``src_db`` on close).
+    While yielded, ``src_conn`` holds ``BEGIN EXCLUSIVE`` on ``src_db`` verified to match the
+    staged snapshot, preventing any concurrent SQLite writer (or ``DELETE``-mode reader) from
+    committing or blocking legacy retirement after destination publication. On rollback/failure
+    before retirement, all committed transactions in ``src_db`` remain intact on disk (SQLite may
+    fold ``-wal`` into ``src_db`` on close).
     """
     before_ids = _verify_trusted_sqlite_family(src_db) if require_trusted else {}
     prefix = f".{NODE_LEDGER_FILENAME}.adopt."
     src_conn = sqlite3.connect(src_db, timeout=5.0, isolation_level=None)
     tmp_dst = ""
+    src_digest = ""
     try:
         src_conn.execute("PRAGMA busy_timeout=5000")
         if require_trusted:
@@ -482,14 +534,23 @@ def _stage_legacy_ledger_snapshot(
             tmp_dst = os.path.join(state_dir, f"{prefix}{os.getpid()}.{os.urandom(8).hex()}")
             src_conn.execute("VACUUM INTO ?", (tmp_dst,))
             os.chmod(tmp_dst, 0o600)
-            with open(tmp_dst, "r+b") as dst_fp:
-                if hasattr(os, "fsync"):
-                    os.fsync(dst_fp.fileno())
-            src_conn.execute("BEGIN IMMEDIATE")
+            src_conn.execute("BEGIN EXCLUSIVE")
             if require_trusted:
                 recheck_lock = _verify_trusted_sqlite_family(src_db)
                 if recheck_lock.get(src_db) != before_ids.get(src_db):
                     raise PermissionError(f"Legacy SQLite file changed before lock: {src_db}")
+            if (
+                src_conn.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='trigger' AND name='_smdc_migrated'"
+                ).fetchone()
+                is not None
+            ):
+                with contextlib.closing(sqlite3.connect(tmp_dst, timeout=5.0)) as clean_conn:
+                    clean_conn.execute("DROP TRIGGER IF EXISTS _smdc_migrated")
+                    clean_conn.commit()
+            with open(tmp_dst, "r+b") as dst_fp:
+                if hasattr(os, "fsync"):
+                    os.fsync(dst_fp.fileno())
             src_digest = _sqlite_state_digest(src_conn)
             dst_uri = f"{Path(os.path.abspath(tmp_dst)).as_uri()}?mode=ro"
             with contextlib.closing(sqlite3.connect(dst_uri, uri=True, timeout=5.0)) as dst_conn:
@@ -505,7 +566,7 @@ def _stage_legacy_ledger_snapshot(
             tmp_dst = ""
         if not matched:
             raise sqlite3.OperationalError(f"Legacy ledger {src_db} was modified concurrently during migration")
-        yield tmp_dst, src_conn
+        yield tmp_dst, src_conn, src_digest
     finally:
         if tmp_dst:
             with contextlib.suppress(OSError):
@@ -541,6 +602,79 @@ def _retire_legacy_ledger(src_conn: sqlite3.Connection, legacy_ledger: str) -> N
     for path in (legacy_ledger, *(legacy_ledger + suffix for suffix in _SQLITE_SIDECARS)):
         with contextlib.suppress(FileNotFoundError):
             os.unlink(path)
+
+
+def _canonical_ledger_digest(path: str) -> str | None:
+    """Returns canonical ledger state digest, None if absent/empty/corrupt, or hot-recovery marker."""
+    status, digest = _probe_sqlite_ro(path, compute_digest=True)
+    if status == "established":
+        return digest
+    if status == "recovery":
+        return "<hot_recovery_diverged>"
+    return None
+
+
+def _log_migration_outcome(
+    surface: str,
+    wallet_src: str,
+    adopted_ledger: bool,
+    skipped_in_chosen: list[str],
+    legacy_ledger: str,
+    other_found: list[tuple[LegacySet, str]],
+    paths: NodeStatePaths,
+) -> str:
+    """Emits migration summary info/warning logs matching adopted and skipped artifacts."""
+    if adopted_ledger:
+        logger.info(
+            "Adopted the %s wallet and ledger (%s) as this node's identity: %s, %s",
+            surface,
+            wallet_src,
+            paths.wallet,
+            paths.ledger,
+        )
+    elif legacy_ledger in skipped_in_chosen:
+        logger.info(
+            "Adopted the %s wallet (%s) as this node's identity: %s (kept existing node ledger %s)",
+            surface,
+            wallet_src,
+            paths.wallet,
+            paths.ledger,
+        )
+    else:
+        logger.info(
+            "Adopted the %s wallet (%s) as this node's identity: %s",
+            surface,
+            wallet_src,
+            paths.wallet,
+        )
+    other_leftovers = [
+        os.path.join(other_dir, name)
+        for other, other_dir in other_found
+        for name in (other.wallet, other.ledger, other.pqc_wallet)
+        if name is not None and os.path.lexists(os.path.join(other_dir, name))
+    ]
+    if other_leftovers and not skipped_in_chosen:
+        logger.warning(
+            "Several wallet/ledger sets from an older release were found. The %s set is now the node "
+            "identity; these files were left untouched and are no longer used: %s",
+            surface,
+            ", ".join(other_leftovers),
+        )
+    elif skipped_in_chosen and not other_leftovers:
+        logger.warning(
+            "Existing node state was kept during %s migration; these legacy files were left untouched and are "
+            "no longer used: %s",
+            surface,
+            ", ".join(skipped_in_chosen),
+        )
+    elif skipped_in_chosen and other_leftovers:
+        logger.warning(
+            "Several wallet/ledger sets or existing node state files were found during %s migration; these files "
+            "were left untouched and are no longer used: %s",
+            surface,
+            ", ".join([*skipped_in_chosen, *other_leftovers]),
+        )
+    return surface
 
 
 def _adopt(legacy: LegacySet, directory: str, paths: NodeStatePaths) -> tuple[bool, list[str]]:
@@ -592,17 +726,19 @@ def _adopt(legacy: LegacySet, directory: str, paths: NodeStatePaths) -> tuple[bo
             skipped.append(legacy_pqc)
 
     # The wallet goes last: its presence is what marks the node identity as established.
-    plan.append(("file", os.path.join(directory, legacy.wallet), paths.wallet, False))
+    wallet_src = os.path.join(directory, legacy.wallet)
+    plan.append(("file", wallet_src, paths.wallet, False))
 
     staged: list[tuple[str, str, bool, str]] = []
     held_ledger_conn: sqlite3.Connection | None = None
+    staged_ledger_digest: str | None = None
     with contextlib.ExitStack() as adopt_stack:
         try:
             for item_kind, src, dst, overwrite in plan:
                 if not overwrite and os.path.lexists(dst):
                     raise FileExistsError(dst)
                 if item_kind == "ledger":
-                    tmp_dst, held_ledger_conn = adopt_stack.enter_context(
+                    tmp_dst, held_ledger_conn, staged_ledger_digest = adopt_stack.enter_context(
                         _stage_legacy_ledger_snapshot(src, state_dir, require_trusted=not same_dir)
                     )
                     staged.append((src, dst, overwrite, tmp_dst))
@@ -624,13 +760,30 @@ def _adopt(legacy: LegacySet, directory: str, paths: NodeStatePaths) -> tuple[bo
 
             for _src, dst, overwrite, tmp_dst in staged:
                 _publish_staged_item(tmp_dst, dst, overwrite=overwrite)
+
+            _write_migrating_owned(
+                marker_path,
+                new_owned,
+                post_wallet={
+                    "surface": legacy.surface,
+                    "directory": directory,
+                    "wallet_src": wallet_src,
+                    "legacy_ledger": legacy_ledger,
+                    "adopted_ledger": adopted_ledger,
+                    "skipped": list(skipped),
+                    "published_ledger_digest": staged_ledger_digest,
+                    "retire_ledger": legacy_ledger if adopted_ledger else None,
+                    "retire_files": [src for src, _dst, _ovw, _tmp in staged],
+                    "require_trusted": not same_dir,
+                },
+            )
         finally:
             for _src, _dst, _overwrite, tmp_dst in staged:
                 with contextlib.suppress(OSError):
                     os.unlink(tmp_dst)
 
-        # Retire legacy sources only after paths.wallet is published so any interrupted attempt
-        # retains the complete legacy set (including SQLite -wal/-shm sidecars) for retry.
+        # Retire legacy sources only after paths.wallet is published and recorded in the marker
+        # so any interrupted retirement reconciles cleanly on retry.
         if held_ledger_conn is not None:
             _retire_legacy_ledger(held_ledger_conn, legacy_ledger)
         for src, _dst, _overwrite, _tmp_dst in staged:
@@ -641,6 +794,96 @@ def _adopt(legacy: LegacySet, directory: str, paths: NodeStatePaths) -> tuple[bo
     return adopted_ledger, skipped
 
 
+def _recover_post_wallet_migration(
+    migrating_state: dict[str, Any], marker_path: str, paths: NodeStatePaths
+) -> str | None:
+    """Completes legacy retirement or reconciles post-wallet writes when ``paths.wallet`` exists."""
+    state_dir = os.path.dirname(paths.wallet)
+    owned = {item for item in migrating_state.get("owned", []) if item in {"ledger", "pqc_wallet"}}
+    pw = migrating_state.get("post_wallet")
+    if isinstance(pw, dict):
+        surface = str(pw["surface"])
+        chosen_dir = str(pw["directory"])
+        wallet_src = str(pw["wallet_src"])
+        legacy_ledger = str(pw["legacy_ledger"])
+        adopted_ledger = bool(pw["adopted_ledger"])
+        skipped_in_chosen = [str(x) for x in pw.get("skipped", []) if isinstance(x, str)]
+        published_digest = pw.get("published_ledger_digest")
+        retire_ledger = pw.get("retire_ledger")
+        retire_files = [str(x) for x in pw.get("retire_files", []) if isinstance(x, str)]
+        require_trusted = bool(pw.get("require_trusted", False))
+    else:
+        found_before = _find_legacy_sets(state_dir)
+        if not found_before:
+            with contextlib.suppress(OSError):
+                os.unlink(marker_path)
+            return None
+        chosen, chosen_dir = found_before[0]
+        surface = chosen.surface
+        wallet_src = os.path.join(chosen_dir, chosen.wallet)
+        legacy_ledger = os.path.join(chosen_dir, chosen.ledger)
+        adopted_ledger = "ledger" in owned and os.path.isfile(legacy_ledger)
+        skipped_in_chosen = [legacy_ledger] if (not adopted_ledger and os.path.isfile(legacy_ledger)) else []
+        retire_files = [wallet_src]
+        if adopted_ledger:
+            retire_files.append(legacy_ledger)
+        if chosen.pqc_wallet is not None:
+            legacy_pqc = os.path.join(chosen_dir, chosen.pqc_wallet)
+            if "pqc_wallet" in owned and os.path.isfile(legacy_pqc):
+                retire_files.append(legacy_pqc)
+            elif os.path.isfile(legacy_pqc):
+                skipped_in_chosen.append(legacy_pqc)
+        published_digest = None
+        retire_ledger = legacy_ledger if adopted_ledger else None
+        require_trusted = os.path.realpath(chosen_dir) != os.path.realpath(state_dir)
+
+    if isinstance(retire_ledger, str) and os.path.isfile(retire_ledger):
+        with _stage_legacy_ledger_snapshot(retire_ledger, state_dir, require_trusted=require_trusted) as (
+            tmp_dst,
+            held_conn,
+            leg_digest,
+        ):
+            canon_digest = _canonical_ledger_digest(paths.ledger)
+            if canon_digest == leg_digest or (
+                published_digest is not None and leg_digest == published_digest and canon_digest is not None
+            ):
+                _retire_legacy_ledger(held_conn, retire_ledger)
+            elif canon_digest is None or (published_digest is not None and canon_digest == published_digest):
+                for suffix in _SQLITE_SIDECARS:
+                    with contextlib.suppress(OSError):
+                        os.unlink(paths.ledger + suffix)
+                _publish_staged_item(tmp_dst, paths.ledger, overwrite=os.path.lexists(paths.ledger))
+                _retire_legacy_ledger(held_conn, retire_ledger)
+            else:
+                # Both ledgers received independent writes after paths.wallet appeared: preserve both.
+                retire_files = [item for item in retire_files if item != retire_ledger]
+                adopted_ledger = False
+                if retire_ledger not in skipped_in_chosen:
+                    skipped_in_chosen.append(retire_ledger)
+
+    for src in retire_files:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(src)
+    with contextlib.suppress(OSError):
+        os.unlink(marker_path)
+
+    chosen_real = os.path.realpath(chosen_dir)
+    other_found = [
+        (other, other_dir)
+        for other, other_dir in _find_legacy_sets(state_dir)
+        if not (other.surface == surface and os.path.realpath(other_dir) == chosen_real)
+    ]
+    return _log_migration_outcome(
+        surface,
+        wallet_src,
+        adopted_ledger,
+        skipped_in_chosen,
+        legacy_ledger,
+        other_found,
+        paths,
+    )
+
+
 def migrate_legacy_node_state() -> str | None:
     """Adopts a legacy per-surface wallet/ledger set as the node identity, if there is none yet.
 
@@ -649,69 +892,31 @@ def migrate_legacy_node_state() -> str | None:
     """
     paths = node_state_paths()
     with _state_lock():
+        state_dir = os.path.dirname(paths.wallet)
+        marker_path = os.path.join(state_dir, _MIGRATING_FILENAME)
+        migrating_state = _read_migrating_state(marker_path)
         if os.path.lexists(paths.wallet):
+            if migrating_state is not None:
+                return _recover_post_wallet_migration(migrating_state, marker_path, paths)
             with contextlib.suppress(OSError):
-                os.unlink(os.path.join(os.path.dirname(paths.wallet), _MIGRATING_FILENAME))
+                os.unlink(marker_path)
             return None
-        found = _find_legacy_sets(os.path.dirname(paths.wallet))
+        found = _find_legacy_sets(state_dir)
         if not found:
             with contextlib.suppress(OSError):
-                os.unlink(os.path.join(os.path.dirname(paths.wallet), _MIGRATING_FILENAME))
+                os.unlink(marker_path)
             return None
         chosen, directory = found[0]
         adopted_ledger, skipped_in_chosen = _adopt(chosen, directory, paths)
-        wallet_src = os.path.join(directory, chosen.wallet)
-        if adopted_ledger:
-            logger.info(
-                "Adopted the %s wallet and ledger (%s) as this node's identity: %s, %s",
-                chosen.surface,
-                wallet_src,
-                paths.wallet,
-                paths.ledger,
-            )
-        elif os.path.join(directory, chosen.ledger) in skipped_in_chosen:
-            logger.info(
-                "Adopted the %s wallet (%s) as this node's identity: %s (kept existing node ledger %s)",
-                chosen.surface,
-                wallet_src,
-                paths.wallet,
-                paths.ledger,
-            )
-        else:
-            logger.info(
-                "Adopted the %s wallet (%s) as this node's identity: %s",
-                chosen.surface,
-                wallet_src,
-                paths.wallet,
-            )
-        other_leftovers = [
-            os.path.join(other_dir, name)
-            for other, other_dir in found[1:]
-            for name in (other.wallet, other.ledger, other.pqc_wallet)
-            if name is not None and os.path.lexists(os.path.join(other_dir, name))
-        ]
-        if other_leftovers and not skipped_in_chosen:
-            logger.warning(
-                "Several wallet/ledger sets from an older release were found. The %s set is now the node "
-                "identity; these files were left untouched and are no longer used: %s",
-                chosen.surface,
-                ", ".join(other_leftovers),
-            )
-        elif skipped_in_chosen and not other_leftovers:
-            logger.warning(
-                "Existing node state was kept during %s migration; these legacy files were left untouched and are "
-                "no longer used: %s",
-                chosen.surface,
-                ", ".join(skipped_in_chosen),
-            )
-        elif skipped_in_chosen and other_leftovers:
-            logger.warning(
-                "Several wallet/ledger sets or existing node state files were found during %s migration; these files "
-                "were left untouched and are no longer used: %s",
-                chosen.surface,
-                ", ".join([*skipped_in_chosen, *other_leftovers]),
-            )
-        return chosen.surface
+        return _log_migration_outcome(
+            chosen.surface,
+            os.path.join(directory, chosen.wallet),
+            adopted_ledger,
+            skipped_in_chosen,
+            os.path.join(directory, chosen.ledger),
+            found[1:],
+            paths,
+        )
 
 
 def _load_or_create_wallet(path: str, algorithm: AddressType, node_id: str | None) -> NodeWallet:

@@ -1434,22 +1434,14 @@ class Ledger:
             rows = conn.execute("SELECT * FROM transactions ORDER BY rowid ASC").fetchall()
             if not rows:
                 return False
-            anchor = (
-                conn.execute("SELECT * FROM chain_anchor WHERE id = 1").fetchone() if "chain_anchor" in tables else None
-            )
         finally:
             if began:
                 conn.commit()
-        key = (
-            _node_anchor_key()
-            if (anchor is not None and os.path.isfile(node_pqc_key_path(ANCHOR_KEY_ALGORITHM)))
-            else None
-        )
         try:
-            links_ok, status, count, _, _ = cls._verify_rows_and_anchor(rows, anchor, key)
+            links_ok, _status, count, _, _ = cls._verify_rows_and_anchor(rows, None, None)
         except (IndexError, KeyError, TypeError, ValueError):
             return False
-        return links_ok and status != ANCHOR_INVALID and count > 0
+        return links_ok and count > 0
 
     def _check_chain(
         self, conn: sqlite3.Connection, anchor_key: tuple[str, bytes] | None
