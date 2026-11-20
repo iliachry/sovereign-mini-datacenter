@@ -376,39 +376,37 @@ def _inspect_unrecovered_ledger_copy(path: str) -> bool | None:
             raise
 
 
-def _probe_sqlite_ro(path: str, *, compute_digest: bool = False) -> tuple[str, str | None]:
-    """Read-only SQLite ledger inspection returning ('unestablished'|'established'|'recovery', digest)."""
+def _probe_sqlite_ro(path: str) -> str:
+    """Read-only SQLite ledger classification: ``'unestablished'``, ``'established'``, or ``'recovery'``."""
     try:
         st = os.stat(path)
         if not stat.S_ISREG(st.st_mode):
             raise OSError(f"Refusing non-regular ledger path: {path}")
         if st.st_size < 100:
-            return "unestablished", None
+            return "unestablished"
         with open(path, "rb") as f:
             header = f.read(16)
     except FileNotFoundError:
-        return "unestablished", None
+        return "unestablished"
     if header != b"SQLite format 3\x00":
-        return "unestablished", None
+        return "unestablished"
     uri = f"{Path(os.path.abspath(path)).as_uri()}?mode=ro"
     try:
         with contextlib.closing(sqlite3.connect(uri, uri=True, timeout=5.0)) as conn:
             conn.execute("PRAGMA busy_timeout=5000")
-            if not Ledger.verify_readonly_conn(conn):
-                return "unestablished", None
-            return "established", (_sqlite_state_digest(conn) if compute_digest else None)
+            return "established" if Ledger.verify_readonly_conn(conn) else "unestablished"
     except sqlite3.Error as err:
         if _is_corrupt_sqlite_error(err):
-            return "unestablished", None
+            return "unestablished"
         if _is_readonly_recovery_error(err):
-            return "recovery", None
+            return "recovery"
         raise
 
 
 def _has_established_ledger(path: str) -> bool:
     """True when ``path`` is an intact SQLite ledger that already holds transactions."""
     for _attempt in range(4):
-        status, _ = _probe_sqlite_ro(path)
+        status = _probe_sqlite_ro(path)
         if status == "established":
             return True
         if status == "unestablished":
@@ -506,6 +504,19 @@ def _sqlite_state_digest(conn: sqlite3.Connection) -> str:
     return hasher.hexdigest()
 
 
+def _rollback_and_close(conn: sqlite3.Connection) -> None:
+    """Rolls back any active transaction on ``conn`` and closes it safely."""
+    try:
+        in_tx = conn.in_transaction
+    except sqlite3.Error:
+        in_tx = False
+    if in_tx:
+        with contextlib.suppress(sqlite3.Error):
+            conn.execute("ROLLBACK")
+    with contextlib.suppress(sqlite3.Error):
+        conn.close()
+
+
 @contextlib.contextmanager
 def _stage_legacy_ledger_snapshot(
     src_db: str, state_dir: str, *, require_trusted: bool
@@ -571,15 +582,7 @@ def _stage_legacy_ledger_snapshot(
         if tmp_dst:
             with contextlib.suppress(OSError):
                 os.unlink(tmp_dst)
-        try:
-            in_tx = src_conn.in_transaction
-        except sqlite3.Error:
-            in_tx = False
-        if in_tx:
-            with contextlib.suppress(sqlite3.Error):
-                src_conn.execute("ROLLBACK")
-        with contextlib.suppress(sqlite3.Error):
-            src_conn.close()
+        _rollback_and_close(src_conn)
 
 
 def _retire_legacy_ledger(src_conn: sqlite3.Connection, legacy_ledger: str) -> None:
@@ -604,14 +607,153 @@ def _retire_legacy_ledger(src_conn: sqlite3.Connection, legacy_ledger: str) -> N
             os.unlink(path)
 
 
-def _canonical_ledger_digest(path: str) -> str | None:
-    """Returns canonical ledger state digest, None if absent/empty/corrupt, or hot-recovery marker."""
-    status, digest = _probe_sqlite_ro(path, compute_digest=True)
-    if status == "established":
-        return digest
-    if status == "recovery":
-        return "<hot_recovery_diverged>"
-    return None
+def _replace_sqlite_contents_in_place(src_snapshot: str, dst_conn: sqlite3.Connection, expected_digest: str) -> None:
+    """Replaces all user tables and indexes on ``dst_conn`` inside its active transaction."""
+    src_uri = f"{Path(os.path.abspath(src_snapshot)).as_uri()}?mode=ro"
+    table_specs: list[tuple[str, str, list[str], list[tuple[Any, ...]]]] = []
+    with contextlib.closing(sqlite3.connect(src_uri, uri=True, timeout=5.0)) as src_ro:
+        tables = [
+            (str(r[0]), str(r[1]))
+            for r in src_ro.execute(
+                "SELECT name, sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' "
+                "AND sql IS NOT NULL ORDER BY name ASC"
+            ).fetchall()
+        ]
+        indexes = [
+            str(r[0])
+            for r in src_ro.execute(
+                "SELECT sql FROM sqlite_master WHERE type='index' AND name NOT LIKE 'sqlite_%' "
+                "AND sql IS NOT NULL ORDER BY name ASC"
+            ).fetchall()
+        ]
+        for tbl_name, create_sql in tables:
+            q_tbl = '"' + tbl_name.replace('"', '""') + '"'
+            cols = [str(c[1]) for c in src_ro.execute(f"PRAGMA table_info({q_tbl})").fetchall()]
+            rows = [
+                tuple(r)
+                for r in src_ro.execute(f"SELECT * FROM {q_tbl} ORDER BY rowid ASC").fetchall()  # noqa: S608 - quoted sqlite_master identifier
+            ]
+            table_specs.append((tbl_name, create_sql, cols, rows))
+
+    for (old_tbl,) in dst_conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+    ).fetchall():
+        q_old = '"' + str(old_tbl).replace('"', '""') + '"'
+        dst_conn.execute(f"DROP TABLE IF EXISTS {q_old}")
+    if (
+        dst_conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='sqlite_sequence'").fetchone()
+        is not None
+    ):
+        dst_conn.execute("DELETE FROM sqlite_sequence")
+
+    for tbl_name, create_sql, cols, rows in table_specs:
+        dst_conn.execute(create_sql)
+        if rows:
+            q_tbl = '"' + tbl_name.replace('"', '""') + '"'
+            q_cols = ", ".join('"' + c.replace('"', '""') + '"' for c in cols)
+            placeholders = ", ".join("?" for _ in cols)
+            dst_conn.executemany(
+                f"INSERT INTO {q_tbl} ({q_cols}) VALUES ({placeholders})",  # noqa: S608 - quoted sqlite_master identifiers
+                rows,
+            )
+    for idx_sql in indexes:
+        dst_conn.execute(idx_sql)
+    if _sqlite_state_digest(dst_conn) != expected_digest:
+        raise OSError("In-place SQLite ledger sync digest mismatch")
+
+
+@contextlib.contextmanager
+def _lock_or_replace_destination_ledger(path: str, tmp_dst: str) -> Iterator[tuple[sqlite3.Connection, bool] | None]:
+    """Acquires ``BEGIN EXCLUSIVE`` on ``path``, or populates ``path`` directly if absent/corrupt."""
+    while True:
+        if not os.path.lexists(path):
+            try:
+                _publish_staged_item(tmp_dst, path, overwrite=False)
+                yield None
+                return
+            except FileExistsError:
+                continue
+        st = os.lstat(path)
+        if not stat.S_ISREG(st.st_mode):
+            raise OSError(f"Refusing non-regular ledger path: {path}")
+        is_sqlite = False
+        if st.st_size >= 100:
+            with open(path, "rb") as f:
+                is_sqlite = f.read(16) == b"SQLite format 3\x00"
+        if not is_sqlite:
+            for suffix in _SQLITE_SIDECARS:
+                with contextlib.suppress(OSError):
+                    os.unlink(path + suffix)
+            _publish_staged_item(tmp_dst, path, overwrite=True)
+            yield None
+            return
+        conn = sqlite3.connect(path, timeout=5.0, isolation_level=None)
+        conn.row_factory = sqlite3.Row
+        try:
+            conn.execute("PRAGMA busy_timeout=5000")
+            try:
+                conn.execute("BEGIN EXCLUSIVE")
+                established = Ledger.verify_readonly_conn(conn)
+            except sqlite3.Error as err:
+                if not _is_corrupt_sqlite_error(err):
+                    raise
+                conn.close()
+                for suffix in _SQLITE_SIDECARS:
+                    with contextlib.suppress(OSError):
+                        os.unlink(path + suffix)
+                _publish_staged_item(tmp_dst, path, overwrite=True)
+                yield None
+                return
+            if os.lstat(path).st_ino != st.st_ino:
+                raise sqlite3.OperationalError(f"Canonical ledger {path} was replaced concurrently")
+            yield conn, established
+            return
+        finally:
+            _rollback_and_close(conn)
+
+
+def _publish_over_unestablished_ledger(tmp_dst: str, dst: str, expected_digest: str) -> None:
+    """Replaces an unestablished ``dst`` in place under ``BEGIN EXCLUSIVE`` if still unestablished."""
+    with _lock_or_replace_destination_ledger(dst, tmp_dst) as locked:
+        if locked is None:
+            return
+        conn, established = locked
+        if established:
+            raise sqlite3.OperationalError(f"Canonical ledger {dst} became established concurrently during migration")
+        _replace_sqlite_contents_in_place(tmp_dst, conn, expected_digest)
+        conn.execute("COMMIT")
+        _restrict_adopted_mode(dst)
+
+
+def _reconcile_post_wallet_ledger(
+    paths: NodeStatePaths,
+    tmp_dst: str,
+    held_conn: sqlite3.Connection,
+    retire_ledger: str,
+    leg_digest: str,
+    published_digest: str | None,
+) -> bool:
+    """Reconciles canonical vs legacy ledger under dual ``BEGIN EXCLUSIVE`` locks."""
+    with _lock_or_replace_destination_ledger(paths.ledger, tmp_dst) as locked:
+        if locked is None:
+            _retire_legacy_ledger(held_conn, retire_ledger)
+            return True
+        canon_conn, established = locked
+        canon_digest = _sqlite_state_digest(canon_conn) if established else None
+        if canon_digest == leg_digest or (
+            published_digest is not None and leg_digest == published_digest and canon_digest is not None
+        ):
+            canon_conn.execute("ROLLBACK")
+            _retire_legacy_ledger(held_conn, retire_ledger)
+            return True
+        if canon_digest is None or (published_digest is not None and canon_digest == published_digest):
+            _replace_sqlite_contents_in_place(tmp_dst, canon_conn, leg_digest)
+            canon_conn.execute("COMMIT")
+            _restrict_adopted_mode(paths.ledger)
+            _retire_legacy_ledger(held_conn, retire_ledger)
+            return True
+        canon_conn.execute("ROLLBACK")
+        return False
 
 
 def _log_migration_outcome(
@@ -754,12 +896,32 @@ def _adopt(legacy: LegacySet, directory: str, paths: NodeStatePaths) -> tuple[bo
 
             _write_migrating_owned(marker_path, new_owned)
 
-            for dst_side in stale_sidecars:
-                with contextlib.suppress(OSError):
-                    os.unlink(dst_side)
+            has_rollback_journal = os.path.lexists(paths.ledger + "-journal")
+            in_place_empty_publish = (
+                adopted_ledger
+                and os.path.lexists(paths.ledger)
+                and ("ledger" not in owned)
+                and not has_rollback_journal
+                and (staged_ledger_digest is not None)
+            )
+            if not in_place_empty_publish:
+                for dst_side in stale_sidecars:
+                    with contextlib.suppress(OSError):
+                        os.unlink(dst_side)
 
             for _src, dst, overwrite, tmp_dst in staged:
-                _publish_staged_item(tmp_dst, dst, overwrite=overwrite)
+                if dst == paths.ledger and overwrite and in_place_empty_publish and staged_ledger_digest is not None:
+                    try:
+                        _publish_over_unestablished_ledger(tmp_dst, dst, staged_ledger_digest)
+                    except BaseException:
+                        if owned:
+                            _write_migrating_owned(marker_path, owned)
+                        else:
+                            with contextlib.suppress(OSError):
+                                os.unlink(marker_path)
+                        raise
+                else:
+                    _publish_staged_item(tmp_dst, dst, overwrite=overwrite)
 
             _write_migrating_owned(
                 marker_path,
@@ -843,19 +1005,15 @@ def _recover_post_wallet_migration(
             held_conn,
             leg_digest,
         ):
-            canon_digest = _canonical_ledger_digest(paths.ledger)
-            if canon_digest == leg_digest or (
-                published_digest is not None and leg_digest == published_digest and canon_digest is not None
+            if not _reconcile_post_wallet_ledger(
+                paths,
+                tmp_dst,
+                held_conn,
+                retire_ledger,
+                leg_digest,
+                published_digest if isinstance(published_digest, str) else None,
             ):
-                _retire_legacy_ledger(held_conn, retire_ledger)
-            elif canon_digest is None or (published_digest is not None and canon_digest == published_digest):
-                for suffix in _SQLITE_SIDECARS:
-                    with contextlib.suppress(OSError):
-                        os.unlink(paths.ledger + suffix)
-                _publish_staged_item(tmp_dst, paths.ledger, overwrite=os.path.lexists(paths.ledger))
-                _retire_legacy_ledger(held_conn, retire_ledger)
-            else:
-                # Both ledgers received independent writes after paths.wallet appeared: preserve both.
+                # Both ledgers received independent writes (including pre-lock races): preserve both.
                 retire_files = [item for item in retire_files if item != retire_ledger]
                 adopted_ledger = False
                 if retire_ledger not in skipped_in_chosen:
