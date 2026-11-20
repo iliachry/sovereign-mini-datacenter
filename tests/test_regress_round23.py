@@ -8,7 +8,7 @@
    errors immediately instead of spinning past ``timeout_seconds``, and enforces
    ``deadline`` even under repeated disappearance races.
 3. ``README.md``, ``AGENTS.md``, ``COMMERCIALIZATION.md``, and ``ARCHITECTURE.md`` §8
-   reflect actual test coverage (``92.8%``) and target-design cold-start status.
+   reflect actual test coverage (``92.9%``) and target-design cold-start status.
 """
 
 from __future__ import annotations
@@ -104,10 +104,10 @@ def test_docs_coverage_and_architecture_cold_start_status() -> None:
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
     comm = (ROOT / "COMMERCIALIZATION.md").read_text(encoding="utf-8")
-    assert "92.8%25%20Cov" in readme
-    assert "92.8% coverage" in readme
-    assert "92.8% coverage" in agents
-    assert "92.8% Coverage" in comm
+    assert "92.9%25%20Cov" in readme
+    assert "92.9% coverage" in readme
+    assert "92.9% coverage" in agents
+    assert "92.9% Coverage" in comm
 
     arch = (ROOT / "ARCHITECTURE.md").read_text(encoding="utf-8")
     assert "## 8. Disaster Recovery, Black-Start & Self-Healing Protocol (Target Design)" in arch

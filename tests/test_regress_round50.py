@@ -76,22 +76,22 @@ def test_round50_interrupted_wal_ledger_migration_preserves_uncheckpointed_wal_c
     (probe_dir / "only.db").write_bytes(db_bytes)
     assert Ledger(db_path=str(probe_dir / "only.db")).get_balance(legacy_wallet.address) == 0.0
 
-    # Empty destination ledger + stale -journal + EIO failure after -wal replacement.
+    # Empty destination ledger + stale -journal + EIO failure on wallet publish after ledger sync.
     Ledger(db_path=str(state_dir / node_state.NODE_LEDGER_FILENAME))
     stale_journal = state_dir / f"{node_state.NODE_LEDGER_FILENAME}-journal"
     stale_journal.write_bytes(b"stale journal bytes")
 
-    real_replace = node_state.os.replace
+    real_publish = node_state._publish_staged_item
     fail_once = {"armed": True}
 
-    def fail_main_db_replace(src: str, dst: str) -> None:
-        if fail_once["armed"] and dst.endswith(node_state.NODE_LEDGER_FILENAME):
+    def fail_wallet_publish(tmp_dst: str, dst: str, *, overwrite: bool) -> None:
+        if fail_once["armed"] and dst.endswith(node_state.NODE_WALLET_FILENAME):
             fail_once["armed"] = False
             raise OSError(errno.EIO, "simulated main db replace failure")
-        real_replace(src, dst)
+        real_publish(tmp_dst, dst, overwrite=overwrite)
 
     with monkeypatch.context() as mp:
-        mp.setattr(node_state.os, "replace", fail_main_db_replace)
+        mp.setattr(node_state, "_publish_staged_item", fail_wallet_publish)
         with pytest.raises(OSError, match="simulated main db replace failure"):
             node_state.migrate_legacy_node_state()
 

@@ -440,9 +440,20 @@ def _read_migrating_owned(marker_path: str) -> set[str]:
     return {item for item in state["owned"] if item in {"ledger", "pqc_wallet"}}
 
 
-def _write_migrating_owned(marker_path: str, owned: set[str], *, post_wallet: dict[str, Any] | None = None) -> None:
-    """Atomically records migration ownership (and post-wallet retirement metadata when given)."""
+def _write_migrating_owned(
+    marker_path: str,
+    owned: set[str],
+    *,
+    owned_ledger_digest: str | None = None,
+    owned_pqc_sha256: str | None = None,
+    post_wallet: dict[str, Any] | None = None,
+) -> None:
+    """Atomically records migration ownership and baseline digests."""
     payload: dict[str, Any] = {"owned": sorted(owned)}
+    if owned_ledger_digest is not None and "ledger" in owned:
+        payload["owned_ledger_digest"] = owned_ledger_digest
+    if owned_pqc_sha256 is not None and "pqc_wallet" in owned:
+        payload["owned_pqc_sha256"] = owned_pqc_sha256
     if post_wallet is not None:
         payload["post_wallet"] = post_wallet
     state_dir = os.path.dirname(marker_path)
@@ -712,48 +723,41 @@ def _lock_or_replace_destination_ledger(path: str, tmp_dst: str) -> Iterator[tup
             _rollback_and_close(conn)
 
 
-def _publish_over_unestablished_ledger(tmp_dst: str, dst: str, expected_digest: str) -> None:
-    """Replaces an unestablished ``dst`` in place under ``BEGIN EXCLUSIVE`` if still unestablished."""
-    with _lock_or_replace_destination_ledger(dst, tmp_dst) as locked:
-        if locked is None:
-            return
-        conn, established = locked
-        if established:
-            raise sqlite3.OperationalError(f"Canonical ledger {dst} became established concurrently during migration")
-        _replace_sqlite_contents_in_place(tmp_dst, conn, expected_digest)
-        conn.execute("COMMIT")
-        _restrict_adopted_mode(dst)
-
-
-def _reconcile_post_wallet_ledger(
-    paths: NodeStatePaths,
+def _reconcile_destination_ledger(
+    dest_path: str,
     tmp_dst: str,
-    held_conn: sqlite3.Connection,
-    retire_ledger: str,
     leg_digest: str,
-    published_digest: str | None,
-) -> bool:
-    """Reconciles canonical vs legacy ledger under dual ``BEGIN EXCLUSIVE`` locks."""
-    with _lock_or_replace_destination_ledger(paths.ledger, tmp_dst) as locked:
+    baseline_digest: str | None,
+    *,
+    abort_if_unowned_established: bool,
+) -> tuple[bool, str | None]:
+    """Synchronizes or reconciles ``dest_path`` with ``tmp_dst`` under ``BEGIN EXCLUSIVE``.
+
+    Returns ``(should_retire_legacy, resulting_canon_digest)``. When
+    ``abort_if_unowned_established`` is True (an unowned pre-wallet adoption), raises
+    ``sqlite3.OperationalError`` if ``dest_path`` became established concurrently.
+    """
+    with _lock_or_replace_destination_ledger(dest_path, tmp_dst) as locked:
         if locked is None:
-            _retire_legacy_ledger(held_conn, retire_ledger)
-            return True
-        canon_conn, established = locked
-        canon_digest = _sqlite_state_digest(canon_conn) if established else None
+            return True, leg_digest
+        conn, established = locked
+        if abort_if_unowned_established and established:
+            raise sqlite3.OperationalError(
+                f"Canonical ledger {dest_path} became established concurrently during migration"
+            )
+        canon_digest = _sqlite_state_digest(conn) if established else None
         if canon_digest == leg_digest or (
-            published_digest is not None and leg_digest == published_digest and canon_digest is not None
+            baseline_digest is not None and leg_digest == baseline_digest and canon_digest is not None
         ):
-            canon_conn.execute("ROLLBACK")
-            _retire_legacy_ledger(held_conn, retire_ledger)
-            return True
-        if canon_digest is None or (published_digest is not None and canon_digest == published_digest):
-            _replace_sqlite_contents_in_place(tmp_dst, canon_conn, leg_digest)
-            canon_conn.execute("COMMIT")
-            _restrict_adopted_mode(paths.ledger)
-            _retire_legacy_ledger(held_conn, retire_ledger)
-            return True
-        canon_conn.execute("ROLLBACK")
-        return False
+            conn.execute("ROLLBACK")
+            return True, canon_digest
+        if canon_digest is None or (baseline_digest is not None and canon_digest == baseline_digest):
+            _replace_sqlite_contents_in_place(tmp_dst, conn, leg_digest)
+            conn.execute("COMMIT")
+            _restrict_adopted_mode(dest_path)
+            return True, leg_digest
+        conn.execute("ROLLBACK")
+        return False, canon_digest
 
 
 def _log_migration_outcome(
@@ -835,97 +839,132 @@ def _adopt(legacy: LegacySet, directory: str, paths: NodeStatePaths) -> tuple[bo
         raise PermissionError(f"Refusing untrusted legacy state in {directory}")
 
     marker_path = os.path.join(state_dir, _MIGRATING_FILENAME)
+    migrating_state = _read_migrating_state(marker_path)
     owned = _read_migrating_owned(marker_path)
-    new_owned = set(owned)
+    owned_ledger_digest = (
+        migrating_state.get("owned_ledger_digest")
+        if isinstance(migrating_state, dict) and isinstance(migrating_state.get("owned_ledger_digest"), str)
+        else None
+    )
+    owned_pqc_sha256 = (
+        migrating_state.get("owned_pqc_sha256")
+        if isinstance(migrating_state, dict) and isinstance(migrating_state.get("owned_pqc_sha256"), str)
+        else None
+    )
 
-    plan: list[tuple[str, str, str, bool]] = []
-    stale_sidecars: list[str] = []
     skipped: list[str] = []
     adopted_ledger = False
 
     legacy_ledger = os.path.join(directory, legacy.ledger)
     has_legacy_ledger = os.path.isfile(legacy_ledger)
+    want_ledger = False
     if has_legacy_ledger and ("ledger" in owned or not _has_established_ledger(paths.ledger)):
-        replace_ledger = os.path.lexists(paths.ledger)
-        # Snapshot staging writes a self-contained single-file DB, so remove any old destination sidecars.
-        for suffix in _SQLITE_SIDECARS:
-            dst_side = paths.ledger + suffix
-            if os.path.lexists(dst_side):
-                stale_sidecars.append(dst_side)
-        plan.append(("ledger", legacy_ledger, paths.ledger, replace_ledger))
-        new_owned.add("ledger")
-        adopted_ledger = True
+        want_ledger = True
     elif has_legacy_ledger:
         skipped.append(legacy_ledger)
 
+    legacy_pqc: str | None = None
+    want_pqc = False
+    overwrite_pqc = False
     if legacy.pqc_wallet is not None:
         legacy_pqc = os.path.join(directory, legacy.pqc_wallet)
         has_legacy_pqc = os.path.isfile(legacy_pqc)
-        if has_legacy_pqc and ("pqc_wallet" in owned or not os.path.lexists(paths.pqc_wallet)):
-            plan.append(("file", legacy_pqc, paths.pqc_wallet, os.path.lexists(paths.pqc_wallet)))
-            new_owned.add("pqc_wallet")
+        pqc_matches_owned = (
+            "pqc_wallet" in owned
+            and owned_pqc_sha256 is not None
+            and os.path.isfile(paths.pqc_wallet)
+            and not os.path.islink(paths.pqc_wallet)
+            and _file_sha256(paths.pqc_wallet)[1] == owned_pqc_sha256
+        )
+        if has_legacy_pqc and (not os.path.lexists(paths.pqc_wallet) or pqc_matches_owned):
+            want_pqc = True
+            overwrite_pqc = pqc_matches_owned
         elif has_legacy_pqc:
             skipped.append(legacy_pqc)
 
     # The wallet goes last: its presence is what marks the node identity as established.
     wallet_src = os.path.join(directory, legacy.wallet)
-    plan.append(("file", wallet_src, paths.wallet, False))
+    if os.path.lexists(paths.wallet):
+        raise FileExistsError(paths.wallet)
 
-    staged: list[tuple[str, str, bool, str]] = []
+    tmp_files: list[str] = []
     held_ledger_conn: sqlite3.Connection | None = None
-    staged_ledger_digest: str | None = None
+    live_owned = set(owned)
+    live_ledger_digest = owned_ledger_digest
+    live_pqc_sha = owned_pqc_sha256
+    retire_sources: list[str] = []
+
     with contextlib.ExitStack() as adopt_stack:
         try:
-            for item_kind, src, dst, overwrite in plan:
-                if not overwrite and os.path.lexists(dst):
-                    raise FileExistsError(dst)
-                if item_kind == "ledger":
-                    tmp_dst, held_ledger_conn, staged_ledger_digest = adopt_stack.enter_context(
-                        _stage_legacy_ledger_snapshot(src, state_dir, require_trusted=not same_dir)
+            tmp_ledger = ""
+            staged_ledger_digest = ""
+            if want_ledger:
+                tmp_ledger, held_ledger_conn, staged_ledger_digest = adopt_stack.enter_context(
+                    _stage_legacy_ledger_snapshot(legacy_ledger, state_dir, require_trusted=not same_dir)
+                )
+                tmp_files.append(tmp_ledger)
+
+            tmp_pqc = ""
+            if want_pqc and legacy_pqc is not None:
+                if not overwrite_pqc and os.path.lexists(paths.pqc_wallet):
+                    raise FileExistsError(paths.pqc_wallet)
+                tmp_pqc = _stage_adopt_item(
+                    legacy_pqc, paths.pqc_wallet, state_dir, same_dir, require_trusted=not same_dir
+                )
+                tmp_files.append(tmp_pqc)
+
+            if os.path.lexists(paths.wallet):
+                raise FileExistsError(paths.wallet)
+            tmp_wallet = _stage_adopt_item(wallet_src, paths.wallet, state_dir, same_dir, require_trusted=not same_dir)
+            tmp_files.append(tmp_wallet)
+
+            if want_ledger:
+                should_retire, resulting_digest = _reconcile_destination_ledger(
+                    paths.ledger,
+                    tmp_ledger,
+                    staged_ledger_digest,
+                    owned_ledger_digest if "ledger" in owned else None,
+                    abort_if_unowned_established=("ledger" not in owned),
+                )
+                if should_retire:
+                    adopted_ledger = True
+                    live_owned.add("ledger")
+                    live_ledger_digest = resulting_digest
+                    retire_sources.append(legacy_ledger)
+                    _write_migrating_owned(
+                        marker_path,
+                        live_owned,
+                        owned_ledger_digest=live_ledger_digest,
+                        owned_pqc_sha256=live_pqc_sha,
                     )
-                    staged.append((src, dst, overwrite, tmp_dst))
                 else:
-                    staged.append(
-                        (
-                            src,
-                            dst,
-                            overwrite,
-                            _stage_adopt_item(src, dst, state_dir, same_dir, require_trusted=not same_dir),
-                        )
-                    )
+                    live_owned.discard("ledger")
+                    live_ledger_digest = None
+                    skipped.append(legacy_ledger)
+                    held_ledger_conn = None
 
-            _write_migrating_owned(marker_path, new_owned)
-
-            has_rollback_journal = os.path.lexists(paths.ledger + "-journal")
-            in_place_empty_publish = (
-                adopted_ledger
-                and os.path.lexists(paths.ledger)
-                and ("ledger" not in owned)
-                and not has_rollback_journal
-                and (staged_ledger_digest is not None)
-            )
-            if not in_place_empty_publish:
-                for dst_side in stale_sidecars:
-                    with contextlib.suppress(OSError):
-                        os.unlink(dst_side)
-
-            for _src, dst, overwrite, tmp_dst in staged:
-                if dst == paths.ledger and overwrite and in_place_empty_publish and staged_ledger_digest is not None:
-                    try:
-                        _publish_over_unestablished_ledger(tmp_dst, dst, staged_ledger_digest)
-                    except BaseException:
-                        if owned:
-                            _write_migrating_owned(marker_path, owned)
-                        else:
-                            with contextlib.suppress(OSError):
-                                os.unlink(marker_path)
-                        raise
-                else:
-                    _publish_staged_item(tmp_dst, dst, overwrite=overwrite)
+            if want_pqc and legacy_pqc is not None:
+                pqc_sha = _file_sha256(tmp_pqc)[1]
+                _publish_staged_item(tmp_pqc, paths.pqc_wallet, overwrite=overwrite_pqc)
+                live_owned.add("pqc_wallet")
+                live_pqc_sha = pqc_sha
+                retire_sources.append(legacy_pqc)
 
             _write_migrating_owned(
                 marker_path,
-                new_owned,
+                live_owned,
+                owned_ledger_digest=live_ledger_digest,
+                owned_pqc_sha256=live_pqc_sha,
+            )
+
+            _publish_staged_item(tmp_wallet, paths.wallet, overwrite=False)
+            retire_sources.append(wallet_src)
+
+            _write_migrating_owned(
+                marker_path,
+                live_owned,
+                owned_ledger_digest=live_ledger_digest,
+                owned_pqc_sha256=live_pqc_sha,
                 post_wallet={
                     "surface": legacy.surface,
                     "directory": directory,
@@ -933,22 +972,22 @@ def _adopt(legacy: LegacySet, directory: str, paths: NodeStatePaths) -> tuple[bo
                     "legacy_ledger": legacy_ledger,
                     "adopted_ledger": adopted_ledger,
                     "skipped": list(skipped),
-                    "published_ledger_digest": staged_ledger_digest,
+                    "published_ledger_digest": live_ledger_digest,
                     "retire_ledger": legacy_ledger if adopted_ledger else None,
-                    "retire_files": [src for src, _dst, _ovw, _tmp in staged],
+                    "retire_files": list(retire_sources),
                     "require_trusted": not same_dir,
                 },
             )
         finally:
-            for _src, _dst, _overwrite, tmp_dst in staged:
+            for tmp_path in tmp_files:
                 with contextlib.suppress(OSError):
-                    os.unlink(tmp_dst)
+                    os.unlink(tmp_path)
 
         # Retire legacy sources only after paths.wallet is published and recorded in the marker
         # so any interrupted retirement reconciles cleanly on retry.
         if held_ledger_conn is not None:
             _retire_legacy_ledger(held_ledger_conn, legacy_ledger)
-        for src, _dst, _overwrite, _tmp_dst in staged:
+        for src in retire_sources:
             with contextlib.suppress(FileNotFoundError):
                 os.unlink(src)
     with contextlib.suppress(OSError):
@@ -1005,14 +1044,16 @@ def _recover_post_wallet_migration(
             held_conn,
             leg_digest,
         ):
-            if not _reconcile_post_wallet_ledger(
-                paths,
+            should_retire, _ = _reconcile_destination_ledger(
+                paths.ledger,
                 tmp_dst,
-                held_conn,
-                retire_ledger,
                 leg_digest,
                 published_digest if isinstance(published_digest, str) else None,
-            ):
+                abort_if_unowned_established=False,
+            )
+            if should_retire:
+                _retire_legacy_ledger(held_conn, retire_ledger)
+            else:
                 # Both ledgers received independent writes (including pre-lock races): preserve both.
                 retire_files = [item for item in retire_files if item != retire_ledger]
                 adopted_ledger = False
